@@ -2637,6 +2637,7 @@ export const en: TranslationMap = {
     advanced: "Advanced",
   },
   tabs: {
+    accessMap: "AI access scope",
     agents: "Agents",
     activity: "Activity",
     apps: "Apps",
@@ -2680,6 +2681,7 @@ export const en: TranslationMap = {
     plugin: "Plugin",
   },
   subtitles: {
+    accessMap: "Files, sandbox permissions, and external connections.",
     agents: "Workspaces, tools, identities.",
     activity: "Recent sessions across people using this gateway.",
     apps: "Companion apps for phone, watch, desktop, and browser.",

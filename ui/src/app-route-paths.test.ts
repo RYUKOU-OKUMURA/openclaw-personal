@@ -174,6 +174,11 @@ describe("Dynamic route startup bridge", () => {
     expect(routeIdFromPath("/settings/secrets")).toBe("secrets");
   });
 
+  it("registers the AI access scope settings path", () => {
+    expect(pathForRoute("access-map")).toBe("/settings/access-map");
+    expect(routeIdFromPath("/settings/access-map")).toBe("access-map");
+  });
+
   it("registers the Portals workspace path", () => {
     expect(pathForRoute("portals")).toBe("/portals");
     expect(routeIdFromPath("/portals")).toBe("portals");

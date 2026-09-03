@@ -508,6 +508,7 @@ describe("Control UI Vite config", () => {
         }
         const catalog = JSON.parse(result.replace(/^export default /, "").replace(/;$/, ""));
         expect(catalog.common.health).toBe("Health");
+        expect(catalog.accessMap.eyebrow).toBe("Privacy & Security");
         expect(addWatchFile).not.toHaveBeenCalled();
       },
     );

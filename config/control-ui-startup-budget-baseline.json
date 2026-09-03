@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 347792,
-  "reason": "Final automatic update lifecycle ownership and stale hold response fencing measured 347792 B in the canonical isolated production build (+1015 B, 0.29% from the original baseline); fixed 358400 B cap and allowances unchanged",
-  "updatedAt": "2026-09-01"
+  "startupJsGzipBytes": 348426,
+  "reason": "User-approved access map page and navigation add 634 B startup gzip; lazy page copy and existing fixed cap and growth allowances retained (2026-09-03 approval).",
+  "updatedAt": "2026-09-03"
 }

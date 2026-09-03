@@ -197,7 +197,7 @@ const SETTINGS_NAVIGATION_GROUPS = [
   },
   {
     labelKey: "nav.settingsGroupSecurity",
-    routes: ["security", "secrets", "approvals"],
+    routes: ["security", "secrets", "approvals", "access-map"],
   },
   {
     labelKey: "nav.settingsGroupSystem",
@@ -215,7 +215,7 @@ const NON_ADMIN_SETTINGS_NAVIGATION_GROUPS = [
     labelKey: "nav.settingsGroupAgents",
     routes: ["agents", "model-providers", "memory"],
   },
-  { labelKey: "nav.settingsGroupSecurity", routes: ["approvals"] },
+  { labelKey: "nav.settingsGroupSecurity", routes: ["approvals", "access-map"] },
   {
     labelKey: "nav.settingsGroupSystem",
     routes: ["advanced", "debug", "logs", "about"],
@@ -304,6 +304,7 @@ const NAVIGATION_ICONS: NavigationItem = {
   notifications: "bell",
   security: "shieldCheck",
   secrets: "key",
+  "access-map": "shieldCheck",
   advanced: "fileCode",
   debug: "bug",
   logs: "scrollText",
@@ -429,6 +430,7 @@ const NAVIGATION_COPY: Record<NavigationRouteId, { titleKey: string; subtitleKey
   },
   security: { titleKey: "tabs.security", subtitleKey: "subtitles.security" },
   secrets: { titleKey: "tabs.secrets", subtitleKey: "secretsStore.hint" },
+  "access-map": { titleKey: "tabs.accessMap", subtitleKey: "subtitles.accessMap" },
   advanced: { titleKey: "routeTitles.advanced", subtitleKey: "subtitles.advanced" },
   debug: { titleKey: "tabs.debug", subtitleKey: "subtitles.debug" },
   logs: { titleKey: "tabs.logs", subtitleKey: "subtitles.logs" },

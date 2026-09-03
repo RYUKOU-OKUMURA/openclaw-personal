@@ -23,6 +23,7 @@ export async function loadControlUiLocaleCatalog(
 export async function loadControlUiSourceCatalog(
   sourceLocalePath: string,
   activitySourceLocalePath: string,
+  accessMapSourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
 ): Promise<TranslationMap> {
@@ -32,6 +33,11 @@ export async function loadControlUiSourceCatalog(
       registerActivityEnglish: { catalog: TranslationMap };
     }>(activitySourceLocalePath)
   ).registerActivityEnglish.catalog;
+  const accessMapSource = (
+    await importControlUiLocaleModule<{
+      registerAccessMapEnglish: { catalog: TranslationMap };
+    }>(accessMapSourceLocalePath)
+  ).registerAccessMapEnglish.catalog;
   const sessionPlacementSource = (
     await importControlUiLocaleModule<{
       registerSessionPlacementEnglish: { catalog: TranslationMap };
@@ -42,12 +48,19 @@ export async function loadControlUiSourceCatalog(
       registerPluginConsentEnglish: { catalog: TranslationMap };
     }>(pluginConsentSourceLocalePath)
   ).registerPluginConsentEnglish.catalog;
-  if (!source || !activitySource || !sessionPlacementSource || !pluginConsentSource) {
+  if (
+    !source ||
+    !activitySource ||
+    !accessMapSource ||
+    !sessionPlacementSource ||
+    !pluginConsentSource
+  ) {
     throw new Error("Control UI English source catalogs are incomplete");
   }
   return mergeControlUiTranslationMaps(
     source,
     activitySource,
+    accessMapSource,
     sessionPlacementSource,
     pluginConsentSource,
   );
@@ -56,6 +69,7 @@ export async function loadControlUiSourceCatalog(
 export async function readControlUiSourceCatalog(
   sourceLocalePath: string,
   activitySourceLocalePath: string,
+  accessMapSourceLocalePath: string,
   sessionPlacementSourceLocalePath: string,
   pluginConsentSourceLocalePath: string,
 ): Promise<string> {
@@ -63,6 +77,7 @@ export async function readControlUiSourceCatalog(
     [
       sourceLocalePath,
       activitySourceLocalePath,
+      accessMapSourceLocalePath,
       sessionPlacementSourceLocalePath,
       pluginConsentSourceLocalePath,
     ].map((filePath) => readFile(filePath, "utf8")),

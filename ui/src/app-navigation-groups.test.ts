@@ -50,9 +50,9 @@ describe("sidebar entries", () => {
     expect(system?.routes.slice(-2)).toEqual(["updates", "about"]);
   });
 
-  it("places team secrets between Privacy & Security and Approvals", () => {
+  it("keeps the Security group entries in order", () => {
     const security = settingsGroups.find((group) => group.labelKey === "nav.settingsGroupSecurity");
-    expect(security?.routes).toEqual(["security", "secrets", "approvals"]);
+    expect(security?.routes).toEqual(["security", "secrets", "approvals", "access-map"]);
   });
 
   it("keeps model setup as a settings subpage without a sidebar entry", () => {
@@ -68,6 +68,7 @@ describe("sidebar entries", () => {
   it("filters admin-only settings while preserving legacy fail-open visibility", () => {
     const nonAdminRoutes = visibleSettingsNavigationGroups(false).flatMap((group) => group.routes);
     expect(nonAdminRoutes).toContain("approvals");
+    expect(nonAdminRoutes).toContain("access-map");
     expect(nonAdminRoutes).toContain("channels");
     expect(nonAdminRoutes).not.toContain("security");
     expect(nonAdminRoutes).not.toContain("communications");

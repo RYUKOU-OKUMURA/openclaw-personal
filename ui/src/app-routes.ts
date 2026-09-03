@@ -25,6 +25,7 @@ import {
 } from "./app-route-paths.ts";
 import type { ApplicationContext } from "./app/context.ts";
 import { page as aboutPage } from "./pages/about/route.ts";
+import { page as accessMapPage } from "./pages/access-map/route.ts";
 import { page as activityPage } from "./pages/activity/route.ts";
 import { page as agentsPage } from "./pages/agents/route.ts";
 import { page as approvalsPage } from "./pages/approvals/route.ts";
@@ -100,6 +101,7 @@ const APP_ROUTE_TREE = [
   worktreesPage,
   sessionsPage,
   secretsPage,
+  accessMapPage,
   usagePage,
   debugPage,
   logsPage,

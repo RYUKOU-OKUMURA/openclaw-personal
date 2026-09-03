@@ -131,6 +131,7 @@ describe("navigationIconForRoute", () => {
       notifications: "bell",
       security: "shieldCheck",
       secrets: "key",
+      "access-map": "shieldCheck",
       advanced: "fileCode",
       debug: "bug",
       logs: "scrollText",
@@ -233,6 +234,7 @@ describe("titleForRoute", () => {
       notifications: "Notifications",
       security: "Privacy & Security",
       secrets: "Secrets",
+      "access-map": "AI access scope",
       advanced: "Advanced",
       debug: "Debug",
       logs: "Logs",
@@ -286,6 +288,7 @@ describe("subtitleForRoute", () => {
       security: "Gateway auth, exec policy, tool profile, and approvals.",
       secrets:
         "Choose protected, write-only secrets or intentionally agent-readable Gateway environment values.",
+      "access-map": "Files, sandbox permissions, and external connections.",
       advanced: "Every remaining config section, plus the raw file editor.",
       debug: "Snapshots, events, RPC.",
       logs: "Live gateway logs.",
@@ -304,6 +307,7 @@ describe("pathForRoute", () => {
     expect(pathForRoute("logs")).toBe("/logs");
     expect(pathForRoute("plugins")).toBe("/settings/plugins");
     expect(pathForRoute("approvals")).toBe("/settings/approvals");
+    expect(pathForRoute("access-map")).toBe("/settings/access-map");
     expect(pathForRoute("labs")).toBe("/settings/labs");
     expect(pathForRoute("cloud-workers")).toBe("/settings/cloud-workers");
   });
@@ -539,6 +543,7 @@ describe("SIDEBAR_NAV_ROUTES", () => {
       "security",
       "secrets",
       "approvals",
+      "access-map",
       "infrastructure",
       "advanced",
       "debug",
