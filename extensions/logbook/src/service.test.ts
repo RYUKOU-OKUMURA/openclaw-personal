@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveLogbookConfig } from "./config.js";
 import { LogbookService } from "./service.js";
 
@@ -19,6 +19,8 @@ function makeService(params: {
   invoke: (args: { nodeId: string; command: string }) => Promise<unknown>;
   config?: Record<string, unknown>;
   fullConfig?: Record<string, unknown>;
+  complete?: (request: { model?: string; purpose?: string }) => Promise<{ text: string }>;
+  extractStructured?: () => Promise<{ text: string }>;
 }) {
   const dataDir = realpathSync(mkdtempSync(path.join(tmpdir(), "logbook-service-test-")));
   const invoked: Array<{ nodeId: string; command: string }> = [];
@@ -30,6 +32,8 @@ function makeService(params: {
         return await params.invoke(args);
       },
     },
+    llm: { complete: params.complete },
+    mediaUnderstanding: { extractStructuredWithModel: params.extractStructured },
   };
   const service = new LogbookService(
     resolveLogbookConfig({ captureEnabled: true, ...params.config }),
@@ -193,6 +197,109 @@ describe("LogbookService status", () => {
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       expect(service.status()).not.toHaveProperty("dataDir");
+    } finally {
+      service.stop();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("LogbookService text model routing", () => {
+  it.each([
+    ["the configured local model", " ollama/local-text-model ", "ollama/local-text-model"],
+    ["the host default when unset", undefined, undefined],
+  ])(
+    "uses %s for cards, repair, standup, and questions",
+    async (_label, textModel, expectedModel) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-01T10:00:00"));
+      const complete = vi
+        .fn<(request: { model?: string; purpose?: string }) => Promise<{ text: string }>>()
+        .mockResolvedValueOnce({ text: "not valid JSON" })
+        .mockResolvedValueOnce({
+          text: JSON.stringify([
+            {
+              startTime: "10:00:00",
+              endTime: "10:01:00",
+              title: "Editing a document",
+              summary: "Updated the project document.",
+            },
+          ]),
+        })
+        .mockResolvedValueOnce({ text: "Updated the project document." })
+        .mockResolvedValueOnce({ text: "You edited the project document." });
+      const { service, tick, dataDir } = makeService({
+        nodes: [{ nodeId: "capture-node", commands: ["screen.snapshot"] }],
+        invoke: async () => framePayload,
+        config: { visionModel: "ollama/local-vision-model", textModel },
+        complete,
+        extractStructured: async () => ({
+          text: JSON.stringify({
+            segments: [
+              { start: "10:00:00", end: "10:01:00", description: "Editing a project document." },
+            ],
+          }),
+        }),
+      });
+      try {
+        await tick();
+        await expect(service.analyzeNow()).resolves.toEqual({ started: true });
+        await vi.waitFor(() => expect(service.status().lastBatch?.status).toBe("done"));
+        expect(service.cardsForDay("2026-08-01")).toMatchObject([{ title: "Editing a document" }]);
+        await expect(service.standup("2026-08-01", true)).resolves.toMatchObject({
+          text: "Updated the project document.",
+        });
+        await expect(service.ask("2026-08-01", "What did I work on?")).resolves.toBe(
+          "You edited the project document.",
+        );
+        expect(complete.mock.calls.map(([request]) => [request.purpose, request.model])).toEqual([
+          ["logbook.cards", expectedModel],
+          ["logbook.cards.repair", expectedModel],
+          ["logbook.standup", expectedModel],
+          ["logbook.ask", expectedModel],
+        ]);
+      } finally {
+        service.stop();
+        rmSync(dataDir, { recursive: true, force: true });
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+describe("LogbookService text completion validation", () => {
+  it.each(["", " \n\t "])("preserves the saved standup when a refresh returns %j", async (text) => {
+    const complete = vi
+      .fn<(request: { model?: string; purpose?: string }) => Promise<{ text: string }>>()
+      .mockResolvedValueOnce({ text: "Updated the project document." })
+      .mockResolvedValueOnce({ text });
+    const { service, dataDir } = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      config: { textModel: "ollama/local-text-model" },
+      complete,
+    });
+    try {
+      const saved = await service.standup("2026-08-01", true);
+
+      await expect(service.standup("2026-08-01", true)).rejects.toThrow(/no text/i);
+      await expect(service.standup("2026-08-01", false)).resolves.toEqual(saved);
+      expect(complete).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["", " \n\t "])("rejects a question answer containing %j", async (text) => {
+    const { service, dataDir } = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      config: { textModel: "ollama/local-text-model" },
+      complete: async () => ({ text }),
+    });
+    try {
+      await expect(service.ask("2026-08-01", "What did I work on?")).rejects.toThrow(/no text/i);
     } finally {
       service.stop();
       rmSync(dataDir, { recursive: true, force: true });

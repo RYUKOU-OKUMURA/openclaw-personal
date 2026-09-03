@@ -9,6 +9,7 @@ export type LogbookConfig = {
   screenIndex: number;
   maxWidth: number;
   visionModel?: string;
+  textModel?: string;
   retentionDays: number;
 };
 
@@ -46,6 +47,7 @@ export function resolveLogbookConfig(raw: unknown): LogbookConfig {
     screenIndex: clampNumber(value.screenIndex, DEFAULTS.screenIndex, 0, 16),
     maxWidth: clampNumber(value.maxWidth, DEFAULTS.maxWidth, 480, 3840),
     visionModel: normalizeOptionalString(value.visionModel),
+    textModel: normalizeOptionalString(value.textModel),
     retentionDays: clampNumber(value.retentionDays, DEFAULTS.retentionDays, 1, 365),
   };
 }

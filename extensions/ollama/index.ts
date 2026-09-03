@@ -106,17 +106,15 @@ const lazyOllamaMediaUnderstandingProvider: MediaUnderstandingProvider = {
   capabilities: ["image"],
   describeImage: async (request) => {
     const provider = await loadOllamaMediaUnderstandingProvider();
-    if (!provider.describeImage) {
-      throw new Error("Ollama media understanding provider missing describeImage");
-    }
     return await provider.describeImage(request);
   },
   describeImages: async (request) => {
     const provider = await loadOllamaMediaUnderstandingProvider();
-    if (!provider.describeImages) {
-      throw new Error("Ollama media understanding provider missing describeImages");
-    }
     return await provider.describeImages(request);
+  },
+  extractStructured: async (request) => {
+    const provider = await loadOllamaMediaUnderstandingProvider();
+    return await provider.extractStructured(request);
   },
 };
 

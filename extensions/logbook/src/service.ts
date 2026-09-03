@@ -39,8 +39,8 @@ const MODEL_MISSING_LOG_INTERVAL_MS = 10 * 60 * 1000;
 const CAPTURE_FAILURE_PAUSE_TICKS = 10;
 const CAPTURE_FAILURE_THRESHOLD = 3;
 const JPEG_QUALITY = 0.6;
-// Only Codex currently implements the structured image-extraction contract.
-// Borrowed defaults must not select a provider that will fail every batch.
+// Preserve the established Codex route for borrowed media defaults.
+// Other structured providers require an explicit visionModel.
 const STRUCTURED_MEDIA_PROVIDER = "codex";
 type SnapshotPayload = {
   format?: string;
@@ -538,6 +538,7 @@ export class LogbookService {
       return coverage.ok ? parsed : { ok: false as const, error: coverage.error };
     };
     const first = await this.deps.runtime.llm.complete({
+      model: this.config.textModel,
       messages: [{ role: "user", content: prompt }],
       purpose: "logbook.cards",
       maxTokens: 4000,
@@ -545,6 +546,7 @@ export class LogbookService {
     let parsed = evaluate(first.text);
     if (!parsed.ok) {
       const retry = await this.deps.runtime.llm.complete({
+        model: this.config.textModel,
         messages: [
           { role: "user", content: prompt },
           { role: "assistant", content: first.text },
@@ -582,6 +584,7 @@ export class LogbookService {
     }
     const previousDay = dayKeyFor(new Date(`${day}T12:00:00`).getTime() - 24 * 60 * 60 * 1000);
     const result = await this.deps.runtime.llm.complete({
+      model: this.config.textModel,
       messages: [
         {
           role: "user",
@@ -595,7 +598,11 @@ export class LogbookService {
       purpose: "logbook.standup",
       maxTokens: 800,
     });
-    store.saveStandup(day, result.text.trim());
+    const text = result.text.trim();
+    if (!text) {
+      throw new Error("standup model returned no text");
+    }
+    store.saveStandup(day, text);
     const saved = store.getStandup(day);
     if (!saved) {
       throw new Error("standup save failed");
@@ -607,6 +614,7 @@ export class LogbookService {
     const store = this.requireStore();
     const observations = store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER).slice(-200);
     const result = await this.deps.runtime.llm.complete({
+      model: this.config.textModel,
       messages: [
         {
           role: "user",
@@ -621,7 +629,11 @@ export class LogbookService {
       purpose: "logbook.ask",
       maxTokens: 600,
     });
-    return result.text.trim();
+    const text = result.text.trim();
+    if (!text) {
+      throw new Error("question answering model returned no text");
+    }
+    return text;
   }
 
   // ── Introspection ──────────────────────────────────────────────────

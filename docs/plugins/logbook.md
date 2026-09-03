@@ -15,8 +15,8 @@ answer questions about a tracked day.
 
 OpenClaw-owned state stays on the Gateway under `<state-dir>/logbook/`, but
 model processing is not necessarily local. Sampled screenshots go to the
-configured vision route; observations and timeline text go to the default
-agent model. Use local model routes for both stages if screen content and
+configured vision route; observations and timeline text go to `textModel`, or
+the default agent model when it is unset. Use local model routes for both stages if screen content and
 derived activity text must stay on the machine.
 
 Logbook is bundled and disabled by default. Enabling the plugin opts the
@@ -30,11 +30,11 @@ You need:
   macOS app node needs Screen Recording permission. A headless macOS node host
   (`openclaw node host run`) gets the plugin-provided `logbook.snapshot`
   command backed by the system `screencapture` tool.
-- The bundled Codex plugin enabled and authenticated. Codex currently provides
-  the structured image-extraction contract Logbook requires. Sign in with
+- A provider supporting structured image extraction: Codex or a vision model
+  served through the native Ollama API. For Codex, sign in with
   `openclaw models auth login --provider openai`; see
   [Codex harness](/plugins/codex-harness) for other auth paths.
-- A working default agent model. Logbook uses it to synthesize cards, standup
+- A working `textModel` or default agent model. Logbook uses it to synthesize cards, standup
   notes, and day Q&A after the vision pass.
 
 ## Quickstart
@@ -114,13 +114,58 @@ Logbook uses two separate model routes:
 | Stage            | Data sent                                                 | Model route                                                       |
 | ---------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
 | Observe          | Up to 16 sampled JPEG frames plus their capture times     | `visionModel`, or a compatible borrowed `tools.media` Codex entry |
-| Synthesize cards | Timestamped observations and recent timeline cards        | Default agent model through the plugin LLM runtime                |
-| Generate standup | Cards for the selected day and previous day               | Default agent model through the plugin LLM runtime                |
-| Ask your day     | The question, selected-day cards, and recent observations | Default agent model through the plugin LLM runtime                |
+| Synthesize cards | Timestamped observations and recent timeline cards        | `textModel`, otherwise the default agent model                    |
+| Generate standup | Cards for the selected day and previous day               | `textModel`, otherwise the default agent model                    |
+| Ask your day     | The question, selected-day cards, and recent observations | `textModel`, otherwise the default agent model                    |
 
 The full SQLite database is not sent to either model. Raw screenshots go only
 to the observation stage; card synthesis, standup, and Q&A receive derived
 text.
+
+### Run both stages locally with Ollama
+
+Configure [Ollama](/providers/ollama) with `api: "ollama"` and a local
+vision-capable model first. The OpenAI-compatible API is not used for this
+structured extraction path. Enable the Ollama and Logbook plugins, then merge
+these entries into your configuration:
+
+```json5
+{
+  plugins: {
+    entries: {
+      ollama: { enabled: true },
+      logbook: {
+        enabled: true,
+        config: {
+          visionModel: "ollama/gemma4:12b",
+          textModel: "ollama/gemma4:12b",
+        },
+        llm: {
+          allowModelOverride: true,
+          allowedCompletionModels: ["ollama/gemma4:12b"],
+        },
+      },
+    },
+  },
+}
+```
+
+Replace the model reference in all three places if you use another local model.
+If `plugins.allow` is set, include `logbook` and `ollama`. The Ollama base URL
+must point to the local server; a Gateway in Docker uses the host address,
+such as `http://host.docker.internal:11434`, instead of container localhost.
+Do not select an Ollama cloud model for a local pipeline.
+
+`allowModelOverride` permits Logbook's explicit text model. The
+`allowedCompletionModels` allowlist also checks the resolved default model,
+so an unset or incorrect text model fails instead of sending derived screen
+content to a different provider. Other plugins and normal agent conversations
+keep their existing model settings.
+
+Restart the Gateway after applying the configuration. Capture some activity,
+select **Analyze now**, and verify that a timeline card appears. Check
+**Daily standup** and **Ask your day** as well: a successful observation pass
+alone does not verify the text stage.
 
 ## Configuration
 
@@ -152,16 +197,17 @@ text.
 All Logbook config keys are optional. Numeric values are rounded to integers
 and clamped to the supported range.
 
-| Key                       | Default | Range or values         | Behavior                                                                                     |
-| ------------------------- | ------- | ----------------------- | -------------------------------------------------------------------------------------------- |
-| `captureEnabled`          | `true`  | boolean                 | Persistent master switch for new snapshots; the timeline remains available when `false`      |
-| `captureIntervalSeconds`  | `30`    | `5`-`600`               | Delay between capture attempts                                                               |
-| `analysisIntervalMinutes` | `15`    | `3`-`120`               | Target observation window; gaps and midnight can close it earlier                            |
-| `nodeId`                  | unset   | node id or display name | Pins capture to one connected node; matching is case-insensitive                             |
-| `screenIndex`             | `0`     | `0`-`16`                | Zero-based display index                                                                     |
-| `maxWidth`                | `1440`  | `480`-`3840`            | Requested capture size cap; headless macOS applies it to the largest dimension               |
-| `visionModel`             | unset   | `provider/model`        | Explicit structured route; malformed refs pause analysis, unsupported providers fail batches |
-| `retentionDays`           | `14`    | `1`-`365`               | Deletes old frames; cards, observations, and standups remain                                 |
+| Key                       | Default | Range or values         | Behavior                                                                                                                           |
+| ------------------------- | ------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `captureEnabled`          | `true`  | boolean                 | Persistent master switch for new snapshots; the timeline remains available when `false`                                            |
+| `captureIntervalSeconds`  | `30`    | `5`-`600`               | Delay between capture attempts                                                                                                     |
+| `analysisIntervalMinutes` | `15`    | `3`-`120`               | Target observation window; gaps and midnight can close it earlier                                                                  |
+| `nodeId`                  | unset   | node id or display name | Pins capture to one connected node; matching is case-insensitive                                                                   |
+| `screenIndex`             | `0`     | `0`-`16`                | Zero-based display index                                                                                                           |
+| `maxWidth`                | `1440`  | `480`-`3840`            | Requested capture size cap; headless macOS applies it to the largest dimension                                                     |
+| `visionModel`             | unset   | `provider/model`        | Explicit structured route; malformed refs pause analysis, unsupported providers fail batches                                       |
+| `textModel`               | unset   | `provider/model`        | Model for cards, repairs, standup, and Q&A; defaults to the agent model and requires plugin LLM model override permission when set |
+| `retentionDays`           | `14`    | `1`-`365`               | Deletes old frames; cards, observations, and standups remain                                                                       |
 
 Without `nodeId`, Logbook prefers a connected app node exposing
 `screen.snapshot`, then falls back to a headless node exposing
@@ -176,8 +222,8 @@ Logbook resolves the observation model in this order:
 1. `plugins.entries.logbook.config.visionModel`
 2. the first image-capable Codex entry under `tools.media.models`
 
-Other media providers are skipped because they do not currently expose the
-structured extraction contract Logbook requires. Setting
+Borrowed defaults remain limited to Codex. Configure an explicit
+`visionModel` to use Ollama structured extraction. Setting
 `tools.media.image.enabled: false` disables borrowed media defaults, but an
 explicit Logbook `visionModel` still applies.
 
@@ -219,11 +265,12 @@ the derived-text methods directly.
 - Snapshots can contain anything on screen, including secrets. Frames never
   leave the machine except as sampled input to the configured observation
   model.
-- Observations, recent cards, and questions can leave the machine through the
-  default agent model during card synthesis, standup generation, or Q&A. Apply
+- Observations, recent cards, and questions can leave the machine through
+  `textModel` or the default agent model during card synthesis, standup generation, or Q&A. Apply
   the provider's data-handling policy to both model routes.
-- Use local routes for both the structured observation model and default agent
-  model when you need a fully local pipeline.
+- Use local routes for both the structured observation model and text model
+  when you need a fully local pipeline. Restrict the plugin's completion model
+  allowlist as shown above.
 - Frames, the timeline database, and temporary captures are written with
   owner-only file permissions.
 - Adding `screen.snapshot` to `gateway.nodes.commands.deny` is the

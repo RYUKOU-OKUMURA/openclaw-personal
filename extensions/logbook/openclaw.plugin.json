@@ -32,7 +32,12 @@
     "visionModel": {
       "label": "Vision Model",
       "placeholder": "codex/gpt-5.6-sol",
-      "help": "provider/model used to read snapshots; the provider must support structured extraction (the bundled Codex plugin does). Defaults to the first image-capable Codex entry under tools.media."
+      "help": "provider/model used to read snapshots; the provider must support structured extraction (the bundled Codex and Ollama plugins do). Defaults to the first image-capable Codex entry under tools.media."
+    },
+    "textModel": {
+      "label": "Text Model",
+      "placeholder": "ollama/gemma4:12b",
+      "help": "provider/model for timeline cards, daily summaries, and questions. Defaults to the agent's configured model. Explicit selection requires plugins.entries.logbook.llm.allowModelOverride; use allowedCompletionModels to restrict all text completions."
     },
     "captureEnabled": {
       "label": "Capture Enabled",
@@ -72,6 +77,9 @@
         "default": 1440
       },
       "visionModel": {
+        "type": "string"
+      },
+      "textModel": {
         "type": "string"
       },
       "retentionDays": {
