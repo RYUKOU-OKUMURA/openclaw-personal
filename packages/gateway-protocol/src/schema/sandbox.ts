@@ -78,6 +78,15 @@ export const SandboxExplainParamsSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
 });
 
+export const SandboxRecreateParamsSchema = closedObject({
+  agentId: Type.Optional(NonEmptyString),
+});
+
+export const SandboxRecreateResultSchema = closedObject({
+  removed: Type.Array(NonEmptyString),
+  failed: Type.Array(closedObject({ containerName: NonEmptyString, error: Type.String() })),
+});
+
 const SandboxToolPolicySourceSchema = closedObject({
   source: Type.Union([Type.Literal("agent"), Type.Literal("global"), Type.Literal("default")]),
   key: Type.String(),
@@ -158,3 +167,5 @@ export type SandboxExplainParams = Static<typeof SandboxExplainParamsSchema>;
 export type SandboxExplainResult = Static<typeof SandboxExplainResultSchema>;
 export type SandboxEntriesAddParams = Static<typeof SandboxEntriesAddParamsSchema>;
 export type SandboxEntriesAddResult = Static<typeof SandboxEntriesAddResultSchema>;
+export type SandboxRecreateParams = Static<typeof SandboxRecreateParamsSchema>;
+export type SandboxRecreateResult = Static<typeof SandboxRecreateResultSchema>;

@@ -245,6 +245,15 @@ dispatch so authorization failures have one canonical structured response:
   return `recreateRequired: true`, because a running container keeps its old
   mounts until it is recreated. Upload and create sources are unsupported for
   `ro` and `rw`.
+- `sandbox.recreate` needs `operator.admin` and is marked `controlPlaneWrite`.
+  It resolves the same lifecycle identity as `sandbox.explain` and removes at
+  most one matching Docker container by exact name, backend, and scope key. The
+  result is `{ removed: string[], failed: [{ containerName, error }] }`; no
+  registration yields empty arrays, and a removal error is returned in `failed`
+  as a best-effort result. The container is removed now and is created on next
+  use, with no Gateway restart or immediate ensure. Removing a shared runtime
+  interrupts all users of it; source and bind files are preserved. The CLI's
+  broader agent and browser recreation behavior is unchanged.
 - Removing a shared bind is an administrative `config.get` followed by
   `config.patch` using a fresh `baseHash`, the exact owning binds array in
   `replacePaths`, and the specific bind removed. This preserves sibling binds

@@ -4,17 +4,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   validateSandboxExplainResult,
   validateSandboxEntriesAddResult,
+  validateSandboxRecreateResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { handleGatewayRequest } from "../server-methods.js";
 
 const readRegistry = vi.hoisted(() => vi.fn(async () => null));
+const recreate = vi.hoisted(() => vi.fn());
 vi.mock("../../agents/sandbox/explain-runtime.js", () => ({
   readSandboxExplainRegistry: readRegistry,
 }));
+vi.mock("../../agents/sandbox/recreate.js", () => ({
+  recreateSandboxContainer: recreate,
+}));
 
-afterEach(() => readRegistry.mockClear());
+afterEach(() => {
+  readRegistry.mockClear();
+  recreate.mockReset();
+});
 
 async function call(
   cfg: OpenClawConfig,
@@ -250,6 +258,110 @@ describe("sandbox.entries.add RPC", () => {
       await expect(fs.stat(path.join(state.workspaceDir, "inbox"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+    });
+  });
+});
+
+describe("sandbox.recreate RPC", () => {
+  it.each([
+    { removed: [], failed: [] },
+    { removed: ["sandbox-main"], failed: [] },
+    { removed: [], failed: [{ containerName: "sandbox-main", error: "Docker unavailable" }] },
+  ])("returns the lifecycle outcome to admins: %j", async (result) => {
+    await withOpenClawTestState({ label: "sandbox-recreate-rpc" }, async (state) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            workspace: state.workspaceDir,
+            sandbox: { mode: "all", scope: "agent", workspaceAccess: "rw" },
+          },
+        },
+      };
+      recreate.mockResolvedValueOnce(result);
+      const respond = await call(cfg, {}, ["operator.admin"], "sandbox.recreate");
+      expect(respond).toHaveBeenCalledWith(true, result, undefined);
+      expect(validateSandboxRecreateResult(respond.mock.calls[0]?.[1])).toBe(true);
+      expect(recreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          report: expect.objectContaining({ agentId: "main" }),
+          workspaceLayout: expect.objectContaining({ workspaceDir: state.workspaceDir }),
+        }),
+        cfg,
+      );
+    });
+  });
+
+  it.each([{ scopes: [] }, { scopes: ["operator.read"] }, { scopes: ["operator.write"] }])(
+    "rejects non-admin scopes $scopes before removal",
+    async ({ scopes }) => {
+      const respond = await call({}, {}, scopes, "sandbox.recreate");
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "FORBIDDEN", message: "missing scope: operator.admin" }),
+      );
+      expect(recreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { containerName: "other" },
+    { sessionKey: "agent:other:main" },
+    { agentId: "  " },
+    { agentId: "missing" },
+  ])("rejects invalid or widened targets %j", async (params) => {
+    const respond = await call(
+      { agents: { list: [{ id: "main" }] } },
+      params,
+      ["operator.admin"],
+      "sandbox.recreate",
+    );
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: "INVALID_REQUEST" }),
+    );
+    expect(recreate).not.toHaveBeenCalled();
+  });
+
+  it.each([{ mode: "off" as const }, { mode: "all" as const, backend: "podman" }])(
+    "rejects a session without a supported sandbox %j",
+    async (sandbox) => {
+      await withOpenClawTestState({ label: "sandbox-recreate-disabled" }, async (state) => {
+        const respond = await call(
+          { agents: { defaults: { workspace: state.workspaceDir, sandbox } } },
+          {},
+          ["operator.admin"],
+          "sandbox.recreate",
+        );
+        expect(respond).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "INVALID_REQUEST" }),
+        );
+        expect(recreate).not.toHaveBeenCalled();
+      });
+    },
+  );
+
+  it("reports registry read failures as unavailable instead of an empty success", async () => {
+    await withOpenClawTestState({ label: "sandbox-recreate-unavailable" }, async (state) => {
+      recreate.mockRejectedValueOnce(new Error("registry unreadable"));
+      const respond = await call(
+        {
+          agents: {
+            defaults: { workspace: state.workspaceDir, sandbox: { mode: "all" } },
+          },
+        },
+        {},
+        ["operator.admin"],
+        "sandbox.recreate",
+      );
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "UNAVAILABLE", message: "registry unreadable" }),
+      );
     });
   });
 });

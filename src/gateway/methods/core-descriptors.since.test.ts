@@ -83,6 +83,7 @@ const TRAIN_2026_7_METHODS = [
 const CURRENT_TRAIN_METHODS = [
   "sandbox.explain",
   "sandbox.entries.add",
+  "sandbox.recreate",
   "diagnostics.lanes",
   "plugins.inspect",
   "device.pair.setupStatus",

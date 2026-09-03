@@ -7,11 +7,12 @@ import { describeSandboxContainer } from "./manage.js";
 import { readRegistryEntry } from "./registry.js";
 import { buildSandboxContainerName, slugifySessionKey } from "./shared.js";
 
-/** Projects only the Docker runtime addressed by this report, without provisioning it. */
-export async function readSandboxExplainRegistry(
-  { report, sandboxConfig, workspaceLayout }: ReturnType<typeof resolveSandboxExplainContext>,
-  config: OpenClawConfig,
-) {
+/** Resolves the same Docker identity used when provisioning this report's runtime. */
+export function resolveSandboxExplainContainerName({
+  report,
+  sandboxConfig,
+  workspaceLayout,
+}: ReturnType<typeof resolveSandboxExplainContext>) {
   if (
     !report.sandbox.sessionIsSandboxed ||
     normalizeLowercaseStringOrEmpty(sandboxConfig.backend) !== "docker"
@@ -20,17 +21,41 @@ export async function readSandboxExplainRegistry(
   }
   const slug =
     sandboxConfig.scope === "shared" ? "shared" : slugifySessionKey(workspaceLayout.scopeKey);
-  const name = buildSandboxContainerName(sandboxConfig.docker.containerPrefix, slug);
+  return buildSandboxContainerName(sandboxConfig.docker.containerPrefix, slug);
+}
+
+/** Selects one registered runtime; never substitutes another workspace or backend. */
+export async function readSandboxExplainRegistryEntry(
+  snapshot: ReturnType<typeof resolveSandboxExplainContext>,
+) {
+  const name = resolveSandboxExplainContainerName(snapshot);
+  if (!name) {
+    return null;
+  }
   const entry = await readRegistryEntry(name);
   // A scope can own multiple containers. Match the lifecycle's name and backend
   // too, so another workspace or a retired prefix cannot appear as this runtime.
   if (
     !entry ||
+    entry.containerName !== name ||
     normalizeLowercaseStringOrEmpty(entry.backendId ?? "docker") !== "docker" ||
-    entry.sessionKey !== workspaceLayout.scopeKey
+    entry.sessionKey !== snapshot.workspaceLayout.scopeKey
   ) {
     return null;
   }
+  return entry;
+}
+
+/** Projects only the Docker runtime addressed by this report, without provisioning it. */
+export async function readSandboxExplainRegistry(
+  snapshot: ReturnType<typeof resolveSandboxExplainContext>,
+  config: OpenClawConfig,
+) {
+  const entry = await readSandboxExplainRegistryEntry(snapshot);
+  if (!entry) {
+    return null;
+  }
+  const { sandboxConfig, workspaceLayout } = snapshot;
   const docker = await resolveSandboxDockerUser({
     backend: sandboxConfig.backend,
     docker: sandboxConfig.docker,

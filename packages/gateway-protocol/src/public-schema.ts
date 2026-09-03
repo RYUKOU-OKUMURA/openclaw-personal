@@ -1,6 +1,7 @@
 // Explicit schema exports keep public protocol changes reviewable.
 export * from "./schema/sessions-goal.js";
 export * from "./public-schema-push.js";
+export * from "./schema/sandbox.js";
 export {
   isCloudWorkerPlacementState,
   ConnectParamsSchema,
@@ -694,8 +695,4 @@ export {
   FsDirEntrySchema,
   FsListDirParamsSchema,
   FsListDirResultSchema,
-  SandboxExplainParamsSchema,
-  SandboxExplainResultSchema,
-  SandboxEntriesAddParamsSchema,
-  SandboxEntriesAddResultSchema,
 } from "./schema-modules.js";

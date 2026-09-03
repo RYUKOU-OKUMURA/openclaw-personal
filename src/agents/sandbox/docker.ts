@@ -78,7 +78,7 @@ export async function execDockerRaw(
 const log = createSubsystemLogger("docker");
 
 const HOT_CONTAINER_WINDOW_MS = 5 * 60 * 1000;
-const sandboxContainerLifecycleQueue = new KeyedAsyncQueue();
+export const sandboxContainerLifecycleQueue = new KeyedAsyncQueue();
 
 type ExecDockerOptions = ExecDockerRawOptions;
 

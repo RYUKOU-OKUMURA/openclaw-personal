@@ -4332,6 +4332,33 @@ public struct SandboxEntriesAddResult: Codable, Sendable {
     }
 }
 
+public struct SandboxRecreateParams: Codable, Sendable {
+    public let agentid: String?
+
+    public init(
+        agentid: String? = nil)
+    {
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+    }
+}
+
+public struct SandboxRecreateResult: Codable, Sendable {
+    public let removed: [String]
+    public let failed: [[String: AnyCodable]]
+
+    public init(
+        removed: [String],
+        failed: [[String: AnyCodable]])
+    {
+        self.removed = removed
+        self.failed = failed
+    }
+}
+
 public struct NodePairListParams: Codable, Sendable {}
 
 public struct NodePairApproveParams: Codable, Sendable {

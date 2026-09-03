@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSandboxEntriesAddParams } from "../index.js";
+import { validateSandboxEntriesAddParams, validateSandboxRecreateParams } from "../index.js";
 import { MAX_TERMINAL_UPLOAD_BASE64_LENGTH } from "./terminal-constants.js";
 
 describe("sandbox entry protocol", () => {
@@ -49,5 +49,23 @@ describe("sandbox entry protocol", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("sandbox recreate protocol", () => {
+  it("accepts an optional agent and rejects client-selected runtime identities", () => {
+    for (const params of [{}, { agentId: "main" }]) {
+      expect(validateSandboxRecreateParams(params)).toBe(true);
+    }
+    for (const params of [
+      { agentId: "" },
+      { agentId: 1 },
+      { containerName: "sandbox-other" },
+      { all: true },
+      { browser: true },
+      { sessionKey: "agent:other:main" },
+    ]) {
+      expect(validateSandboxRecreateParams(params)).toBe(false);
+    }
   });
 });

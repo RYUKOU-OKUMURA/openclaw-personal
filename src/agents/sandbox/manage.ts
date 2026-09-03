@@ -107,20 +107,30 @@ export async function removeSandboxContainer(containerName: string): Promise<voi
   const registry = await readRegistry();
   const entry = registry.entries.find((item) => item.containerName === containerName);
   if (entry) {
-    const backendId = entry.backendId ?? "docker";
-    const manager = getSandboxBackendManager(backendId);
-    if (!manager) {
-      throw new Error(
-        `Sandbox backend "${backendId}" is unavailable; enable its plugin before removing this runtime.`,
-      );
-    }
-    await manager.removeRuntime({
-      entry,
-      config,
-      agentId: resolveSandboxAgentId(entry.sessionKey),
-    });
+    await removeSandboxContainerEntry(entry, config);
+    return;
   }
   await removeRegistryEntry(containerName);
+}
+
+/** Removes the selected entry without resolving its name into another backend or scope. */
+export async function removeSandboxContainerEntry(
+  entry: SandboxRegistryEntry,
+  config: OpenClawConfig,
+): Promise<void> {
+  const backendId = entry.backendId ?? "docker";
+  const manager = getSandboxBackendManager(backendId);
+  if (!manager) {
+    throw new Error(
+      `Sandbox backend "${backendId}" is unavailable; enable its plugin before removing this runtime.`,
+    );
+  }
+  await manager.removeRuntime({
+    entry,
+    config,
+    agentId: resolveSandboxAgentId(entry.sessionKey),
+  });
+  await removeRegistryEntry(entry.containerName);
 }
 
 /** Removes one browser sandbox container, registry entry, and any in-process bridge server. */

@@ -89,4 +89,6 @@ export const AgentControlProtocolSchemas = {
   SandboxExplainResult: sandboxSchemas.SandboxExplainResultSchema,
   SandboxEntriesAddParams: sandboxSchemas.SandboxEntriesAddParamsSchema,
   SandboxEntriesAddResult: sandboxSchemas.SandboxEntriesAddResultSchema,
+  SandboxRecreateParams: sandboxSchemas.SandboxRecreateParamsSchema,
+  SandboxRecreateResult: sandboxSchemas.SandboxRecreateResultSchema,
 } as const;
