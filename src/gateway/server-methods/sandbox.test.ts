@@ -218,7 +218,7 @@ describe("sandbox.entries.add RPC", () => {
   );
 
   it.each([
-    { mode: "ro", source: { kind: "path", path: "/reference" } },
+    { mode: "ro", source: { kind: "upload", name: "empty", contentBase64: "" } },
     { mode: "copy", source: { kind: "create", name: "empty", entryKind: "socket" } },
     { mode: "copy", source: { kind: "upload", name: "empty", contentBase64: "not base64" } },
     {

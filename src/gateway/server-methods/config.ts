@@ -78,7 +78,12 @@ import {
   resolveOpenPathCommand,
   sanitizePathForLog,
 } from "./open-path.js";
-import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
+import type {
+  GatewayClient,
+  GatewayRequestContext,
+  GatewayRequestHandlers,
+  RespondFn,
+} from "./types.js";
 import { assertValidParams } from "./validation.js";
 
 const MAX_CONFIG_ISSUES_IN_ERROR_MESSAGE = 3;
@@ -96,6 +101,33 @@ type ConfigRedactionHints = Parameters<typeof redactConfigObject>[1];
 type ConfigWriteCommitResult = Awaited<ReturnType<typeof commitGatewayConfigWrite>>;
 type ConfigRestartWriteKind = Parameters<typeof resolveGatewayConfigRestartWriteResult>[0]["kind"];
 type ConfigRestartWriteMode = Parameters<typeof resolveGatewayConfigRestartWriteResult>[0]["mode"];
+
+type ConfigMergePatchSnapshot = Awaited<
+  ReturnType<typeof readConfigFileSnapshotForWrite>
+>["snapshot"];
+
+/** Structured patch intent built against the fresh config snapshot used by a write. */
+type ConfigMergePatchBuildResult = {
+  patch: Record<string, unknown>;
+  replacePaths?: readonly string[];
+};
+
+type ConfigMergePatchBuildContext = {
+  snapshot: ConfigMergePatchSnapshot;
+};
+
+type ConfigMergePatchInProcessCommonParams = {
+  client: GatewayClient | null;
+  context: GatewayRequestContext;
+  respond: RespondFn;
+  buildPatch: (
+    context: ConfigMergePatchBuildContext,
+  ) => ConfigMergePatchBuildResult | null | Promise<ConfigMergePatchBuildResult | null>;
+};
+
+type ConfigMergePatchInProcessParams =
+  | (ConfigMergePatchInProcessCommonParams & { requestParams: unknown })
+  | (ConfigMergePatchInProcessCommonParams & { requestParams?: never });
 
 function requireConfigBaseHash(
   params: unknown,
@@ -858,6 +890,230 @@ function diffConfigLeafPaths(prev: unknown, next: unknown, prefix = ""): string[
   return diffConfigPaths(prev, next, prefix);
 }
 
+/**
+ * Runs a config.patch merge/write from an intent built against the write snapshot.
+ *
+ * The callback is deliberately invoked after the snapshot and its write options
+ * are captured. Callers that derive a patch from the current config can therefore
+ * preserve authored fields and use the same lock-time CAS as config.patch itself.
+ */
+export async function applyConfigMergePatchInProcess(
+  params: ConfigMergePatchInProcessParams,
+): Promise<void> {
+  const requestParams = params.requestParams;
+  const hasRequestParams = requestParams !== undefined;
+  const hashlessPatch = hasRequestParams && resolveBaseHashParam(requestParams) === null;
+  // Hash-free writes do not retry: only the client can replay fresh intent after a lost race;
+  // server re-merge would replay frozen stale intent over the winner. A paused handler can still
+  // commit stale state, an accepted residual instead of adding connection-liveness plumbing.
+  const writeSnapshot =
+    !hasRequestParams || hashlessPatch
+      ? await readConfigFileSnapshotForWrite()
+      : await readConfigWriteSnapshotOrRespond(
+          requestParams,
+          params.respond,
+          params.context.configRevisionProjector,
+        );
+  if (!writeSnapshot) {
+    return;
+  }
+  const { snapshot, writeOptions } = writeSnapshot;
+  const modelIdNormalizationPolicies =
+    writeOptions.basePluginMetadataSnapshot?.owners.modelIdNormalizationPolicies;
+  if (!snapshot.valid) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        `${summarizeConfigValidationIssues(snapshot.issues)}; fix (openclaw doctor) before patching`,
+        { details: { issues: snapshot.issues } },
+      ),
+    );
+    return;
+  }
+
+  const builtPatch = await params.buildPatch({
+    snapshot,
+  });
+  if (!builtPatch) {
+    return;
+  }
+  if (!isPlainObject(builtPatch.patch)) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, "config.patch raw must be an object"),
+    );
+    return;
+  }
+  const normalizedPatch = normalizeSubmittedConfigModelRefs(
+    builtPatch.patch as OpenClawConfig,
+    modelIdNormalizationPolicies,
+  );
+  if (hashlessPatch && !hasHashlessPatchLwwStructure(normalizedPatch)) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "config base hash required; re-run config.get and retry",
+      ),
+    );
+    return;
+  }
+  const replacePaths = normalizeConfigPatchReplacePaths(builtPatch.replacePaths);
+  try {
+    assertNoDuplicateConfigPatchIds({
+      patch: normalizedPatch,
+      current: snapshot.config,
+      replacePaths,
+    });
+  } catch (error) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)),
+    );
+    return;
+  }
+  // Merge authored rows first; merging runtime rows would persist catalog defaults
+  // from untouched siblings whenever an ID-keyed array changes.
+  const sourceConfig = normalizeSubmittedConfigModelRefs(
+    snapshot.sourceConfig,
+    modelIdNormalizationPolicies,
+  );
+  const mergedSource = applyMergePatch(sourceConfig, normalizedPatch, {
+    // Arrays with stable ids behave like maps for partial control-plane edits.
+    mergeObjectArraysById: true,
+    replaceArrayPaths: replacePaths,
+  });
+  const merged = applyMergePatch(snapshot.config, createMergePatch(sourceConfig, mergedSource));
+  const schemaPatch = loadSchemaWithPlugins();
+  const restoredMerge = restoreRedactedValues(merged, snapshot.config, schemaPatch.uiHints);
+  if (!restoredMerge.ok) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        restoredMerge.humanReadableMessage ?? "invalid config",
+      ),
+    );
+    return;
+  }
+  if (
+    rejectDestructiveArrayPatchWithoutIntent({
+      currentConfig: snapshot.config,
+      mergedConfig: restoredMerge.result,
+      patch: normalizedPatch,
+      replacePaths,
+      respond: params.respond,
+    })
+  ) {
+    return;
+  }
+  const restoredChangedPaths = diffConfigLeafPaths(snapshot.config, restoredMerge.result);
+  if (hashlessPatch && !restoredChangedPaths.every(isHashlessPatchLwwPath)) {
+    const guardedPaths = restoredChangedPaths.filter((path) => !isHashlessPatchLwwPath(path));
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        `config base hash required for ${guardedPaths.join(", ")}; re-run config.get and retry with baseHash`,
+      ),
+    );
+    return;
+  }
+  const actor = resolveControlPlaneActor(params.client);
+  if (restoredChangedPaths.length === 0) {
+    respondConfigPatchNoop({
+      snapshot,
+      config: snapshot.config,
+      uiHints: schemaPatch.uiHints,
+      actor,
+      context: params.context,
+      respond: params.respond,
+    });
+    return;
+  }
+  const validatedSubmission = validateSubmittedConfigOrRespond({
+    candidate: restoredMerge.result,
+    sourceConfig: snapshot.sourceConfig,
+    modelIdNormalizationPolicies,
+    respond: params.respond,
+  });
+  if (!validatedSubmission) {
+    return;
+  }
+  const writeConfig = validatedSubmission.validationCandidate;
+  const validatedConfig = validatedSubmission.config;
+  const preparedSecretsSnapshot = await ensureResolvableSecretRefsOrRespond({
+    config: validatedConfig,
+    respond: params.respond,
+  });
+  if (!preparedSecretsSnapshot) {
+    return;
+  }
+  const changedPaths = diffConfigPaths(snapshot.config, validatedConfig);
+
+  // No-op: if the validated config is identical to the current config,
+  // skip the file write and SIGUSR1 restart entirely. This avoids a full
+  // gateway restart (and the resulting connection drop) when a control-plane
+  // client re-sends the same config (e.g. hot-apply with no actual changes).
+  if (changedPaths.length === 0) {
+    respondConfigPatchNoop({
+      snapshot,
+      config: validatedConfig,
+      uiHints: schemaPatch.uiHints,
+      actor,
+      context: params.context,
+      respond: params.respond,
+    });
+    return;
+  }
+
+  params.context.logGateway?.info(
+    `config.patch write ${formatControlPlaneActor(actor)} changedPaths=${summarizeChangedPaths(changedPaths)} restartReason=config.patch`,
+  );
+  // Compare before the write so we invalidate clients authenticated against the
+  // previous shared secret immediately after the config update succeeds.
+  const disconnectSharedAuthClients = shouldDisconnectSharedAuthClientsForConfigWrite({
+    prevConfig: snapshot.config,
+    prevSourceConfig: snapshot.sourceConfig,
+    nextConfig: validatedConfig,
+    preparedSecretsSnapshot,
+  });
+  const writeResult = await commitGatewayConfigWriteOrRespond({
+    snapshot,
+    writeOptions,
+    nextConfig: writeConfig,
+    context: params.context,
+    disconnectSharedAuthClients,
+    awaitRuntimeApplication: shouldAwaitGatewayConfigApplication({
+      changedPaths,
+      nextConfig: writeConfig,
+    }),
+    respond: params.respond,
+  });
+  if (!writeResult) {
+    return;
+  }
+  await respondWithConfigRestartWrite({
+    requestParams: requestParams ?? {},
+    kind: "config-patch",
+    mode: "config.patch",
+    writeResult,
+    changedPaths,
+    actor,
+    context: params.context,
+    respond: params.respond,
+    uiHints: schemaPatch.uiHints,
+    preparedSecretsSnapshot,
+  });
+}
+
 export const configHandlers: GatewayRequestHandlers = {
   "config.get": async ({ params, respond, context }) => {
     if (!assertValidParams(params, validateConfigGetParams, "config.get", respond)) {
@@ -983,220 +1239,38 @@ export const configHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateConfigPatchParams, "config.patch", respond)) {
       return;
     }
-    const hashlessPatch = resolveBaseHashParam(params) === null;
-    // Hash-free writes do not retry: only the client can replay fresh intent after a lost race;
-    // server re-merge would replay frozen stale intent over the winner. A paused handler can still
-    // commit stale state, an accepted residual instead of adding connection-liveness plumbing.
-    const writeSnapshot = hashlessPatch
-      ? await readConfigFileSnapshotForWrite()
-      : await readConfigWriteSnapshotOrRespond(params, respond, context.configRevisionProjector);
-    if (!writeSnapshot) {
-      return;
-    }
-    const { snapshot, writeOptions } = writeSnapshot;
-    const modelIdNormalizationPolicies =
-      writeOptions.basePluginMetadataSnapshot?.owners.modelIdNormalizationPolicies;
-    if (!snapshot.valid) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `${summarizeConfigValidationIssues(snapshot.issues)}; fix (openclaw doctor) before patching`,
-          { details: { issues: snapshot.issues } },
-        ),
-      );
-      return;
-    }
-    const rawValue = (params as { raw?: unknown }).raw;
-    if (typeof rawValue !== "string") {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          "invalid config.patch params: raw (string) required",
-        ),
-      );
-      return;
-    }
-    const parsedRes = parseConfigJson5(rawValue);
-    if (!parsedRes.ok) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, parsedRes.error));
-      return;
-    }
-    if (
-      !parsedRes.parsed ||
-      typeof parsedRes.parsed !== "object" ||
-      Array.isArray(parsedRes.parsed)
-    ) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "config.patch raw must be an object"),
-      );
-      return;
-    }
-    const normalizedPatch = normalizeSubmittedConfigModelRefs(
-      parsedRes.parsed as OpenClawConfig,
-      modelIdNormalizationPolicies,
-    );
-    if (hashlessPatch && !hasHashlessPatchLwwStructure(normalizedPatch)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          "config base hash required; re-run config.get and retry",
-        ),
-      );
-      return;
-    }
-    const replacePaths = readConfigPatchReplacePaths(params);
-    try {
-      assertNoDuplicateConfigPatchIds({
-        patch: normalizedPatch,
-        current: snapshot.config,
-        replacePaths,
-      });
-    } catch (error) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatErrorMessage(error)));
-      return;
-    }
-    // Merge authored rows first; merging runtime rows would persist catalog defaults
-    // from untouched siblings whenever an ID-keyed array changes.
-    const sourceConfig = normalizeSubmittedConfigModelRefs(
-      snapshot.sourceConfig,
-      modelIdNormalizationPolicies,
-    );
-    const mergedSource = applyMergePatch(sourceConfig, normalizedPatch, {
-      // Arrays with stable ids behave like maps for partial control-plane edits.
-      mergeObjectArraysById: true,
-      replaceArrayPaths: replacePaths,
-    });
-    const merged = applyMergePatch(snapshot.config, createMergePatch(sourceConfig, mergedSource));
-    const schemaPatch = loadSchemaWithPlugins();
-    const restoredMerge = restoreRedactedValues(merged, snapshot.config, schemaPatch.uiHints);
-    if (!restoredMerge.ok) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          restoredMerge.humanReadableMessage ?? "invalid config",
-        ),
-      );
-      return;
-    }
-    if (
-      rejectDestructiveArrayPatchWithoutIntent({
-        currentConfig: snapshot.config,
-        mergedConfig: restoredMerge.result,
-        patch: normalizedPatch,
-        replacePaths,
-        respond,
-      })
-    ) {
-      return;
-    }
-    const restoredChangedPaths = diffConfigLeafPaths(snapshot.config, restoredMerge.result);
-    if (hashlessPatch && !restoredChangedPaths.every(isHashlessPatchLwwPath)) {
-      const guardedPaths = restoredChangedPaths.filter((path) => !isHashlessPatchLwwPath(path));
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `config base hash required for ${guardedPaths.join(", ")}; re-run config.get and retry with baseHash`,
-        ),
-      );
-      return;
-    }
-    const actor = resolveControlPlaneActor(client);
-    if (restoredChangedPaths.length === 0) {
-      respondConfigPatchNoop({
-        snapshot,
-        config: snapshot.config,
-        uiHints: schemaPatch.uiHints,
-        actor,
-        context,
-        respond,
-      });
-      return;
-    }
-    const validatedSubmission = validateSubmittedConfigOrRespond({
-      candidate: restoredMerge.result,
-      sourceConfig: snapshot.sourceConfig,
-      modelIdNormalizationPolicies,
-      respond,
-    });
-    if (!validatedSubmission) {
-      return;
-    }
-    const writeConfig = validatedSubmission.validationCandidate;
-    const validatedConfig = validatedSubmission.config;
-    const preparedSecretsSnapshot = await ensureResolvableSecretRefsOrRespond({
-      config: validatedConfig,
-      respond,
-    });
-    if (!preparedSecretsSnapshot) {
-      return;
-    }
-    const changedPaths = diffConfigPaths(snapshot.config, validatedConfig);
-
-    // No-op: if the validated config is identical to the current config,
-    // skip the file write and SIGUSR1 restart entirely. This avoids a full
-    // gateway restart (and the resulting connection drop) when a control-plane
-    // client re-sends the same config (e.g. hot-apply with no actual changes).
-    if (changedPaths.length === 0) {
-      respondConfigPatchNoop({
-        snapshot,
-        config: validatedConfig,
-        uiHints: schemaPatch.uiHints,
-        actor,
-        context,
-        respond,
-      });
-      return;
-    }
-
-    context?.logGateway?.info(
-      `config.patch write ${formatControlPlaneActor(actor)} changedPaths=${summarizeChangedPaths(changedPaths)} restartReason=config.patch`,
-    );
-    // Compare before the write so we invalidate clients authenticated against the
-    // previous shared secret immediately after the config update succeeds.
-    const disconnectSharedAuthClients = shouldDisconnectSharedAuthClientsForConfigWrite({
-      prevConfig: snapshot.config,
-      prevSourceConfig: snapshot.sourceConfig,
-      nextConfig: validatedConfig,
-      preparedSecretsSnapshot,
-    });
-    const writeResult = await commitGatewayConfigWriteOrRespond({
-      snapshot,
-      writeOptions,
-      nextConfig: writeConfig,
-      context,
-      disconnectSharedAuthClients,
-      awaitRuntimeApplication: shouldAwaitGatewayConfigApplication({
-        changedPaths,
-        nextConfig: writeConfig,
-      }),
-      respond,
-    });
-    if (!writeResult) {
-      return;
-    }
-    await respondWithConfigRestartWrite({
+    await applyConfigMergePatchInProcess({
       requestParams: params,
-      kind: "config-patch",
-      mode: "config.patch",
-      writeResult,
-      changedPaths,
-      actor,
+      client,
       context,
       respond,
-      uiHints: schemaPatch.uiHints,
-      preparedSecretsSnapshot,
+      buildPatch: () => {
+        const rawValue = parseRawConfigOrRespond(params, "config.patch", respond);
+        if (rawValue === null) {
+          return null;
+        }
+        const parsedRes = parseConfigJson5(rawValue);
+        if (!parsedRes.ok) {
+          respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, parsedRes.error));
+          return null;
+        }
+        if (
+          !parsedRes.parsed ||
+          typeof parsedRes.parsed !== "object" ||
+          Array.isArray(parsedRes.parsed)
+        ) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, "config.patch raw must be an object"),
+          );
+          return null;
+        }
+        return {
+          patch: parsedRes.parsed as Record<string, unknown>,
+          replacePaths: [...readConfigPatchReplacePaths(params)],
+        };
+      },
     });
   },
   "config.apply": async ({ params, respond, client, context }) => {

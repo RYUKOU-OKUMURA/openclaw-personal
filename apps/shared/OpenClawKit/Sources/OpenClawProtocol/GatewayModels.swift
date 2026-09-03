@@ -4314,28 +4314,6 @@ public struct SandboxExplainResult: Codable, Sendable {
     }
 }
 
-public struct SandboxEntriesAddParams: Codable, Sendable {
-    public let agentid: String?
-    public let mode: String
-    public let source: AnyCodable
-
-    public init(
-        agentid: String? = nil,
-        mode: String,
-        source: AnyCodable)
-    {
-        self.agentid = agentid
-        self.mode = mode
-        self.source = source
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case agentid = "agentId"
-        case mode
-        case source
-    }
-}
-
 public struct SandboxEntriesAddResult: Codable, Sendable {
     public let entry: [String: AnyCodable]
     public let recreaterequired: Bool
@@ -22569,6 +22547,220 @@ public enum ProjectRecent: Codable, Sendable {
         switch self {
         case .project(let value): try value.encode(to: encoder)
         case .folder(let value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct SandboxEntriesAddParamsCopy: Codable, Sendable {
+    public let agentid: String?
+    public let mode: String
+    public let source: AnyCodable
+
+    public init(
+        agentid: String? = nil,
+        source: AnyCodable
+    )
+    {
+        self.agentid = agentid
+        self.mode = "copy"
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case mode
+        case source
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "mode", "source"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsCopy: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "copy" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal copy"
+            )
+        }
+        self.mode = "copy"
+        self.source = try container.decode(AnyCodable.self, forKey: .source)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode("copy", forKey: .mode)
+        try container.encode(source, forKey: .source)
+    }
+}
+
+public struct SandboxEntriesAddParamsRo: Codable, Sendable {
+    public let agentid: String?
+    public let source: [String: AnyCodable]
+    public let allowexternalsource: Bool?
+    public let mode: String
+
+    public init(
+        agentid: String? = nil,
+        source: [String: AnyCodable],
+        allowexternalsource: Bool? = nil
+    )
+    {
+        self.agentid = agentid
+        self.source = source
+        self.allowexternalsource = allowexternalsource
+        self.mode = "ro"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case source
+        case allowexternalsource = "allowExternalSource"
+        case mode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "source", "allowExternalSource", "mode"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsRo: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        self.source = try container.decode([String: AnyCodable].self, forKey: .source)
+        self.allowexternalsource = try container.decodeIfPresent(Bool.self, forKey: .allowexternalsource)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "ro" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal ro"
+            )
+        }
+        self.mode = "ro"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(allowexternalsource, forKey: .allowexternalsource)
+        try container.encode("ro", forKey: .mode)
+    }
+}
+
+public struct SandboxEntriesAddParamsRw: Codable, Sendable {
+    public let agentid: String?
+    public let source: [String: AnyCodable]
+    public let allowexternalsource: Bool?
+    public let mode: String
+
+    public init(
+        agentid: String? = nil,
+        source: [String: AnyCodable],
+        allowexternalsource: Bool? = nil
+    )
+    {
+        self.agentid = agentid
+        self.source = source
+        self.allowexternalsource = allowexternalsource
+        self.mode = "rw"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case source
+        case allowexternalsource = "allowExternalSource"
+        case mode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "source", "allowExternalSource", "mode"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsRw: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        self.source = try container.decode([String: AnyCodable].self, forKey: .source)
+        self.allowexternalsource = try container.decodeIfPresent(Bool.self, forKey: .allowexternalsource)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "rw" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal rw"
+            )
+        }
+        self.mode = "rw"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(allowexternalsource, forKey: .allowexternalsource)
+        try container.encode("rw", forKey: .mode)
+    }
+}
+
+public enum SandboxEntriesAddParams: Codable, Sendable {
+    case copy(SandboxEntriesAddParamsCopy)
+    case ro(SandboxEntriesAddParamsRo)
+    case rw(SandboxEntriesAddParamsRw)
+
+    private enum CodingKeys: String, CodingKey {
+        case discriminator = "mode"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let discriminator = try container.decode(String.self, forKey: .discriminator)
+        switch discriminator {
+        case "copy": self = try .copy(SandboxEntriesAddParamsCopy(from: decoder))
+        case "ro": self = try .ro(SandboxEntriesAddParamsRo(from: decoder))
+        case "rw": self = try .rw(SandboxEntriesAddParamsRw(from: decoder))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .discriminator,
+                in: container,
+                debugDescription: "Unknown SandboxEntriesAddParams discriminator value"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .copy(let value): try value.encode(to: encoder)
+        case .ro(let value): try value.encode(to: encoder)
+        case .rw(let value): try value.encode(to: encoder)
         }
     }
 }

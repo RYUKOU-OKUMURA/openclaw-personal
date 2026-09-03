@@ -12,8 +12,21 @@ describe("sandbox entry protocol", () => {
     expect(validateSandboxEntriesAddParams({ mode: "copy", source })).toBe(true);
   });
 
+  it.each(["ro", "rw"])("accepts a %s host share with explicit external consent", (mode) => {
+    expect(
+      validateSandboxEntriesAddParams({
+        mode,
+        source: { kind: "path", path: "/reference" },
+        allowExternalSource: true,
+      }),
+    ).toBe(true);
+  });
+
   it.each([
-    { mode: "rw", source: { kind: "path", path: "/reference" } },
+    { mode: "read", source: { kind: "path", path: "/reference" } },
+    { mode: "ro", source: { kind: "upload", name: "x", contentBase64: "" } },
+    { mode: "rw", source: { kind: "create", name: "x", entryKind: "file" } },
+    { mode: "copy", source: { kind: "path", path: "/reference" }, allowExternalSource: true },
     {
       mode: "copy",
       destination: "/elsewhere",

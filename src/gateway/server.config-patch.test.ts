@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { validateSandboxEntriesAddResult } from "../../packages/gateway-protocol/src/index.js";
 import { resolveDefaultAgentDir } from "../agents/agent-scope.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { REDACTED_SENTINEL } from "../config/redact-snapshot.js";
@@ -987,6 +988,85 @@ describe("gateway config methods", () => {
       await restoreConfigFileForTest(original);
     }
   });
+
+  it.each(["ro", "rw"] as const)(
+    "adds and removes a %s sandbox share through the config owner",
+    async (mode) => {
+      const original = await getCurrentConfigObject();
+      const root = await fs.realpath(await resetTempDir(`sandbox-share-${mode}`));
+      const workspace = path.join(root, "workspace");
+      const source = path.join(root, "reference.txt");
+      await fs.mkdir(workspace);
+      await fs.writeFile(source, "operator content");
+      await fs.writeFile(path.join(workspace, "existing.txt"), "keep");
+      const existing = `${path.join(workspace, "existing.txt")}:/mnt/shared/existing.txt:ro`;
+      const bindPath = "agents.entries.main.sandbox.docker.binds";
+      try {
+        const seed = await rpcReq(requireWs(), "config.patch", {
+          baseHash: original.hash,
+          raw: JSON.stringify({
+            agents: {
+              entries: {
+                main: {
+                  workspace,
+                  sandbox: {
+                    mode: "all",
+                    scope: "agent",
+                    backend: "docker",
+                    workspaceAccess: "rw",
+                    docker: { binds: [existing], dangerouslyAllowExternalBindSources: false },
+                  },
+                },
+              },
+            },
+          }),
+          replacePaths: [bindPath],
+        });
+        expect(seed.ok).toBe(true);
+        const added = await rpcReq<{ entry: { containerPath: string }; recreateRequired: boolean }>(
+          requireWs(),
+          "sandbox.entries.add",
+          {
+            agentId: "main",
+            mode,
+            source: { kind: "path", path: source },
+            allowExternalSource: true,
+          },
+        );
+        expect(added.ok, added.error?.message).toBe(true);
+        expect(validateSandboxEntriesAddResult(added.payload)).toBe(true);
+        expect(added.payload).toMatchObject({
+          entry: { hostPath: source, mode },
+          recreateRequired: true,
+        });
+        expect(added.payload).not.toHaveProperty("config");
+        const bind = `${source}:${added.payload?.entry.containerPath}:${mode}`;
+        expect(getRuntimeConfig().agents?.entries?.main?.sandbox?.docker).toMatchObject({
+          binds: [existing, bind],
+          dangerouslyAllowExternalBindSources: true,
+        });
+        const saved = JSON.parse(await fs.readFile(original.path, "utf8"));
+        expect(saved.agents.entries.main.sandbox.docker.binds).toEqual([existing, bind]);
+
+        // Removal keeps the public config.patch CAS and explicit array-replacement contract.
+        const removed = await rpcReq(requireWs(), "config.patch", {
+          baseHash: await getConfigHash(),
+          raw: JSON.stringify({
+            agents: { entries: { main: { sandbox: { docker: { binds: [existing] } } } } },
+          }),
+          replacePaths: [bindPath],
+        });
+        expect(removed.ok, removed.error?.message).toBe(true);
+        expect(getRuntimeConfig().agents?.entries?.main?.sandbox?.docker?.binds).toEqual([
+          existing,
+        ]);
+        expect(await fs.readFile(source, "utf8")).toBe("operator content");
+        expect(await fs.readFile(path.join(workspace, "existing.txt"), "utf8")).toBe("keep");
+      } finally {
+        await restoreConfigFileForTest(original);
+      }
+    },
+  );
 
   it("accepts messages.groupChat.historyLimit: 0 through config.patch", async () => {
     const { createConfigIO, resetConfigRuntimeState } = await import("../config/config.js");

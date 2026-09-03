@@ -234,9 +234,22 @@ dispatch so authorization failures have one canonical structured response:
   is Gateway-local; node-targeted listings retain the admin gate.
 - `sandbox.explain` needs `operator.read`.
 - `sandbox.entries.add` needs `operator.admin` and is marked `controlPlaneWrite`.
-  Its current contract is `mode: "copy"` only: it adds a path, upload, or empty
-  file/directory to the resolved sandbox workspace `inbox` without changing
-  sandbox configuration.
+  `mode: "copy"` adds a path, upload, or empty file/directory to the resolved
+  sandbox workspace `inbox` without changing sandbox configuration. `mode: "ro"`
+  and `mode: "rw"` accept a path source only, resolve its canonical real
+  host path, and append a validated bind to the selected agent's authored
+  `sandbox.docker.binds`. A shared Docker scope owns `agents.defaults` instead,
+  so that bind applies to agents inheriting the shared configuration. An
+  external source requires `allowExternalSource: true` unless the existing
+  external-bind override is already enabled; validation still applies. Shares
+  return `recreateRequired: true`, because a running container keeps its old
+  mounts until it is recreated. Upload and create sources are unsupported for
+  `ro` and `rw`.
+- Removing a shared bind is an administrative `config.get` followed by
+  `config.patch` using a fresh `baseHash`, the exact owning binds array in
+  `replacePaths`, and the specific bind removed. This preserves sibling binds
+  and does not automatically clear the existing external-bind override; the
+  running container keeps the mount until recreation.
 - `plugins.sessionAction` requires every scope declared in the selected action's
   `requiredScopes`; omitted or empty lists default to `operator.write`.
   `operator.write` satisfies `operator.read` and `operator.talk`. Other scopes

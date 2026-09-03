@@ -13,7 +13,7 @@ const SandboxEntryNameSchema = Type.String({
   maxLength: MAX_TERMINAL_UPLOAD_NAME_LENGTH,
 });
 
-export const SandboxEntriesAddParamsSchema = closedObject({
+const SandboxCopyEntryParamsSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
   mode: Type.Literal("copy"),
   source: Type.Union([
@@ -31,13 +31,26 @@ export const SandboxEntriesAddParamsSchema = closedObject({
   ]),
 });
 
+const SandboxShareEntryProperties = {
+  agentId: Type.Optional(NonEmptyString),
+  source: closedObject({ kind: Type.Literal("path"), path: NonEmptyString }),
+  /** Explicit consent to enable the existing external-bind override when needed. */
+  allowExternalSource: Type.Optional(Type.Boolean()),
+};
+
+export const SandboxEntriesAddParamsSchema = Type.Union([
+  SandboxCopyEntryParamsSchema,
+  closedObject({ ...SandboxShareEntryProperties, mode: Type.Literal("ro") }),
+  closedObject({ ...SandboxShareEntryProperties, mode: Type.Literal("rw") }),
+]);
+
 export const SandboxEntriesAddResultSchema = closedObject({
   entry: closedObject({
     name: NonEmptyString,
     kind: SandboxEntryKindSchema,
     hostPath: NonEmptyString,
     containerPath: NonEmptyString,
-    mode: Type.Literal("copy"),
+    mode: Type.Union([Type.Literal("copy"), Type.Literal("ro"), Type.Literal("rw")]),
   }),
   recreateRequired: Type.Boolean(),
 });
