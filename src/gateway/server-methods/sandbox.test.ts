@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { validateSandboxExplainResult } from "../../../packages/gateway-protocol/src/index.js";
+import {
+  validateSandboxExplainResult,
+  validateSandboxEntriesAddResult,
+} from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { handleGatewayRequest } from "../server-methods.js";
@@ -12,10 +16,15 @@ vi.mock("../../agents/sandbox/explain-runtime.js", () => ({
 
 afterEach(() => readRegistry.mockClear());
 
-async function call(cfg: OpenClawConfig, params: unknown = {}, scopes = ["operator.read"]) {
+async function call(
+  cfg: OpenClawConfig,
+  params: unknown = {},
+  scopes = ["operator.read"],
+  method = "sandbox.explain",
+) {
   const respond = vi.fn();
   await handleGatewayRequest({
-    req: { type: "req", id: "sandbox-explain", method: "sandbox.explain", params },
+    req: { type: "req", id: "sandbox-request", method, params },
     respond,
     client: {
       connId: "sandbox-reader",
@@ -124,6 +133,123 @@ describe("sandbox.explain RPC", () => {
           message: "Docker unavailable",
         }),
       );
+    });
+  });
+});
+
+describe("sandbox.entries.add RPC", () => {
+  it("admits an admin upload and exposes the actual entry to a read-only caller without session state", async () => {
+    await withOpenClawTestState({ label: "sandbox-add-rpc" }, async (state) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            workspace: state.workspaceDir,
+            sandbox: { mode: "all", scope: "agent", workspaceAccess: "rw" },
+          },
+        },
+      };
+      const before = JSON.stringify(cfg);
+      const add = await call(
+        cfg,
+        {
+          mode: "copy",
+          source: {
+            kind: "upload",
+            name: "../../note.md",
+            contentBase64: Buffer.from("hello").toString("base64"),
+          },
+        },
+        ["operator.admin"],
+        "sandbox.entries.add",
+      );
+      const [ok, result] = add.mock.calls[0] ?? [];
+      expect(ok).toBe(true);
+      expect(validateSandboxEntriesAddResult(result)).toBe(true);
+      expect(result).toMatchObject({
+        entry: {
+          name: "note.md",
+          kind: "file",
+          mode: "copy",
+          containerPath: "/workspace/inbox/note.md",
+        },
+        recreateRequired: false,
+      });
+      expect(await fs.readFile(path.join(state.workspaceDir, "inbox/note.md"), "utf8")).toBe(
+        "hello",
+      );
+      const read = await call(cfg);
+      expect(read.mock.calls[0]?.[1]).toMatchObject({
+        inbox: {
+          entries: [{ name: "note.md", kind: "file" }],
+          counts: { files: 1, folders: 0, other: 0 },
+          truncated: false,
+        },
+      });
+      expect(JSON.stringify(cfg)).toBe(before);
+      await expect(
+        fs.stat(state.statePath("agents", "main", "agent", "openclaw-agent.sqlite")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it.each([{ scopes: ["operator.read"] }, { scopes: ["operator.write"] }, { scopes: [] }])(
+    "rejects non-admin scopes $scopes before writing",
+    async ({ scopes }) => {
+      await withOpenClawTestState({ label: "sandbox-add-authz" }, async (state) => {
+        const add = await call(
+          { agents: { defaults: { workspace: state.workspaceDir } } },
+          {
+            mode: "copy",
+            source: { kind: "create", name: "empty", entryKind: "directory" },
+          },
+          scopes,
+          "sandbox.entries.add",
+        );
+        expect(add).toHaveBeenCalledWith(
+          false,
+          undefined,
+          expect.objectContaining({ code: "FORBIDDEN", message: "missing scope: operator.admin" }),
+        );
+        await expect(fs.stat(path.join(state.workspaceDir, "inbox"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      });
+    },
+  );
+
+  it.each([
+    { mode: "ro", source: { kind: "path", path: "/reference" } },
+    { mode: "copy", source: { kind: "create", name: "empty", entryKind: "socket" } },
+    { mode: "copy", source: { kind: "upload", name: "empty", contentBase64: "not base64" } },
+    {
+      agentId: "missing",
+      mode: "copy",
+      source: { kind: "create", name: "empty", entryKind: "file" },
+    },
+  ])("rejects invalid inputs without creating inbox: %j", async (params) => {
+    await withOpenClawTestState({ label: "sandbox-add-invalid" }, async (state) => {
+      const add = await call(
+        {
+          agents: {
+            defaults: {
+              workspace: state.workspaceDir,
+              sandbox: { mode: "all", workspaceAccess: "rw" },
+            },
+            list: [{ id: "main" }],
+          },
+        },
+        params,
+        ["operator.admin"],
+        "sandbox.entries.add",
+      );
+      expect(add).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST" }),
+      );
+      await expect(fs.stat(path.join(state.workspaceDir, "inbox"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     });
   });
 });

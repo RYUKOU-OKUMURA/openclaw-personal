@@ -645,6 +645,7 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["session.members.listEvidence", "sessions-sharing", "operator.read", "2026.8"],
   ["plugins.inspect", "plugins", "operator.read", "2026.8"],
   ["sandbox.explain", "sandbox", "operator.read", "2026.8"],
+  ["sandbox.entries.add", "sandbox", "operator.admin", "2026.8", { controlPlaneWrite: true }],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 
 export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS)[number][1], null>;

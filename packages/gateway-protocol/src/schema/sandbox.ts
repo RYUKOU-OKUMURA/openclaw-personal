@@ -2,6 +2,64 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
+import {
+  MAX_TERMINAL_UPLOAD_BASE64_LENGTH,
+  MAX_TERMINAL_UPLOAD_NAME_LENGTH,
+} from "./terminal-constants.js";
+
+const SandboxEntryKindSchema = Type.Union([Type.Literal("file"), Type.Literal("directory")]);
+const SandboxEntryNameSchema = Type.String({
+  minLength: 1,
+  maxLength: MAX_TERMINAL_UPLOAD_NAME_LENGTH,
+});
+
+export const SandboxEntriesAddParamsSchema = closedObject({
+  agentId: Type.Optional(NonEmptyString),
+  mode: Type.Literal("copy"),
+  source: Type.Union([
+    closedObject({ kind: Type.Literal("path"), path: NonEmptyString }),
+    closedObject({
+      kind: Type.Literal("upload"),
+      name: SandboxEntryNameSchema,
+      contentBase64: Type.String({ maxLength: MAX_TERMINAL_UPLOAD_BASE64_LENGTH }),
+    }),
+    closedObject({
+      kind: Type.Literal("create"),
+      name: SandboxEntryNameSchema,
+      entryKind: SandboxEntryKindSchema,
+    }),
+  ]),
+});
+
+export const SandboxEntriesAddResultSchema = closedObject({
+  entry: closedObject({
+    name: NonEmptyString,
+    kind: SandboxEntryKindSchema,
+    hostPath: NonEmptyString,
+    containerPath: NonEmptyString,
+    mode: Type.Literal("copy"),
+  }),
+  recreateRequired: Type.Boolean(),
+});
+
+/** Immediate inbox children, not every file reachable by the agent. No content is returned. */
+const SandboxInboxSchema = closedObject({
+  hostPath: NonEmptyString,
+  containerPath: NonEmptyString,
+  entries: Type.Array(
+    closedObject({
+      name: NonEmptyString,
+      kind: Type.Union([SandboxEntryKindSchema, Type.Literal("symlink"), Type.Literal("other")]),
+    }),
+  ),
+  counts: closedObject({
+    files: Type.Integer({ minimum: 0 }),
+    folders: Type.Integer({ minimum: 0 }),
+    other: Type.Integer({ minimum: 0 }),
+  }),
+  /** Entries may be capped; counts cover all immediate children in this listing. */
+  truncated: Type.Boolean(),
+});
 
 export const SandboxExplainParamsSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
@@ -67,6 +125,7 @@ export const SandboxExplainResultSchema = closedObject({
     failures: Type.Array(closedObject({ gate: Type.String(), key: Type.String() })),
   }),
   fixIt: Type.Array(Type.String()),
+  inbox: Type.Optional(Type.Union([Type.Null(), SandboxInboxSchema])),
   /** Docker container for this report's workspace and scope, or null before provisioning. */
   registry: Type.Union([
     Type.Null(),
@@ -84,3 +143,5 @@ export const SandboxExplainResultSchema = closedObject({
 
 export type SandboxExplainParams = Static<typeof SandboxExplainParamsSchema>;
 export type SandboxExplainResult = Static<typeof SandboxExplainResultSchema>;
+export type SandboxEntriesAddParams = Static<typeof SandboxEntriesAddParamsSchema>;
+export type SandboxEntriesAddResult = Static<typeof SandboxEntriesAddResultSchema>;

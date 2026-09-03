@@ -619,6 +619,14 @@ methods. Treat this as feature discovery, not a full enumeration of
 
   </Accordion>
 
+  <Accordion title="Sandbox access">
+    - `sandbox.explain` (`operator.read`) returns the effective sandbox report for the selected agent (the default agent when `agentId` is omitted), including mode, scope, backend, workspace access and mounts, tool and elevated policy, the configured Docker network, the matching container registry entry, and an `inbox` projection when a Docker sandbox is available. The inbox contains immediate children only: at most 200 named entries with `file`, `directory`, `symlink`, or `other` kinds, plus counts for all immediate children and a `truncated` flag when the names are capped. These counts are not a count of every file reachable by the AI. A configured network can differ from a running container while `registry.stale` is true.
+    - `sandbox.entries.add` (`operator.admin`, `controlPlaneWrite`) currently supports `mode: "copy"` only. Its source is one of `{ kind: "path", path }` for an absolute host file or folder, `{ kind: "upload", name, contentBase64 }` for one upload up to 16 MiB, or `{ kind: "create", name, entryKind: "file" | "directory" }` for an empty file or folder. Path sources are materialized in private staging with symlinks dereferenced before import. The entry is added under the resolved sandbox working workspace's `inbox`; name collisions receive a numeric suffix. The result returns the resolved entry and `recreateRequired`; this operation does not change sandbox configuration.
+    - Both methods use the same resolved agent/workspace context.
+    - `fs.listDir` with `includeFiles: true` is a Gateway-local listing option. For Gateway-host requests, admin callers may list arbitrary host paths, while non-admin callers are limited to configured/default workspace directories; node-targeted listings have the separate admin gate. This is separate from the sandbox entry API and does not enumerate every file available to an agent.
+
+  </Accordion>
+
   <Accordion title="Talk and TTS">
     - `talk.catalog` returns the read-only Talk provider catalog for speech, streaming transcription, and realtime voice: canonical provider ids, registry aliases, labels, configured state, an optional group-level `ready` result, exposed model/voice ids, canonical modes, transports, brain strategies, and realtime audio/capability flags, without returning provider secrets or mutating global config. Current gateways set `ready` after applying runtime provider selection; treat its absence as unverified on older gateways.
     - `talk.config` returns the effective Talk config payload; `includeSecrets` requires `operator.talk.secrets` (or `operator.admin`).

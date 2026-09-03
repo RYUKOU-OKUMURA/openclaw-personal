@@ -696,4 +696,6 @@ export {
   FsListDirResultSchema,
   SandboxExplainParamsSchema,
   SandboxExplainResultSchema,
+  SandboxEntriesAddParamsSchema,
+  SandboxEntriesAddResultSchema,
 } from "./schema-modules.js";

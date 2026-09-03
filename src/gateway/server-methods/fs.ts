@@ -31,6 +31,17 @@ export const fsHandlers: GatewayRequestHandlers = {
     }
     try {
       if (params.nodeId) {
+        if (params.includeFiles === true) {
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "includeFiles is supported only for Gateway-local listings",
+            ),
+          );
+          return;
+        }
         const node = context.nodeRegistry.get(params.nodeId);
         if (!node) {
           respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "node not connected"));
@@ -95,7 +106,11 @@ export const fsHandlers: GatewayRequestHandlers = {
       }
       const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
       if (scopes.includes(ADMIN_SCOPE)) {
-        respond(true, await listHostDirectories(params.path), undefined);
+        respond(
+          true,
+          await listHostDirectories(params.path, { includeFiles: params.includeFiles === true }),
+          undefined,
+        );
         return;
       }
       const containment = await resolveWorkspacePathContainment(
@@ -111,7 +126,9 @@ export const fsHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      const listing = await listHostDirectories(containment.path);
+      const listing = await listHostDirectories(containment.path, {
+        includeFiles: params.includeFiles === true,
+      });
       if (listing.path === containment.workspaceRoot) {
         const { parent: _parent, ...clamped } = listing;
         respond(true, clamped, undefined);

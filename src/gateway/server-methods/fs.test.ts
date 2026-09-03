@@ -58,6 +58,24 @@ describe("fs.listDir", () => {
     });
   });
 
+  it("includes files and entry kinds for an admin Gateway-local listing when opted in", async () => {
+    const root = tempDirs.make("openclaw-fs-listdir-");
+    await fs.mkdir(path.join(root, "directory"));
+    await fs.writeFile(path.join(root, "file.txt"), "file");
+
+    const [ok, result] = expectDefined(
+      await call({ path: root, includeFiles: true }),
+      "await call({ path: root, includeFiles: true }) test invariant",
+    );
+    expect(ok).toBe(true);
+    expect(result).toMatchObject({
+      entries: [
+        { name: "directory", path: path.join(root, "directory"), kind: "directory" },
+        { name: "file.txt", path: path.join(root, "file.txt"), kind: "file" },
+      ],
+    });
+  });
+
   it("follows directory symlinks and skips file or broken symlinks", async () => {
     const root = tempDirs.make("openclaw-fs-listdir-");
     await fs.mkdir(path.join(root, "real"));
@@ -117,14 +135,19 @@ describe("fs.listDir", () => {
     const workspace = tempDirs.make("openclaw-fs-workspace-");
     const nested = path.join(workspace, "packages");
     await fs.mkdir(nested);
+    await fs.writeFile(path.join(nested, "README.md"), "workspace file");
 
     const [ok, result] = expectDefined(
-      await call({ path: nested }, workspaceContext(workspace), writeClient),
+      await call({ path: nested, includeFiles: true }, workspaceContext(workspace), writeClient),
       "write-scoped workspace listing",
     );
 
     expect(ok).toBe(true);
-    expect(result).toMatchObject({ path: nested, parent: workspace });
+    expect(result).toMatchObject({
+      path: nested,
+      parent: workspace,
+      entries: [{ name: "README.md", path: path.join(nested, "README.md"), kind: "file" }],
+    });
   });
 
   it("defaults write-scoped browsing to the workspace root and clamps its parent", async () => {
@@ -140,12 +163,12 @@ describe("fs.listDir", () => {
     expect(result).not.toHaveProperty("parent");
   });
 
-  it("rejects write-scoped browsing outside configured workspaces", async () => {
+  it("rejects write-scoped file browsing outside configured workspaces", async () => {
     const workspace = tempDirs.make("openclaw-fs-workspace-");
     const outside = tempDirs.make("openclaw-fs-outside-");
 
     const [ok, , error] = expectDefined(
-      await call({ path: outside }, workspaceContext(workspace), writeClient),
+      await call({ path: outside, includeFiles: true }, workspaceContext(workspace), writeClient),
       "write-scoped outside listing",
     );
 
@@ -222,6 +245,28 @@ describe("fs.listDir", () => {
       command: "fs.listDir",
       params: {},
     });
+  });
+
+  it("rejects file-inclusive node listings before consulting the node", async () => {
+    const get = vi.fn();
+    const invoke = vi.fn();
+    const context = {
+      getRuntimeConfig: () => ({}),
+      nodeRegistry: { get, invoke },
+    };
+
+    const [ok, , error] = expectDefined(
+      await call({ nodeId: "macbook", includeFiles: true }, context),
+      "await call({ nodeId: macbook, includeFiles: true }) test invariant",
+    );
+
+    expect(ok).toBe(false);
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "includeFiles is supported only for Gateway-local listings",
+    });
+    expect(get).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("rejects node listings blocked by the live command policy", async () => {

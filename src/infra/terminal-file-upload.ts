@@ -56,7 +56,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return result;
 }
 
-function sanitizeTerminalUploadName(name: string): string {
+export function sanitizeTerminalUploadName(name: string): string {
   const basename = path.posix.basename(name.replaceAll("\\", "/"));
   const cleaned = Array.from(basename, (char) => {
     const codePoint = char.codePointAt(0) ?? 0;
@@ -72,7 +72,7 @@ function sanitizeTerminalUploadName(name: string): string {
   return truncateUtf8(safe, MAX_STAGED_NAME_BYTES) || "upload";
 }
 
-function decodeTerminalUpload(contentBase64: string): Buffer {
+export function decodeTerminalUpload(contentBase64: string): Buffer {
   if (
     contentBase64.length > MAX_TERMINAL_UPLOAD_BASE64_LENGTH ||
     terminalUploadDecodedSize(contentBase64) > MAX_TERMINAL_UPLOAD_BYTES

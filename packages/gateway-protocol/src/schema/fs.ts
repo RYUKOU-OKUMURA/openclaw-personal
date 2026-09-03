@@ -11,13 +11,17 @@ export const FsListDirParamsSchema = closedObject({
   path: Type.Optional(NonEmptyString),
   /** Connected node host to browse; omitted means the Gateway host. */
   nodeId: Type.Optional(NonEmptyString),
+  /** Include regular files in Gateway-local listings; node hosts remain directory-only. */
+  includeFiles: Type.Optional(Type.Boolean()),
 });
 
 export const FsDirEntrySchema = closedObject({
   name: NonEmptyString,
   path: NonEmptyString,
-  /** Dot-prefixed directories; clients render them dimmed after visible ones. */
+  /** Dot-prefixed entries; clients render them dimmed after visible ones. */
   hidden: Type.Optional(Type.Boolean()),
+  /** Present only for opt-in listings that include both files and directories. */
+  kind: Type.Optional(Type.Union([Type.Literal("file"), Type.Literal("directory")])),
 });
 
 export const FsListDirResultSchema = closedObject({

@@ -4198,33 +4198,40 @@ public struct FsDirEntry: Codable, Sendable {
     public let name: String
     public let path: String
     public let hidden: Bool?
+    public let kind: AnyCodable?
 
     public init(
         name: String,
         path: String,
-        hidden: Bool? = nil)
+        hidden: Bool? = nil,
+        kind: AnyCodable? = nil)
     {
         self.name = name
         self.path = path
         self.hidden = hidden
+        self.kind = kind
     }
 }
 
 public struct FsListDirParams: Codable, Sendable {
     public let path: String?
     public let nodeid: String?
+    public let includefiles: Bool?
 
     public init(
         path: String? = nil,
-        nodeid: String? = nil)
+        nodeid: String? = nil,
+        includefiles: Bool? = nil)
     {
         self.path = path
         self.nodeid = nodeid
+        self.includefiles = includefiles
     }
 
     private enum CodingKeys: String, CodingKey {
         case path
         case nodeid = "nodeId"
+        case includefiles = "includeFiles"
     }
 }
 
@@ -4269,6 +4276,7 @@ public struct SandboxExplainResult: Codable, Sendable {
     public let sandbox: [String: AnyCodable]
     public let elevated: [String: AnyCodable]
     public let fixit: [String]
+    public let inbox: AnyCodable?
     public let registry: AnyCodable
 
     public init(
@@ -4279,6 +4287,7 @@ public struct SandboxExplainResult: Codable, Sendable {
         sandbox: [String: AnyCodable],
         elevated: [String: AnyCodable],
         fixit: [String],
+        inbox: AnyCodable? = nil,
         registry: AnyCodable)
     {
         self.docsurl = docsurl
@@ -4288,6 +4297,7 @@ public struct SandboxExplainResult: Codable, Sendable {
         self.sandbox = sandbox
         self.elevated = elevated
         self.fixit = fixit
+        self.inbox = inbox
         self.registry = registry
     }
 
@@ -4299,7 +4309,48 @@ public struct SandboxExplainResult: Codable, Sendable {
         case sandbox
         case elevated
         case fixit = "fixIt"
+        case inbox
         case registry
+    }
+}
+
+public struct SandboxEntriesAddParams: Codable, Sendable {
+    public let agentid: String?
+    public let mode: String
+    public let source: AnyCodable
+
+    public init(
+        agentid: String? = nil,
+        mode: String,
+        source: AnyCodable)
+    {
+        self.agentid = agentid
+        self.mode = mode
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case mode
+        case source
+    }
+}
+
+public struct SandboxEntriesAddResult: Codable, Sendable {
+    public let entry: [String: AnyCodable]
+    public let recreaterequired: Bool
+
+    public init(
+        entry: [String: AnyCodable],
+        recreaterequired: Bool)
+    {
+        self.entry = entry
+        self.recreaterequired = recreaterequired
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case entry
+        case recreaterequired = "recreateRequired"
     }
 }
 

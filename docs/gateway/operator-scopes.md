@@ -229,7 +229,14 @@ dispatch so authorization failures have one canonical structured response:
   `fs.listDir`, or `terminal.upload` to a node.
 - The top-level `fs.listDir` RPC needs `operator.write` for Gateway-host
   requests and `operator.admin` when `nodeId` targets a node. Its handler limits
-  non-admin Gateway-host browsing to configured agent workspaces.
+  non-admin Gateway-host browsing to configured agent workspaces, while admin
+  Gateway-host callers may list arbitrary host paths. The `includeFiles` option
+  is Gateway-local; node-targeted listings retain the admin gate.
+- `sandbox.explain` needs `operator.read`.
+- `sandbox.entries.add` needs `operator.admin` and is marked `controlPlaneWrite`.
+  Its current contract is `mode: "copy"` only: it adds a path, upload, or empty
+  file/directory to the resolved sandbox workspace `inbox` without changing
+  sandbox configuration.
 - `plugins.sessionAction` requires every scope declared in the selected action's
   `requiredScopes`; omitted or empty lists default to `operator.write`.
   `operator.write` satisfies `operator.read` and `operator.talk`. Other scopes
