@@ -4247,6 +4247,62 @@ public struct FsListDirResult: Codable, Sendable {
     }
 }
 
+public struct SandboxExplainParams: Codable, Sendable {
+    public let agentid: String?
+
+    public init(
+        agentid: String? = nil)
+    {
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+    }
+}
+
+public struct SandboxExplainResult: Codable, Sendable {
+    public let docsurl: String
+    public let agentid: String
+    public let sessionkey: String
+    public let mainsessionkey: String
+    public let sandbox: [String: AnyCodable]
+    public let elevated: [String: AnyCodable]
+    public let fixit: [String]
+    public let registry: AnyCodable
+
+    public init(
+        docsurl: String,
+        agentid: String,
+        sessionkey: String,
+        mainsessionkey: String,
+        sandbox: [String: AnyCodable],
+        elevated: [String: AnyCodable],
+        fixit: [String],
+        registry: AnyCodable)
+    {
+        self.docsurl = docsurl
+        self.agentid = agentid
+        self.sessionkey = sessionkey
+        self.mainsessionkey = mainsessionkey
+        self.sandbox = sandbox
+        self.elevated = elevated
+        self.fixit = fixit
+        self.registry = registry
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docsurl = "docsUrl"
+        case agentid = "agentId"
+        case sessionkey = "sessionKey"
+        case mainsessionkey = "mainSessionKey"
+        case sandbox
+        case elevated
+        case fixit = "fixIt"
+        case registry
+    }
+}
+
 public struct NodePairListParams: Codable, Sendable {}
 
 public struct NodePairApproveParams: Codable, Sendable {

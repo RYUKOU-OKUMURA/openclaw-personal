@@ -541,6 +541,35 @@ async function readContainerConfigHash(
   return await readContainerLabel(engine, containerName, "openclaw.configHash");
 }
 
+/** Uses the same normalized hash inputs for runtime creation and read-only diagnostics. */
+export function computeExpectedSandboxConfigHash(params: {
+  cfg: Pick<SandboxConfig, "docker" | "workspaceAccess">;
+  workspaceDir: string;
+  agentWorkspaceDir: string;
+  skillsWorkspaceDir?: string;
+  readOnlyWorkspaceSkillMounts?: ReadOnlyWorkspaceSkillMount[];
+}): string {
+  const mounts =
+    params.readOnlyWorkspaceSkillMounts ??
+    resolveReadOnlyWorkspaceSkillMounts({
+      workspaceDir: params.workspaceDir,
+      agentWorkspaceDir: params.agentWorkspaceDir,
+      skillsWorkspaceDir: params.skillsWorkspaceDir,
+      workdir: params.cfg.docker.workdir,
+      workspaceAccess: params.cfg.workspaceAccess,
+    });
+  return computeSandboxConfigHash({
+    docker: params.cfg.docker,
+    dockerEnvPolicyEpoch: resolveDockerEnvPolicyEpoch(params.cfg.docker.env),
+    workspaceAccess: params.cfg.workspaceAccess,
+    workspaceDir: params.workspaceDir,
+    agentWorkspaceDir: params.agentWorkspaceDir,
+    mountFormatVersion: SANDBOX_MOUNT_FORMAT_VERSION,
+    createArgsEpoch: SANDBOX_DOCKER_CREATE_ARGS_EPOCH,
+    readOnlyWorkspaceSkillMounts: formatReadOnlyWorkspaceSkillMountHashState(mounts),
+  });
+}
+
 type EnsureSandboxContainerParams = {
   engine?: SandboxContainerEngine;
   podmanTarget?: SandboxContainerEngineTarget;
@@ -615,17 +644,9 @@ async function ensureSandboxContainerLifecycle(
     workdir: params.cfg.docker.workdir,
     workspaceAccess: params.cfg.workspaceAccess,
   });
-  const genericConfigHash = computeSandboxConfigHash({
-    docker: params.cfg.docker,
-    dockerEnvPolicyEpoch: resolveDockerEnvPolicyEpoch(params.cfg.docker.env),
-    workspaceAccess: params.cfg.workspaceAccess,
-    workspaceDir: params.workspaceDir,
-    agentWorkspaceDir: params.agentWorkspaceDir,
-    mountFormatVersion: SANDBOX_MOUNT_FORMAT_VERSION,
-    createArgsEpoch: SANDBOX_DOCKER_CREATE_ARGS_EPOCH,
-    readOnlyWorkspaceSkillMounts: formatReadOnlyWorkspaceSkillMountHashState(
-      readOnlyWorkspaceSkillMounts,
-    ),
+  const genericConfigHash = computeExpectedSandboxConfigHash({
+    ...params,
+    readOnlyWorkspaceSkillMounts,
   });
   const expectedHash =
     engine.id === "podman"

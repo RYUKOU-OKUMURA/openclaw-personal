@@ -3,6 +3,7 @@ import * as desktop from "./desktop.js";
 import * as environments from "./environments.js";
 import * as fsSchemas from "./fs.js";
 import * as projects from "./projects.js";
+import * as sandboxSchemas from "./sandbox.js";
 import * as systemInfo from "./system-info.js";
 import * as worktrees from "./worktrees.js";
 
@@ -84,4 +85,6 @@ export const AgentControlProtocolSchemas = {
   FsDirEntry: fsSchemas.FsDirEntrySchema,
   FsListDirParams: fsSchemas.FsListDirParamsSchema,
   FsListDirResult: fsSchemas.FsListDirResultSchema,
+  SandboxExplainParams: sandboxSchemas.SandboxExplainParamsSchema,
+  SandboxExplainResult: sandboxSchemas.SandboxExplainResultSchema,
 } as const;

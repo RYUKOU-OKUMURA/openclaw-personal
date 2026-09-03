@@ -118,6 +118,7 @@ const CORE_GATEWAY_HANDLER_MODULES = {
   "exec-approvals": () =>
     import("./server-methods/exec-approvals.js").then((module) => module.execApprovalsHandlers),
   fs: () => import("./server-methods/fs.js").then((module) => module.fsHandlers),
+  sandbox: () => import("./server-methods/sandbox.js").then((module) => module.sandboxHandlers),
   health: () => import("./server-methods/health.js").then((module) => module.healthHandlers),
   logs: () => import("./server-methods/logs.js").then((module) => module.logsHandlers),
   "memory-search": () =>

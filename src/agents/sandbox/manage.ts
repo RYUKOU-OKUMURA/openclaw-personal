@@ -4,6 +4,7 @@
  * Lists and removes registered runtime and browser containers using backend manager status.
  */
 import { getRuntimeConfig } from "../../config/config.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getSandboxBackendManager } from "./backend.js";
 import { stopCachedBrowserBridgesForContainer } from "./browser-bridges.js";
 import { dockerSandboxBackendManager } from "./docker-backend.js";
@@ -36,35 +37,41 @@ function toBrowserDockerRuntimeEntry(entry: SandboxBrowserRegistryEntry): Sandbo
   };
 }
 
+/** Describes one registered container without probing unrelated backends or workspaces. */
+export async function describeSandboxContainer(
+  entry: SandboxRegistryEntry,
+  config: OpenClawConfig,
+): Promise<SandboxContainerInfo> {
+  const backendId = entry.backendId ?? "docker";
+  const manager = getSandboxBackendManager(backendId);
+  if (!manager) {
+    return {
+      ...entry,
+      running: false,
+      imageMatch: true,
+    };
+  }
+  const agentId = resolveSandboxAgentId(entry.sessionKey);
+  const runtime = await manager.describeRuntime({
+    entry,
+    config,
+    agentId,
+  });
+  return {
+    ...entry,
+    image: runtime.actualConfigLabel ?? entry.image,
+    running: runtime.running,
+    imageMatch: runtime.configLabelMatch,
+  };
+}
+
 /** Lists registered sandbox containers with live backend status and config-label match state. */
 export async function listSandboxContainers(): Promise<SandboxContainerInfo[]> {
   const config = getRuntimeConfig();
   const registry = await readRegistry();
   const results: SandboxContainerInfo[] = [];
-
   for (const entry of registry.entries) {
-    const backendId = entry.backendId ?? "docker";
-    const manager = getSandboxBackendManager(backendId);
-    if (!manager) {
-      results.push({
-        ...entry,
-        running: false,
-        imageMatch: true,
-      });
-      continue;
-    }
-    const agentId = resolveSandboxAgentId(entry.sessionKey);
-    const runtime = await manager.describeRuntime({
-      entry,
-      config,
-      agentId,
-    });
-    results.push({
-      ...entry,
-      image: runtime.actualConfigLabel ?? entry.image,
-      running: runtime.running,
-      imageMatch: runtime.configLabelMatch,
-    });
+    results.push(await describeSandboxContainer(entry, config));
   }
 
   return results;
