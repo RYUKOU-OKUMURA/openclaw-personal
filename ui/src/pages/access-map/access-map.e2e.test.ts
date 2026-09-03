@@ -262,7 +262,7 @@ suite.define(() => {
     await suite.withPage(
       {
         colorScheme: "dark",
-        locale: "en-US",
+        locale: "ja-JP",
         serviceWorkers: "block",
         viewport: { width: 1775, height: 1058 },
       },
@@ -281,17 +281,20 @@ suite.define(() => {
           },
         });
 
-        await root.getByRole("heading", { name: "AI access scope", exact: true }).waitFor({
+        await root.getByRole("heading", { name: "AIの権限範囲", exact: true }).waitFor({
           state: "visible",
         });
-        await expectText(root, "Inbox: 1 files · 0 folders");
+        await expectText(root, "追加したもの：1ファイル・0フォルダ");
         await root.locator(".access-map-entry", { hasText: "README.md" }).waitFor({
           state: "visible",
         });
-        await expectText(root.locator(".access-map-entry", { hasText: "reference" }), "Read only");
-        await expectText(root.locator(".access-map-entry", { hasText: "live" }), "Read & write");
+        await expectText(
+          root.locator(".access-map-entry", { hasText: "reference" }),
+          "読み取り専用",
+        );
+        await expectText(root.locator(".access-map-entry", { hasText: "live" }), "読み書き");
 
-        await root.getByRole("button", { name: "Add from PC", exact: true }).click();
+        await root.getByRole("button", { name: "PCから追加", exact: true }).click();
         const mapPicker = picker(page);
         await mapPicker.waitFor();
         const listRequest = await gateway.waitForRequest("fs.listDir");
@@ -300,7 +303,9 @@ suite.define(() => {
 
         const mapDrawer = drawer(page);
         await mapDrawer.waitFor();
+        await expectText(mapDrawer, "PCからファイルを追加");
         await expectText(mapDrawer, "draft.md");
+        await expectText(mapDrawer, "コピーして追加");
         await expectChecked(mapDrawer.locator('input[type="radio"][value="copy"]'), true);
         await expectChecked(mapDrawer.locator('input[type="radio"][value="ro"]'), false);
         await expectChecked(mapDrawer.locator('input[type="radio"][value="rw"]'), false);
@@ -308,9 +313,9 @@ suite.define(() => {
         await page.screenshot({
           animations: "disabled",
           clip: { x: 288, y: 0, width: 1487, height: 1058 },
-          path: path.join(process.cwd(), ".artifacts", "access-map-ui", "desktop-drawer.png"),
+          path: path.join(process.cwd(), ".artifacts", "access-map-ui", "desktop-drawer-ja.png"),
         });
-        await mapDrawer.getByRole("button", { name: "Add to workspace", exact: true }).click();
+        await mapDrawer.getByRole("button", { name: "作業エリアに追加", exact: true }).click();
 
         const addRequest = await gateway.waitForRequest("sandbox.entries.add");
         expect(requestParams(addRequest)).toMatchObject({
