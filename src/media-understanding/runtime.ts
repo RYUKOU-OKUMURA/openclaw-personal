@@ -381,7 +381,7 @@ export async function extractStructuredWithModel(params: ExtractStructuredWithMo
     authStore: params.authStore,
     timeoutMs,
     cfg: params.cfg,
-    agentDir: params.agentDir ?? "",
+    agentDir: params.agentDir ?? resolveDefaultAgentDir(params.cfg),
   });
 }
 

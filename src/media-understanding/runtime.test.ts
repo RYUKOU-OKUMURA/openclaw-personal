@@ -806,9 +806,22 @@ describe("media-understanding runtime", () => {
     );
   });
 
-  it("routes structured extraction to a provider by id and model", async () => {
+  it.each([
+    { name: "default", agentDir: undefined, expectedAgentDir: "/tmp/default-agent" },
+    { name: "explicit", agentDir: "/tmp/agent", expectedAgentDir: "/tmp/agent" },
+  ])("routes structured extraction with the $name owner", async (testCase) => {
     const providerRegistry = new Map();
     const authStore = {} as AuthProfileStore;
+    const cfg = {
+      agents: {
+        ownership: "explicit",
+        defaults: { systemAgent: { agentId: "worker" } },
+        entries: {
+          other: { agentDir: "/tmp/other-agent" },
+          worker: { agentDir: "/tmp/default-agent" },
+        },
+      },
+    } satisfies OpenClawConfig;
     const extractStructured = vi.fn(async () => ({
       text: '{"ok":true}',
       parsed: { ok: true },
@@ -817,7 +830,10 @@ describe("media-understanding runtime", () => {
       contentType: "json" as const,
     }));
     mocks.buildMediaUnderstandingRegistry.mockReturnValue(providerRegistry);
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin", extractStructured });
+    mocks.getMediaUnderstandingProvider.mockReturnValue({
+      id: "vision-plugin",
+      extractStructured,
+    });
 
     await expect(
       extractStructuredWithModel({
@@ -837,8 +853,8 @@ describe("media-understanding runtime", () => {
         preferredProfile: "preferred-work",
         authStore,
         timeoutMs: 45_000,
-        cfg: {} as OpenClawConfig,
-        agentDir: "/tmp/agent",
+        cfg,
+        agentDir: testCase.agentDir,
       }),
     ).resolves.toEqual({
       text: '{"ok":true}',
@@ -848,7 +864,7 @@ describe("media-understanding runtime", () => {
       contentType: "json",
     });
 
-    expect(mocks.buildMediaUnderstandingRegistry).toHaveBeenCalledWith(undefined, {});
+    expect(mocks.buildMediaUnderstandingRegistry).toHaveBeenCalledWith(undefined, cfg);
     expect(mocks.getMediaUnderstandingProvider).toHaveBeenCalledWith(
       "Vision-Plugin",
       providerRegistry,
@@ -889,7 +905,7 @@ describe("media-understanding runtime", () => {
     expect(extractOptions?.preferredProfile).toBe("preferred-work");
     expect(extractOptions?.authStore).toBe(authStore);
     expect(extractOptions?.timeoutMs).toBe(45_000);
-    expect(extractOptions?.agentDir).toBe("/tmp/agent");
+    expect(extractOptions?.agentDir).toBe(testCase.expectedAgentDir);
   });
 
   it("caps explicit structured extraction timeouts before provider execution", async () => {
