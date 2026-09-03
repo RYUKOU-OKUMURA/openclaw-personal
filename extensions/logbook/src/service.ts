@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { canonicalizeBase64 } from "openclaw/plugin-sdk/media-runtime";
 import type {
   OpenClawConfig,
@@ -19,7 +20,7 @@ import {
   selectBatchFrames,
   validateCardCoverage,
 } from "./analyze.js";
-import { parseModelRef, type LogbookConfig } from "./config.js";
+import { parseModelRef, resolveLogbookConfig, type LogbookConfig } from "./config.js";
 import {
   buildAskPrompt,
   buildCardsCorrectionPrompt,
@@ -76,6 +77,7 @@ const CAPTURE_COMMANDS = ["screen.snapshot", "logbook.snapshot"] as const;
 type LogbookStatus = {
   captureEnabled: boolean;
   capturePaused: boolean;
+  screenIndex: number;
   captureIntervalSeconds: number;
   analysisIntervalMinutes: number;
   retentionDays: number;
@@ -173,6 +175,52 @@ export class LogbookService {
     }
   }
 
+  private screenIndex(): number {
+    return resolveLogbookConfig(
+      this.deps.runtime.config.current().plugins?.entries?.logbook?.config,
+    ).screenIndex;
+  }
+
+  async setScreenIndex(screenIndex: unknown): Promise<LogbookStatus> {
+    if (
+      typeof screenIndex !== "number" ||
+      !Number.isInteger(screenIndex) ||
+      screenIndex < 0 ||
+      screenIndex > 16
+    ) {
+      throw new Error("screenIndex must be an integer from 0 to 16");
+    }
+    this.requireStore();
+    await this.deps.runtime.config.mutateConfigFile({
+      afterWrite: { mode: "auto" },
+      mutate: (draft) => {
+        const config = draft.plugins?.entries?.logbook?.config;
+        // Creating the parent object is a broader plugin reload, which resets pause.
+        if (!config) {
+          throw new Error(
+            "Initialize Logbook config with screenIndex and restart the Gateway once before using live display selection",
+          );
+        }
+        config.screenIndex = screenIndex;
+      },
+    });
+    // The managed Gateway applies config asynchronously after the durable write.
+    // Confirm the active snapshot rather than keeping a second, divergent choice.
+    const deadline = Date.now() + 10_000;
+    while (this.screenIndex() !== screenIndex) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Screen selection was saved but not applied; check Gateway config reload and refresh Logbook status",
+        );
+      }
+      await delay(50);
+      this.requireStore();
+    }
+    this.captureBackoffTicks = 0;
+    this.captureFailures = 0;
+    return this.status();
+  }
+
   private async resolveNode(): Promise<
     { node: { nodeId: string; displayName?: string; command: string } } | { reason: string }
   > {
@@ -240,11 +288,12 @@ export class LogbookService {
         return;
       }
       const node = resolved.node;
+      const screenIndex = this.screenIndex();
       const invoked = await this.deps.runtime.nodes.invoke({
         nodeId: node.nodeId,
         command: node.command,
         params: {
-          screenIndex: this.config.screenIndex,
+          screenIndex,
           maxWidth: this.config.maxWidth,
           quality: JPEG_QUALITY,
           format: "jpeg",
@@ -281,7 +330,7 @@ export class LogbookService {
         capturedAtMs,
         day,
         path: filePath,
-        screenIndex: this.config.screenIndex,
+        screenIndex,
         width: raw?.width,
         height: raw?.height,
         byteSize: buffer.byteLength,
@@ -666,6 +715,7 @@ export class LogbookService {
     return {
       captureEnabled: this.config.captureEnabled,
       capturePaused: this.capturePaused,
+      screenIndex: this.screenIndex(),
       captureIntervalSeconds: this.config.captureIntervalSeconds,
       analysisIntervalMinutes: this.config.analysisIntervalMinutes,
       retentionDays: this.config.retentionDays,

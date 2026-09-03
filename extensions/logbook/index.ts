@@ -67,6 +67,7 @@ export default definePluginEntry({
   description: "Automatic work journal built from periodic screen snapshots",
   configSchema: logbookConfigSchema,
   nodeHostCommands: logbookNodeHostCommands,
+  reload: { hotPrefixes: ["plugins.entries.logbook.config.screenIndex"] },
   register(api: OpenClawPluginApi) {
     const config = logbookConfigSchema.parse(api.pluginConfig);
     let service: LogbookService | null = null;
@@ -216,6 +217,14 @@ export default definePluginEntry({
       svc.setCapturePaused(paused);
       return svc.status();
     });
+
+    registerWrite("logbook.screen.set", (params) =>
+      requireService().setScreenIndex(
+        params && typeof params === "object" && "screenIndex" in params
+          ? params.screenIndex
+          : undefined,
+      ),
+    );
 
     registerWrite("logbook.analyze.now", () => requireService().analyzeNow());
   },

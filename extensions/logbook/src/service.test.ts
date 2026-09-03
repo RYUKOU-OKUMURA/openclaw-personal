@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveLogbookConfig } from "./config.js";
 import { LogbookService } from "./service.js";
@@ -16,18 +17,40 @@ const quietLogger = {
 
 function makeService(params: {
   nodes: NodeRecord[];
-  invoke: (args: { nodeId: string; command: string }) => Promise<unknown>;
+  invoke: (args: {
+    nodeId: string;
+    command: string;
+    params: { screenIndex: number };
+  }) => Promise<unknown>;
   config?: Record<string, unknown>;
   fullConfig?: Record<string, unknown>;
   complete?: (request: { model?: string; purpose?: string }) => Promise<{ text: string }>;
   extractStructured?: () => Promise<{ text: string }>;
+  mutateConfig?: (draft: OpenClawConfig) => Promise<void>;
 }) {
   const dataDir = realpathSync(mkdtempSync(path.join(tmpdir(), "logbook-service-test-")));
   const invoked: Array<{ nodeId: string; command: string }> = [];
+  const currentConfig: OpenClawConfig = {
+    ...params.fullConfig,
+    plugins: { entries: { logbook: { config: { ...params.config } } } },
+  };
+  const mutateConfigFile = vi.fn(
+    async ({ mutate }: { mutate: (draft: OpenClawConfig) => void }) => {
+      const draft = structuredClone(currentConfig);
+      mutate(draft);
+      await params.mutateConfig?.(draft);
+      Object.assign(currentConfig, draft);
+    },
+  );
   const runtime = {
+    config: { current: () => currentConfig, mutateConfigFile },
     nodes: {
       list: async () => ({ nodes: params.nodes }),
-      invoke: async (args: { nodeId: string; command: string }) => {
+      invoke: async (args: {
+        nodeId: string;
+        command: string;
+        params: { screenIndex: number };
+      }) => {
         invoked.push({ nodeId: args.nodeId, command: args.command });
         return await params.invoke(args);
       },
@@ -47,7 +70,7 @@ function makeService(params: {
   service.start();
   const tick = () =>
     (service as unknown as { captureTick(): Promise<void> }).captureTick.call(service);
-  return { service, invoked, tick, dataDir };
+  return { service, invoked, tick, dataDir, currentConfig, mutateConfigFile };
 }
 
 const framePayload = {
@@ -60,6 +83,32 @@ describe("LogbookService capture node selection", () => {
     for (const cleanup of cleanups.splice(0)) {
       cleanup();
     }
+  });
+
+  it("captures the live configured screen and keeps an in-flight frame on its original screen", async () => {
+    const requestedScreens: number[] = [];
+    const fixture = makeService({
+      nodes: [{ nodeId: "mac-app", commands: ["screen.snapshot"] }],
+      config: { screenIndex: 0 },
+      invoke: async ({ params }) => {
+        requestedScreens.push(params.screenIndex);
+        fixture.currentConfig.plugins!.entries!.logbook!.config!.screenIndex = 0;
+        return framePayload;
+      },
+    });
+    cleanups.push(() => {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    });
+    fixture.currentConfig.plugins!.entries!.logbook!.config!.screenIndex = 1;
+
+    await fixture.tick();
+
+    expect(requestedScreens).toEqual([1]);
+    expect(fixture.service.framesInRange(0, Date.now() + 1)[0]?.screenIndex).toBe(1);
+    expect(fixture.service.status()).toMatchObject({ screenIndex: 0 });
+    await fixture.tick();
+    expect(requestedScreens).toEqual([1, 0]);
   });
 
   it("prefers app nodes over headless node hosts regardless of node id order", async () => {
@@ -200,6 +249,97 @@ describe("LogbookService status", () => {
     } finally {
       service.stop();
       rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("LogbookService screen selection", () => {
+  it("persists only the screen selection, preserves pause, and accepts screen zero", async () => {
+    const fixture = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      config: { screenIndex: 1, captureEnabled: false, nodeId: "my-mac" },
+      fullConfig: { gateway: { port: 18789 } },
+    });
+    try {
+      fixture.service.setCapturePaused(true);
+      const previous = structuredClone(fixture.currentConfig);
+      previous.plugins!.entries!.logbook!.config!.screenIndex = 0;
+      await expect(fixture.service.setScreenIndex(0)).resolves.toMatchObject({
+        screenIndex: 0,
+        capturePaused: true,
+        captureEnabled: false,
+      });
+      expect(fixture.currentConfig).toEqual(previous);
+      expect(fixture.mutateConfigFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          afterWrite: { mode: "auto" },
+        }),
+      );
+    } finally {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid choices and failed persistence without changing capture state", async () => {
+    const fixture = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      config: { screenIndex: 1 },
+      mutateConfig: async () => {
+        throw new Error("disk unavailable");
+      },
+    });
+    try {
+      fixture.service.setCapturePaused(true);
+      for (const invalid of [undefined, null, "0", -1, 17, 0.5, Number.NaN]) {
+        await expect(fixture.service.setScreenIndex(invalid)).rejects.toThrow("screenIndex");
+      }
+      expect(fixture.mutateConfigFile).not.toHaveBeenCalled();
+      await expect(fixture.service.setScreenIndex(0)).rejects.toThrow("disk unavailable");
+      expect(fixture.service.status()).toMatchObject({ screenIndex: 1, capturePaused: true });
+      delete fixture.currentConfig.plugins!.entries!.logbook!.config;
+      await expect(fixture.service.setScreenIndex(0)).rejects.toThrow("Initialize Logbook config");
+      expect(fixture.currentConfig.plugins!.entries!.logbook!.config).toBeUndefined();
+      expect(fixture.service.status().capturePaused).toBe(true);
+    } finally {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for the active config and reports when a saved choice cannot be applied", async () => {
+    vi.useFakeTimers();
+    const fixture = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      config: { screenIndex: 1 },
+    });
+    fixture.mutateConfigFile.mockImplementation(async () => {});
+    try {
+      fixture.service.setCapturePaused(true);
+      let settled = false;
+      const selection = fixture.service.setScreenIndex(0).then((status) => {
+        settled = true;
+        return status;
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+      fixture.currentConfig.plugins!.entries!.logbook!.config!.screenIndex = 0;
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(selection).resolves.toMatchObject({ screenIndex: 0, capturePaused: true });
+
+      const failure = expect(fixture.service.setScreenIndex(1)).rejects.toThrow(
+        "saved but not applied",
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      await failure;
+      expect(fixture.service.status()).toMatchObject({ screenIndex: 0, capturePaused: true });
+    } finally {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+      vi.useRealTimers();
     }
   });
 });

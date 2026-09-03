@@ -215,6 +215,32 @@ Without `nodeId`, Logbook prefers a connected app node exposing
 eligible nodes. The dashboard pause toggle is session-only and resets when the
 Gateway restarts; use `captureEnabled: false` for a persistent stop.
 
+### Change the captured display
+
+`logbook.status` includes the active `screenIndex`. To save a different display
+and apply it without restarting the Gateway:
+
+```bash
+openclaw gateway call logbook.screen.set --params '{"screenIndex":1}'
+```
+
+The method requires `operator.write` and accepts an integer from `0` to `16`.
+It changes only `plugins.entries.logbook.config.screenIndex`, preserves the
+current pause state, and returns status after the active configuration reflects
+the choice. Gateway config reload must be enabled. A saved choice that cannot
+be applied returns an error; refresh status before trying again.
+
+This requires an existing Logbook `config` object. If the plugin has only
+`enabled: true`, set `plugins.entries.logbook.config.screenIndex` and restart
+once first. Creating the entire config object uses the broader plugin reload,
+so this method rejects that initial setup instead of resetting a paused service.
+
+The next capture uses the selected index. A capture already in progress keeps
+its original index. On the native macOS app node, indices follow ascending
+display IDs, not the main-display order. The headless capture command uses the
+system `screencapture` display order. Recheck the selection after connecting or
+disconnecting displays; the setting saves an index, not a physical-display ID.
+
 ### Vision model selection
 
 Logbook resolves the observation model in this order:
@@ -242,17 +268,18 @@ explicit Logbook `visionModel` still applies.
 
 Logbook registers these Gateway RPC methods:
 
-| Method                | Parameters               | Scope            | Result                                                                   |
-| --------------------- | ------------------------ | ---------------- | ------------------------------------------------------------------------ |
-| `logbook.status`      | none                     | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status |
-| `logbook.days`        | none                     | `operator.read`  | Days with timeline-card counts and card time bounds                      |
-| `logbook.timeline`    | `{ day?: "YYYY-MM-DD" }` | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day  |
-| `logbook.frames`      | `{ startMs, endMs }`     | `operator.write` | Frame metadata in the requested epoch-millisecond range                  |
-| `logbook.frame`       | `{ frameId }`            | `operator.write` | One raw JPEG frame as base64                                             |
-| `logbook.standup`     | `{ day?, refresh? }`     | `operator.write` | Cached or regenerated standup text for a day                             |
-| `logbook.ask`         | `{ day?, question }`     | `operator.write` | Timeline-grounded answer for a day                                       |
-| `logbook.capture.set` | `{ paused }`             | `operator.write` | Session-only pause state and updated status                              |
-| `logbook.analyze.now` | none                     | `operator.write` | Starts pending analysis, or returns a reason it could not start          |
+| Method                | Parameters               | Scope            | Result                                                                        |
+| --------------------- | ------------------------ | ---------------- | ----------------------------------------------------------------------------- |
+| `logbook.status`      | none                     | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status      |
+| `logbook.days`        | none                     | `operator.read`  | Days with timeline-card counts and card time bounds                           |
+| `logbook.timeline`    | `{ day?: "YYYY-MM-DD" }` | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day       |
+| `logbook.frames`      | `{ startMs, endMs }`     | `operator.write` | Frame metadata in the requested epoch-millisecond range                       |
+| `logbook.frame`       | `{ frameId }`            | `operator.write` | One raw JPEG frame as base64                                                  |
+| `logbook.standup`     | `{ day?, refresh? }`     | `operator.write` | Cached or regenerated standup text for a day                                  |
+| `logbook.ask`         | `{ day?, question }`     | `operator.write` | Timeline-grounded answer for a day                                            |
+| `logbook.capture.set` | `{ paused }`             | `operator.write` | Session-only pause state and updated status                                   |
+| `logbook.screen.set`  | `{ screenIndex }`        | `operator.write` | Persistent display selection and updated status, without changing pause state |
+| `logbook.analyze.now` | none                     | `operator.write` | Starts pending analysis, or returns a reason it could not start               |
 
 The read methods return operational state or derived text. Raw screenshot
 pixels, model-spending actions, and runtime mutations require

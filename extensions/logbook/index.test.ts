@@ -36,6 +36,9 @@ describe("logbook gateway methods", () => {
       scope: "operator.read",
       profileAccess: "independent",
     });
+    expect(registrations.find((entry) => entry.method === "logbook.screen.set")?.options).toEqual({
+      scope: "operator.write",
+    });
     for (const registration of registrations.filter((entry) => entry.method !== "logbook.status")) {
       expect(registration.options).not.toHaveProperty("profileAccess");
     }
