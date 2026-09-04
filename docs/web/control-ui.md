@@ -159,6 +159,34 @@ The Control UI fetches its runtime settings from `/control-ui-config.json`, reso
 
 Open **Settings → Connection** to see the **Gateway Host** card with the Gateway machine, LAN address, operating system, runtime, uptime, CPU load, memory, and state-volume disk space. The card refreshes every 10 seconds while visible through the `system.info` Gateway RPC, which requires the `operator.read` scope. Older Gateways and connections without that scope omit the card.
 
+## Sandbox access map
+
+Open **Settings → Security → Access Map** to see the selected agent's effective sandbox mounts, inbox, network setting, sandbox tool policy, and host execution policy. The page reads and writes through the connected Gateway. A browser Control UI and the embedded dashboard in the macOS app show the same Gateway-owned state when they are connected to the same Gateway and agent; a different Gateway has its own state.
+
+<Steps>
+  <Step title="Choose a source">
+    Click **Add from PC** to browse files and folders on the Gateway computer. To use a file on the computer running the browser or the macOS app, choose **Upload file**; browser and macOS uploads are always copied. **Create new** creates an empty file or folder in the sandbox inbox.
+  </Step>
+  <Step title="Choose the access mode">
+    The drawer offers three modes:
+
+    - **Add a copy** places a separate copy in the sandbox workspace inbox. It does not change the original. Uploads and newly created entries are copy-only.
+    - **Share read only** mounts the selected regular file or folder from the Gateway computer under `/mnt/shared`. Sandbox tools can read the original through that mount, but cannot change it through the share.
+    - **Share read & write** mounts the original under `/mnt/shared` and allows sandbox tools and processes to change the original.
+
+    Read-only and read-write sharing accepts a path on the Gateway computer, asks for confirmation, and applies the existing bind-source security checks. If the source is outside the allowed workspace roots, the confirmation also enables external bind sources for that sandbox configuration. Use read-only sharing unless writes are required.
+
+  </Step>
+  <Step title="Apply a share">
+    Click **Add to workspace**. Copies are written to the inbox immediately. A read-only or read-write share saves the bind setting, but a running container keeps its previous mounts. When **Sharing settings changed** appears, click **Apply to container**. OpenClaw removes the current Docker container and creates it with the current settings on next use; this can interrupt running sandbox tasks, does not restart the Gateway, and keeps the source files. A shared-scope container affects every agent that uses it.
+  </Step>
+  <Step title="Remove a share">
+    Select a shared location in the map, choose **Remove share**, and confirm. OpenClaw removes that configured bind and keeps the original file or folder. The running container keeps the old mount until you click **Apply to container**. Another mount can still provide access to the same location. A share inherited from global sandbox settings must be removed in that global configuration so other agents are not changed unexpectedly.
+  </Step>
+</Steps>
+
+Viewing the report requires `operator.read`. Adding or creating entries, sharing, applying a container, and removing a share require `operator.admin`; the page disables those controls for read-only operators. File management on this page is available only for an enabled Docker sandbox. Reports for disabled sandboxes or other backends can remain viewable, but their file-management controls are unavailable. See [Sandboxing](/gateway/sandboxing) for backend and configuration details.
+
 ## Language support
 
 The Control UI localizes itself on first load based on your browser locale. To override it later, open **Settings → Appearance → Language**.

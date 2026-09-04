@@ -163,9 +163,7 @@ export function renderAccessMapDrawer(p: AccessMapDrawerProps) {
           </p>
         </div>
         ${p.draft.mode !== "copy"
-          ? html`<p class="access-map-help">
-              ${t("accessMap.destinationPending")} ${t("accessMap.sharePending")}
-            </p>`
+          ? html`<p class="access-map-help">${t("accessMap.destinationPending")}</p>`
           : nothing}
         ${p.error
           ? html`<p class="access-map-message is-error" role="alert">${p.error}</p>`

@@ -481,6 +481,10 @@ suite.define(() => {
           const mapDrawer = drawer(page);
           await mapDrawer.waitFor();
           await mapDrawer.locator(`input[type="radio"][value="${share.mode}"]`).check();
+          await expectText(mapDrawer, "The exact name is assigned when added.");
+          await expect
+            .poll(() => mapDrawer.textContent())
+            .not.toContain("Sharing saved. Apply to the container to use the new permissions.");
           const before = (await gateway.getRequests("sandbox.entries.add")).length;
           await mapDrawer.getByRole("button", { name: "Add to workspace", exact: true }).click();
 
