@@ -1,11 +1,11 @@
 {
   "fallbackKeys": [],
-  "generatedAt": "2026-09-03T14:23:25.450Z",
+  "generatedAt": "2026-09-04T01:06:34.189Z",
   "locale": "ja-JP",
   "model": "assistant-reviewed",
   "provider": "manual",
-  "sourceHash": "f448c81d5d46662346d05689cb0e5ff780c75498ebf507bed40331175718dfd2",
-  "totalKeys": 6127,
-  "translatedKeys": 6127,
+  "sourceHash": "e45a4ce77faf5eec45774a3dc2bcea320b807871604c199ed9b04869a3f9b1dc",
+  "totalKeys": 6128,
+  "translatedKeys": 6128,
   "workflow": 1
 }
