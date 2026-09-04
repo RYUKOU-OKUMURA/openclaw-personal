@@ -63,8 +63,6 @@ describe("ollama lazy imports", () => {
         ollamaMediaUnderstandingProvider: {
           id: "ollama",
           capabilities: ["image"],
-          describeImage: async () => ({ text: "image" }),
-          describeImages: async () => ({ text: "images" }),
           extractStructured: async () => ({ text: '{"summary":"image"}' }),
         },
       };
@@ -183,12 +181,13 @@ describe("ollama lazy imports", () => {
       webSearchImports: 0,
       wslImports: 0,
     });
+    expect(mediaProvider).toMatchObject({ id: "ollama", capabilities: ["image"] });
 
     await expect(embeddingAdapter?.create({} as never)).resolves.toEqual({ provider: null });
     await expect(mediaProvider?.extractStructured?.({} as never)).resolves.toEqual({
       text: '{"summary":"image"}',
     });
-    await expect(mediaProvider?.describeImage?.({} as never)).resolves.toEqual({ text: "image" });
+    expect(mediaImports).toBe(1);
     await expect(nodeCommands[0]?.handle()).resolves.toBe(
       JSON.stringify({ provider: "ollama", models: [] }),
     );

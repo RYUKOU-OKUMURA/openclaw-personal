@@ -30,7 +30,7 @@ const NATIVE_FILE_PICKER_SCRIPT = [
   "end run",
 ].join("\n");
 
-export type HostPickerResult = { path: string } | { cancelled: true };
+type HostPickerResult = { path: string } | { cancelled: true };
 export type HostDirectoryPickerResult = HostPickerResult;
 export type HostFilePickerResult = HostPickerResult;
 

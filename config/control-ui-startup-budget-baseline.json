@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 348426,
-  "reason": "User-approved access map page and navigation add 634 B startup gzip; lazy page copy and existing fixed cap and growth allowances retained (2026-09-03 approval).",
-  "updatedAt": "2026-09-03"
+  "startupJsGzipBytes": 348668,
+  "reason": "Model provider defaults consolidation, autosave, and contextual help add 235 B (0.07%) over the reconciled 348433 B main baseline; fixed 358400 B cap and existing allowances retained",
+  "updatedAt": "2026-09-01"
 }

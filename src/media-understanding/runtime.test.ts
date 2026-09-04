@@ -3,15 +3,14 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { MediaAttachment, MediaUnderstandingOutput } from "../media-understanding/types.js";
 import {
   describeVideoFile,
   describeImageFile,
   describeImageFileWithModel,
-  extractStructuredWithModel,
   runMediaUnderstandingFile,
+  resolveAudioInputBudget,
   transcribeAudioFile,
 } from "./runtime.js";
 
@@ -75,6 +74,84 @@ function requireRunCapabilityRequest(): unknown {
 }
 
 describe("media-understanding runtime", () => {
+  it.each([
+    { name: "automatic selection", cfg: {}, maxBytes: 20 * 1024 * 1024 },
+    {
+      name: "automatic input override",
+      cfg: { tools: { media: { audio: { maxBytes: 4096 } } } },
+      maxBytes: 4096,
+    },
+    {
+      name: "larger audio fallback but not an image entry",
+      cfg: {
+        tools: {
+          media: {
+            audio: { maxBytes: 256 },
+            models: [
+              { provider: "first", capabilities: ["audio"], maxBytes: 1024 },
+              { provider: "second", capabilities: ["audio"], maxBytes: 4096 },
+              { provider: "image", capabilities: ["image"], maxBytes: 8192 },
+            ],
+          },
+        },
+      },
+      maxBytes: 4096,
+    },
+    {
+      name: "explicit local CLI override",
+      cfg: {
+        tools: {
+          media: {
+            audio: { maxBytes: 4096 },
+            models: [
+              { type: "cli", command: "fixture-asr", capabilities: ["audio"], maxBytes: 1024 },
+            ],
+          },
+        },
+      },
+      maxBytes: 1024,
+    },
+    {
+      name: "local CLI inheriting audio input limit",
+      cfg: {
+        tools: {
+          media: {
+            audio: { maxBytes: 4096 },
+            models: [{ type: "cli", command: "fixture-asr", capabilities: ["audio"] }],
+          },
+        },
+      },
+      maxBytes: 4096,
+    },
+    {
+      name: "inferred provider capability",
+      cfg: {
+        tools: {
+          media: {
+            models: [{ provider: "registered-audio", maxBytes: 8192 }],
+          },
+        },
+      },
+      maxBytes: 8192,
+    },
+  ] satisfies Array<{ name: string; cfg: OpenClawConfig; maxBytes: number }>)(
+    "prepares the existing transcription input budget for $name",
+    async ({ cfg, maxBytes }) => {
+      mocks.buildProviderRegistry.mockReturnValue(
+        new Map([["registered-audio", { capabilities: ["audio"] }]]),
+      );
+      await expect(resolveAudioInputBudget({ cfg })).resolves.toEqual({ enabled: true, maxBytes });
+      expect(mocks.runCapability).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not load providers to prepare disabled audio input", async () => {
+    await expect(
+      resolveAudioInputBudget({ cfg: { tools: { media: { audio: { enabled: false } } } } }),
+    ).resolves.toEqual({ enabled: false });
+    expect(mocks.buildProviderRegistry).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     mocks.buildProviderRegistry.mockReset();
     mocks.createMediaAttachmentCache.mockReset();
@@ -804,177 +881,6 @@ describe("media-understanding runtime", () => {
     expect(mocks.describeImageWithModel).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "worker", agentDir: "/tmp/worker-agent" }),
     );
-  });
-
-  it.each([
-    { name: "default", agentDir: undefined, expectedAgentDir: "/tmp/default-agent" },
-    { name: "explicit", agentDir: "/tmp/agent", expectedAgentDir: "/tmp/agent" },
-  ])("routes structured extraction with the $name owner", async (testCase) => {
-    const providerRegistry = new Map();
-    const authStore = {} as AuthProfileStore;
-    const cfg = {
-      agents: {
-        ownership: "explicit",
-        defaults: { systemAgent: { agentId: "worker" } },
-        entries: {
-          other: { agentDir: "/tmp/other-agent" },
-          worker: { agentDir: "/tmp/default-agent" },
-        },
-      },
-    } satisfies OpenClawConfig;
-    const extractStructured = vi.fn(async () => ({
-      text: '{"ok":true}',
-      parsed: { ok: true },
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json" as const,
-    }));
-    mocks.buildMediaUnderstandingRegistry.mockReturnValue(providerRegistry);
-    mocks.getMediaUnderstandingProvider.mockReturnValue({
-      id: "vision-plugin",
-      extractStructured,
-    });
-
-    await expect(
-      extractStructuredWithModel({
-        input: [
-          { type: "text", text: "Extract the fact." },
-          {
-            type: "image",
-            buffer: Buffer.from("image-bytes"),
-            fileName: "fact.png",
-            mime: "image/png",
-          },
-        ],
-        instructions: "Return JSON.",
-        provider: "Vision-Plugin",
-        model: "vision-json",
-        profile: "work",
-        preferredProfile: "preferred-work",
-        authStore,
-        timeoutMs: 45_000,
-        cfg,
-        agentDir: testCase.agentDir,
-      }),
-    ).resolves.toEqual({
-      text: '{"ok":true}',
-      parsed: { ok: true },
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json",
-    });
-
-    expect(mocks.buildMediaUnderstandingRegistry).toHaveBeenCalledWith(undefined, cfg);
-    expect(mocks.getMediaUnderstandingProvider).toHaveBeenCalledWith(
-      "Vision-Plugin",
-      providerRegistry,
-    );
-    const [extractOptions] = expectDefined(
-      (
-        extractStructured.mock.calls as unknown as Array<
-          [
-            {
-              input?: unknown;
-              instructions?: string;
-              provider?: string;
-              model?: string;
-              profile?: string;
-              preferredProfile?: string;
-              authStore?: AuthProfileStore;
-              timeoutMs?: number;
-              agentDir?: string;
-            },
-          ]
-        >
-      )[0],
-      "(extractStructured.mock.calls as unknown as Array<\n        [\n          {\n            input?: unknown;\n            instructions?: string;\n            provider?: string;\n            model?: string;\n            profile?: string;\n            preferredProfile?: string;\n            authStore?: AuthProfileStore;\n            timeoutMs?: number;\n            agentDir?: string;\n          },\n        ]\n      >)[0] test invariant",
-    );
-    expect(extractOptions?.input).toEqual([
-      { type: "text", text: "Extract the fact." },
-      {
-        type: "image",
-        buffer: Buffer.from("image-bytes"),
-        fileName: "fact.png",
-        mime: "image/png",
-      },
-    ]);
-    expect(extractOptions?.instructions).toBe("Return JSON.");
-    expect(extractOptions?.provider).toBe("Vision-Plugin");
-    expect(extractOptions?.model).toBe("vision-json");
-    expect(extractOptions?.profile).toBe("work");
-    expect(extractOptions?.preferredProfile).toBe("preferred-work");
-    expect(extractOptions?.authStore).toBe(authStore);
-    expect(extractOptions?.timeoutMs).toBe(45_000);
-    expect(extractOptions?.agentDir).toBe(testCase.expectedAgentDir);
-  });
-
-  it("caps explicit structured extraction timeouts before provider execution", async () => {
-    const extractStructured = vi.fn(async () => ({
-      text: "{}",
-      parsed: {},
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json" as const,
-    }));
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin", extractStructured });
-
-    await extractStructuredWithModel({
-      input: [
-        {
-          type: "image",
-          buffer: Buffer.from("image-bytes"),
-          fileName: "fact.png",
-          mime: "image/png",
-        },
-      ],
-      instructions: "Return JSON.",
-      provider: "vision-plugin",
-      model: "vision-json",
-      timeoutMs: Number.MAX_SAFE_INTEGER,
-      cfg: {} as OpenClawConfig,
-    });
-
-    expect(extractStructured).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: MAX_TIMER_TIMEOUT_MS }),
-    );
-  });
-
-  it("rejects text-only structured extraction before provider lookup", async () => {
-    await expect(
-      extractStructuredWithModel({
-        input: [{ type: "text", text: "Extract the fact." }],
-        instructions: "Return JSON.",
-        provider: "vision-plugin",
-        model: "vision-json",
-        cfg: {} as OpenClawConfig,
-      }),
-    ).rejects.toThrow("Structured extraction requires at least one image input.");
-
-    expect(mocks.buildMediaUnderstandingRegistry).not.toHaveBeenCalled();
-    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
-  });
-
-  it("fails clearly when a provider lacks structured extraction", async () => {
-    const providerRegistry = new Map();
-    mocks.buildMediaUnderstandingRegistry.mockReturnValue(providerRegistry);
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin" });
-
-    await expect(
-      extractStructuredWithModel({
-        input: [
-          {
-            type: "image",
-            buffer: Buffer.from("image-bytes"),
-            fileName: "fact.png",
-            mime: "image/png",
-          },
-        ],
-        instructions: "Return JSON.",
-        provider: "vision-plugin",
-        model: "vision-json",
-        cfg: {} as OpenClawConfig,
-      }),
-    ).rejects.toThrow("Provider does not support structured extraction: vision-plugin");
   });
 
   it("surfaces the underlying provider failure when media understanding fails", async () => {

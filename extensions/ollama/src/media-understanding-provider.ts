@@ -1,8 +1,6 @@
 // Ollama provider module implements model/runtime integration.
 import { validateJsonSchemaValue } from "openclaw/plugin-sdk/json-schema-runtime";
 import {
-  describeImageWithModel,
-  describeImagesWithModel,
   describeImagesWithModelPayloadTransform,
   type MediaUnderstandingProvider,
   type StructuredExtractionRequest,
@@ -91,7 +89,5 @@ async function extractOllamaStructured(
 export const ollamaMediaUnderstandingProvider = {
   id: OLLAMA_PROVIDER_ID,
   capabilities: ["image"],
-  describeImage: describeImageWithModel,
-  describeImages: describeImagesWithModel,
   extractStructured: extractOllamaStructured,
 } satisfies MediaUnderstandingProvider;

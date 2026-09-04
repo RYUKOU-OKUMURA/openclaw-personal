@@ -101,17 +101,13 @@ const lazyOllamaMemoryEmbeddingProviderAdapter: MemoryEmbeddingProviderAdapter =
     await (await loadOllamaMemoryEmbeddingProviderAdapter()).create(options),
 };
 
-const lazyOllamaMediaUnderstandingProvider: MediaUnderstandingProvider = {
+const ollamaMediaUnderstandingProvider: MediaUnderstandingProvider = {
   id: OLLAMA_PROVIDER_ID,
   capabilities: ["image"],
-  describeImage: async (request) => {
-    const provider = await loadOllamaMediaUnderstandingProvider();
-    return await provider.describeImage(request);
-  },
-  describeImages: async (request) => {
-    const provider = await loadOllamaMediaUnderstandingProvider();
-    return await provider.describeImages(request);
-  },
+  // Generic image hooks are hydrated by the core registry; only the Ollama
+  // structured-extraction hook needs this plugin-owned runtime module.
+  describeImage: undefined,
+  describeImages: undefined,
   extractStructured: async (request) => {
     const provider = await loadOllamaMediaUnderstandingProvider();
     return await provider.extractStructured(request);
@@ -768,7 +764,7 @@ export default definePluginEntry({
       void checkWsl2CrashLoopRiskLazily(api);
     }
     api.registerEmbeddingProvider(lazyOllamaMemoryEmbeddingProviderAdapter);
-    api.registerMediaUnderstandingProvider(lazyOllamaMediaUnderstandingProvider);
+    api.registerMediaUnderstandingProvider(ollamaMediaUnderstandingProvider);
     if (startupPluginConfig.nodeInference?.enabled !== false) {
       for (const command of createLazyOllamaNodeHostCommands()) {
         api.registerNodeHostCommand(command);
