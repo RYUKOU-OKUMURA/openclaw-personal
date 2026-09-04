@@ -4240,17 +4240,38 @@ public struct FsListDirResult: Codable, Sendable {
     public let parent: String?
     public let home: String
     public let entries: [FsDirEntry]
+    public let nativedirectorypicker: Bool?
 
     public init(
         path: String,
         parent: String? = nil,
         home: String,
-        entries: [FsDirEntry])
+        entries: [FsDirEntry],
+        nativedirectorypicker: Bool? = nil)
     {
         self.path = path
         self.parent = parent
         self.home = home
         self.entries = entries
+        self.nativedirectorypicker = nativedirectorypicker
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case parent
+        case home
+        case entries
+        case nativedirectorypicker = "nativeDirectoryPicker"
+    }
+}
+
+public struct FsPickDirectoryParams: Codable, Sendable {
+    public let path: String?
+
+    public init(
+        path: String? = nil)
+    {
+        self.path = path
     }
 }
 

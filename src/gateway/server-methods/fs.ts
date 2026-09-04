@@ -5,16 +5,22 @@ import {
   ErrorCodes,
   errorShape,
   missingScopeErrorShape,
+  validateFsPickDirectoryParams,
   validateFsListDirParams,
   validateFsListDirResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { listHostDirectories } from "../../infra/host-directory-listing.js";
+import { pickHostDirectory } from "../../infra/host-directory-picker.js";
 import { NODE_FS_LIST_DIR_COMMAND } from "../../infra/node-commands.js";
 import { errorShapeFromError } from "../error-shape.js";
 import { isNodeCommandAllowed, resolveNodeCommandAllowlist } from "../node-command-policy.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
-import type { GatewayRequestHandlers } from "./types.js";
+import type { GatewayClient, GatewayRequestHandlers } from "./types.js";
 import { resolveWorkspacePathContainment } from "./workspace-path-containment.js";
+
+function isNativeDirectoryPickerAvailable(client: GatewayClient | null): boolean {
+  return process.platform === "darwin" && client?.internal?.isLocalClient === true;
+}
 
 function parseNodePayload(payload: unknown, payloadJSON?: string | null): unknown {
   if (payloadJSON) {
@@ -106,9 +112,14 @@ export const fsHandlers: GatewayRequestHandlers = {
       }
       const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
       if (scopes.includes(ADMIN_SCOPE)) {
+        const listing = await listHostDirectories(params.path, {
+          includeFiles: params.includeFiles === true,
+        });
         respond(
           true,
-          await listHostDirectories(params.path, { includeFiles: params.includeFiles === true }),
+          isNativeDirectoryPickerAvailable(client)
+            ? { ...listing, nativeDirectoryPicker: true as const }
+            : listing,
           undefined,
         );
         return;
@@ -137,6 +148,43 @@ export const fsHandlers: GatewayRequestHandlers = {
       respond(true, listing, undefined);
     } catch (error) {
       respond(false, undefined, errorShapeFromError(ErrorCodes.INVALID_REQUEST, error));
+    }
+  },
+  "fs.pickDirectory": async ({ params, respond, client, signal }) => {
+    if (!validateFsPickDirectoryParams(params)) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid fs parameters"));
+      return;
+    }
+    const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
+    if (!scopes.includes(ADMIN_SCOPE)) {
+      respond(
+        false,
+        undefined,
+        missingScopeErrorShape({ missingScope: ADMIN_SCOPE, requiredScopes: [ADMIN_SCOPE] }),
+      );
+      return;
+    }
+    if (!isNativeDirectoryPickerAvailable(client)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "native directory picker requires a local macOS client"),
+      );
+      return;
+    }
+    if (signal?.aborted) {
+      return;
+    }
+
+    try {
+      const result = await pickHostDirectory({ path: params.path, signal });
+      if (!signal?.aborted) {
+        respond(true, result, undefined);
+      }
+    } catch (error) {
+      if (!signal?.aborted) {
+        respond(false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, error));
+      }
     }
   },
 };

@@ -198,10 +198,11 @@ export function createGatewayAuthenticatedRequestDispatcher(params: {
     };
 
     const executeRequest = async () => {
-      // Most UI/SDK RPCs outlive a reconnect. Companion asks are the exception:
-      // without their requester there is no safe recipient for a late answer.
+      // Most UI/SDK RPCs outlive a reconnect. Companion asks and native pickers
+      // belong to their requester; disconnecting must cancel their pending work.
       const cancelOnDisconnect =
         req.method === "sessions.companion.ask" ||
+        req.method === "fs.pickDirectory" ||
         (req.method === "node.invoke" &&
           client.connect.client.id === GATEWAY_CLIENT_IDS.CLI &&
           client.connect.client.mode === GATEWAY_CLIENT_MODES.CLI);

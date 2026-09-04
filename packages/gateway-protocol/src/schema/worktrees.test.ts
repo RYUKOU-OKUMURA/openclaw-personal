@@ -6,6 +6,8 @@ import {
   WorktreesRemoveResultSchema,
   validateSessionsCreateParams,
   validateFsListDirParams,
+  validateFsPickDirectoryParams,
+  validateFsPickDirectoryResult,
   validateWorktreesBranchesParams,
   validateWorktreesCreateParams,
   validateWorktreesGcParams,
@@ -102,6 +104,17 @@ describe("managed worktree protocol schemas", () => {
     expect(validateFsListDirParams({ path: "/repo" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "macbook", path: "/Users/peter" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "" })).toBe(false);
+  });
+
+  it("accepts native directory-picker requests and both outcomes", () => {
+    expect(validateFsPickDirectoryParams({})).toBe(true);
+    expect(validateFsPickDirectoryParams({ path: "/repo" })).toBe(true);
+    expect(validateFsPickDirectoryParams({ path: "" })).toBe(false);
+    expect(validateFsPickDirectoryParams({ nodeId: "node" })).toBe(false);
+    expect(validateFsPickDirectoryResult({ path: "/repo" })).toBe(true);
+    expect(validateFsPickDirectoryResult({ cancelled: true })).toBe(true);
+    expect(validateFsPickDirectoryResult({ cancelled: false })).toBe(false);
+    expect(validateFsPickDirectoryResult({ path: "/repo", cancelled: true })).toBe(false);
   });
 
   it("rejects invalid names and unknown fields", () => {

@@ -32,10 +32,24 @@ export const FsListDirResultSchema = closedObject({
   /** Selected host's home directory, for the picker's "home" shortcut. */
   home: NonEmptyString,
   entries: Type.Array(FsDirEntrySchema),
+  /** Native Finder folder selection is available to this local macOS listing caller. */
+  nativeDirectoryPicker: Type.Optional(Type.Literal(true)),
 });
+
+export const FsPickDirectoryParamsSchema = closedObject({
+  /** Absolute directory to show initially in the native Finder chooser. */
+  path: Type.Optional(NonEmptyString),
+});
+
+export const FsPickDirectoryResultSchema = Type.Union([
+  closedObject({ path: NonEmptyString }),
+  closedObject({ cancelled: Type.Literal(true) }),
+]);
 
 // Wire types derive directly from local schema consts so public d.ts graphs never
 // pull in the ProtocolSchemas registry.
 export type FsDirEntry = Static<typeof FsDirEntrySchema>;
 export type FsListDirParams = Static<typeof FsListDirParamsSchema>;
 export type FsListDirResult = Static<typeof FsListDirResultSchema>;
+export type FsPickDirectoryParams = Static<typeof FsPickDirectoryParamsSchema>;
+export type FsPickDirectoryResult = Static<typeof FsPickDirectoryResultSchema>;

@@ -515,6 +515,7 @@ enum class GatewayMethod(
   WorktreesList("worktrees.list"),
   WorktreesBranches("worktrees.branches"),
   FsListDir("fs.listDir"),
+  FsPickDirectory("fs.pickDirectory"),
   WorktreesCreate("worktrees.create"),
   WorktreesRemove("worktrees.remove"),
   WorktreesRestore("worktrees.restore"),
@@ -787,6 +788,9 @@ enum class GatewayMethod(
   DiagnosticsLanes("diagnostics.lanes"),
   SessionMembersListEvidence("session.members.listEvidence"),
   PluginsInspect("plugins.inspect"),
+  SandboxExplain("sandbox.explain"),
+  SandboxEntriesAdd("sandbox.entries.add"),
+  SandboxRecreate("sandbox.recreate"),
 }
 
 enum class GatewayEvent(

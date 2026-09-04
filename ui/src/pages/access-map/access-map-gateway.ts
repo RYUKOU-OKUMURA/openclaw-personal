@@ -5,6 +5,7 @@ import {
 import type {
   FsListDirParams,
   FsListDirResult,
+  FsPickDirectoryResult,
   SandboxEntriesAddParams,
   SandboxEntriesAddResult,
   SandboxExplainResult,
@@ -72,6 +73,18 @@ export async function listHostDir(
     requestParams.includeFiles = true;
   }
   return await client.request<FsListDirResult>("fs.listDir", requestParams);
+}
+
+export async function pickHostDirectory(
+  client: AccessMapGatewayClient,
+  path: string,
+): Promise<FsPickDirectoryResult> {
+  // The native dialog waits for a person; keep the request alive beyond its 2-minute limit.
+  return await client.request<FsPickDirectoryResult>(
+    "fs.pickDirectory",
+    { path },
+    { timeoutMs: 150_000 },
+  );
 }
 
 const AGENT_ID_PATTERN = /^[a-z0-9_][a-z0-9_-]{0,63}$/i;

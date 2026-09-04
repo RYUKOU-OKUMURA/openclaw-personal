@@ -695,4 +695,6 @@ export {
   FsDirEntrySchema,
   FsListDirParamsSchema,
   FsListDirResultSchema,
+  FsPickDirectoryParamsSchema,
+  FsPickDirectoryResultSchema,
 } from "./schema-modules.js";

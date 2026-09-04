@@ -22,6 +22,7 @@ import {
   addSandboxEntry,
   listHostDir,
   loadSandboxExplain,
+  pickHostDirectory,
   recreateSandboxContainer,
   removeSharedBind,
 } from "./access-map-gateway.ts";
@@ -165,6 +166,41 @@ class AccessMapPage extends OpenClawLightDomElement {
       kind,
       mode: "copy",
     };
+  }
+
+  private async pickNativeFolder() {
+    const scope = this.gateway.capture();
+    const listing = this.listing;
+    if (
+      !scope ||
+      !this.pickerOpen ||
+      !listing?.nativeDirectoryPicker ||
+      !this.canManageFiles ||
+      this.pickerLoading ||
+      this.busy
+    ) {
+      return;
+    }
+    const version = ++this.pickerVersion;
+    this.pickerLoading = true;
+    this.pickerError = null;
+    const current = () =>
+      this.gateway.isCurrent(scope) && this.pickerOpen && version === this.pickerVersion;
+    try {
+      const selected = await pickHostDirectory(scope.client, listing.path);
+      if (current() && this.canManageFiles && "path" in selected) {
+        this.pickerLoading = false;
+        this.selectPath(selected.path, "directory");
+      }
+    } catch (error) {
+      if (current()) {
+        this.pickerError = formatUiError(error);
+      }
+    } finally {
+      if (current()) {
+        this.pickerLoading = false;
+      }
+    }
   }
 
   private openCreate() {
@@ -461,6 +497,7 @@ class AccessMapPage extends OpenClawLightDomElement {
             this.pickerPath = value;
           },
           onBrowse: (path) => void this.browse(path),
+          onNativeFolder: () => void this.pickNativeFolder(),
           onSelect: (path, kind) => this.selectPath(path, kind),
           onUpload: () => {
             this.pickerOpen = false;

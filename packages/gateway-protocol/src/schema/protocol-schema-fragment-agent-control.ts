@@ -85,6 +85,8 @@ export const AgentControlProtocolSchemas = {
   FsDirEntry: fsSchemas.FsDirEntrySchema,
   FsListDirParams: fsSchemas.FsListDirParamsSchema,
   FsListDirResult: fsSchemas.FsListDirResultSchema,
+  FsPickDirectoryParams: fsSchemas.FsPickDirectoryParamsSchema,
+  FsPickDirectoryResult: fsSchemas.FsPickDirectoryResultSchema,
   SandboxExplainParams: sandboxSchemas.SandboxExplainParamsSchema,
   SandboxExplainResult: sandboxSchemas.SandboxExplainResultSchema,
   SandboxEntriesAddParams: sandboxSchemas.SandboxEntriesAddParamsSchema,

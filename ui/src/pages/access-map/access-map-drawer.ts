@@ -188,6 +188,7 @@ export type AccessMapPickerProps = {
   error: string | null;
   onPath: (value: string) => void;
   onBrowse: (path?: string) => void;
+  onNativeFolder: () => void;
   onSelect: (path: string, kind: "file" | "directory") => void;
   onUpload: () => void;
   onClose: () => void;
@@ -212,6 +213,16 @@ export function renderAccessMapPicker(p: AccessMapPickerProps) {
         </button>
       </header>
       <p class="access-map-help">${t("accessMap.hostPickerNote")}</p>
+      ${p.listing?.nativeDirectoryPicker
+        ? html`<button
+            type="button"
+            class="access-map-button"
+            ?disabled=${p.loading}
+            @click=${p.onNativeFolder}
+          >
+            ${icon("folder")}${t("accessMap.chooseInFinder")}
+          </button>`
+        : nothing}
       <form
         class="access-map-path-form"
         @submit=${(e: Event) => {
