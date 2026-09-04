@@ -91,6 +91,11 @@ describe("pickHostDirectory", () => {
       commandResult({ code: 1, stderr: "execution error: permission denied (42)" }),
       "failed",
     ],
+    [
+      "failure mentioning the cancel marker",
+      commandResult({ code: 1, stderr: 'execution error: Cannot open "folder (-128)". (42)' }),
+      "failed",
+    ],
     ["relative output", commandResult({ stdout: "relative/path\n" }), "non-absolute"],
   ] as const)("reports a visible %s", async (_name, result, message) => {
     runCommandWithTimeoutMock.mockResolvedValue(result);

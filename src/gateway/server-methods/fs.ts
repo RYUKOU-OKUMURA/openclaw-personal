@@ -107,7 +107,8 @@ export const fsHandlers: GatewayRequestHandlers = {
           );
           return;
         }
-        respond(true, payload, undefined);
+        const { nativeDirectoryPicker: _nativeDirectoryPicker, ...listing } = payload;
+        respond(true, listing, undefined);
         return;
       }
       const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];

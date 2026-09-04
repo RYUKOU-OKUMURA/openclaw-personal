@@ -14,6 +14,7 @@ const NATIVE_DIRECTORY_PICKER_SCRIPT = [
   "on run argv",
   "  set startPath to item 1 of argv",
   "  set startLocation to POSIX file startPath",
+  "  activate",
   '  set selectedFolder to choose folder with prompt "OpenClaw" default location startLocation',
   "  return POSIX path of selectedFolder",
   "end run",
@@ -23,14 +24,8 @@ export type HostDirectoryPickerResult = { path: string } | { cancelled: true };
 
 let nativePickerInFlight = false;
 
-function isNativePickerCancelled(result: Pick<SpawnResult, "code" | "stdout" | "stderr">) {
-  if (result.code === 0) {
-    return false;
-  }
-  if (result.code === -128) {
-    return true;
-  }
-  return /(?:error number\s+)?\(-128\)/u.test(`${result.stderr}\n${result.stdout}`);
+function isNativePickerCancelled(result: Pick<SpawnResult, "code" | "stderr">) {
+  return result.code !== 0 && /\(-128\)\s*$/u.test(result.stderr);
 }
 
 function commandFailureMessage(result: Pick<SpawnResult, "code" | "signal" | "stderr" | "stdout">) {

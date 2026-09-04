@@ -261,6 +261,7 @@ describe("fs.listDir", () => {
       payloadJSON: JSON.stringify({
         path: "/Users/peter",
         home: "/Users/peter",
+        nativeDirectoryPicker: true,
         entries: [{ name: "Projects", path: "/Users/peter/Projects" }],
       }),
     });
