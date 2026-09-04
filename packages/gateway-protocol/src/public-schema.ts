@@ -2,6 +2,7 @@
 export * from "./schema/sessions-goal.js";
 export * from "./public-schema-push.js";
 export * from "./schema/sandbox.js";
+export { FsPickFileParamsSchema, FsPickFileResultSchema } from "./schema/fs.js";
 export {
   isCloudWorkerPlacementState,
   ConnectParamsSchema,

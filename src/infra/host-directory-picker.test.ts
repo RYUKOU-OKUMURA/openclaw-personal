@@ -1,4 +1,4 @@
-// Native folder-picker tests mock the subprocess boundary so no Finder dialog is opened.
+// Native file/folder picker tests mock the subprocess boundary so no Finder dialog is opened.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ vi.mock("../process/exec.js", () => ({
   runCommandWithTimeout: runCommandWithTimeoutMock,
 }));
 
-import { pickHostDirectory } from "./host-directory-picker.js";
+import { pickHostDirectory, pickHostFile } from "./host-directory-picker.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -67,6 +67,22 @@ describe("pickHostDirectory", () => {
     });
   });
 
+  it("passes a file picker script and verifies the selected file", async () => {
+    const root = tempDirs.make("openclaw-native-picker-");
+    const initialPath = path.join(root, 'folder "with quotes" 日本語 ');
+    const selectedPath = path.join(root, "selected (-128) file ");
+    await fs.mkdir(initialPath);
+    await fs.writeFile(selectedPath, "selected");
+    runCommandWithTimeoutMock.mockResolvedValue(commandResult({ stdout: `${selectedPath}\n` }));
+
+    await expect(pickHostFile({ path: initialPath })).resolves.toEqual({ path: selectedPath });
+
+    const [argv] = runCommandWithTimeoutMock.mock.calls[0] as [string[]];
+    expect(argv[2]).toContain("choose file");
+    expect(argv[2]).not.toContain(initialPath);
+    expect(argv[3]).toBe(initialPath);
+  });
+
   it("keeps spaces and the literal cancel marker in a successful selected path", async () => {
     const root = tempDirs.make("openclaw-native-picker-");
     const selectedPath = path.join(root, "folder (-128) with trailing space ");
@@ -84,6 +100,14 @@ describe("pickHostDirectory", () => {
     await expect(pickHostDirectory({ path: "/tmp" })).resolves.toEqual({ cancelled: true });
   });
 
+  it("maps file picker cancellation to the protocol cancellation result", async () => {
+    runCommandWithTimeoutMock.mockResolvedValue(
+      commandResult({ code: 1, stderr: "execution error: User canceled. (-128)" }),
+    );
+
+    await expect(pickHostFile({ path: "/tmp" })).resolves.toEqual({ cancelled: true });
+  });
+
   it.each([
     ["timeout", commandResult({ code: 124, termination: "timeout" }), "timed out"],
     [
@@ -96,11 +120,16 @@ describe("pickHostDirectory", () => {
       commandResult({ code: 1, stderr: 'execution error: Cannot open "folder (-128)". (42)' }),
       "failed",
     ],
+    ["file picker directory output", commandResult({ stdout: "/tmp\n" }), "non-file"],
     ["relative output", commandResult({ stdout: "relative/path\n" }), "non-absolute"],
-  ] as const)("reports a visible %s", async (_name, result, message) => {
+  ] as const)("reports a visible %s", async (name, result, message) => {
     runCommandWithTimeoutMock.mockResolvedValue(result);
 
-    await expect(pickHostDirectory({ path: "/tmp" })).rejects.toThrow(message);
+    await expect(
+      name === "file picker directory output"
+        ? pickHostFile({ path: "/tmp" })
+        : pickHostDirectory({ path: "/tmp" }),
+    ).rejects.toThrow(message);
   });
 
   it("releases the single-flight guard after a failure", async () => {
@@ -130,7 +159,7 @@ describe("pickHostDirectory", () => {
 
     const first = pickHostDirectory({ path: root });
     await vi.waitFor(() => expect(runCommandWithTimeoutMock).toHaveBeenCalledOnce());
-    await expect(pickHostDirectory({ path: root })).rejects.toThrow("already open");
+    await expect(pickHostFile({ path: root })).rejects.toThrow("already open");
 
     resolveCommand?.(commandResult({ stdout: `${selectedPath}\n` }));
     await expect(first).resolves.toEqual({ path: selectedPath });

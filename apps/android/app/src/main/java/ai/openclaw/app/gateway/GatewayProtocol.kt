@@ -516,6 +516,7 @@ enum class GatewayMethod(
   WorktreesBranches("worktrees.branches"),
   FsListDir("fs.listDir"),
   FsPickDirectory("fs.pickDirectory"),
+  FsPickFile("fs.pickFile"),
   WorktreesCreate("worktrees.create"),
   WorktreesRemove("worktrees.remove"),
   WorktreesRestore("worktrees.restore"),

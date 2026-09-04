@@ -21,6 +21,7 @@ const enAccessMap = {
     hostPickerNote:
       "Browse files on the Gateway computer. To copy a file from this browser's computer, choose Upload file.",
     chooseInFinder: "Choose folder in Finder",
+    chooseFileInFinder: "Choose file or image in Finder",
     yourPcNote: "Only mounted locations are available to sandbox tools.",
     desktop: "Desktop",
     documents: "Documents",

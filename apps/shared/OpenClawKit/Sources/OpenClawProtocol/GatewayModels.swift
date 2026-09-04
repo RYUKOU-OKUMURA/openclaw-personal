@@ -4241,19 +4241,22 @@ public struct FsListDirResult: Codable, Sendable {
     public let home: String
     public let entries: [FsDirEntry]
     public let nativedirectorypicker: Bool?
+    public let nativefilepicker: Bool?
 
     public init(
         path: String,
         parent: String? = nil,
         home: String,
         entries: [FsDirEntry],
-        nativedirectorypicker: Bool? = nil)
+        nativedirectorypicker: Bool? = nil,
+        nativefilepicker: Bool? = nil)
     {
         self.path = path
         self.parent = parent
         self.home = home
         self.entries = entries
         self.nativedirectorypicker = nativedirectorypicker
+        self.nativefilepicker = nativefilepicker
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -4262,10 +4265,21 @@ public struct FsListDirResult: Codable, Sendable {
         case home
         case entries
         case nativedirectorypicker = "nativeDirectoryPicker"
+        case nativefilepicker = "nativeFilePicker"
     }
 }
 
 public struct FsPickDirectoryParams: Codable, Sendable {
+    public let path: String?
+
+    public init(
+        path: String? = nil)
+    {
+        self.path = path
+    }
+}
+
+public struct FsPickFileParams: Codable, Sendable {
     public let path: String?
 
     public init(

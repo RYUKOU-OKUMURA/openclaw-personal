@@ -189,6 +189,7 @@ describe("authenticated WebSocket request cancellation", () => {
       params: { sessionKey: "agent:main:main", question: "What changed?" },
     },
     { method: "fs.pickDirectory", params: {} },
+    { method: "fs.pickFile", params: {} },
   ])("cancels $method when its authenticated socket closes", async ({ method, params }) => {
     const socket = new EventEmitter();
     const { client, dispatcher } = createDispatcher(socket, {

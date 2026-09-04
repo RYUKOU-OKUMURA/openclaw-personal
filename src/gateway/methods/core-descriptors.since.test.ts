@@ -82,6 +82,7 @@ const TRAIN_2026_7_METHODS = [
 
 const CURRENT_TRAIN_METHODS = [
   "fs.pickDirectory",
+  "fs.pickFile",
   "sandbox.explain",
   "sandbox.entries.add",
   "sandbox.recreate",

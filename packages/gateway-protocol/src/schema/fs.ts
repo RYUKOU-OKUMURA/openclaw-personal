@@ -34,6 +34,8 @@ export const FsListDirResultSchema = closedObject({
   entries: Type.Array(FsDirEntrySchema),
   /** Native Finder folder selection is available to this local macOS listing caller. */
   nativeDirectoryPicker: Type.Optional(Type.Literal(true)),
+  /** Native Finder file selection is available to this local macOS listing caller. */
+  nativeFilePicker: Type.Optional(Type.Literal(true)),
 });
 
 export const FsPickDirectoryParamsSchema = closedObject({
@@ -46,6 +48,16 @@ export const FsPickDirectoryResultSchema = Type.Union([
   closedObject({ cancelled: Type.Literal(true) }),
 ]);
 
+export const FsPickFileParamsSchema = closedObject({
+  /** Absolute directory to show initially in the native Finder chooser. */
+  path: Type.Optional(NonEmptyString),
+});
+
+export const FsPickFileResultSchema = Type.Union([
+  closedObject({ path: NonEmptyString }),
+  closedObject({ cancelled: Type.Literal(true) }),
+]);
+
 // Wire types derive directly from local schema consts so public d.ts graphs never
 // pull in the ProtocolSchemas registry.
 export type FsDirEntry = Static<typeof FsDirEntrySchema>;
@@ -53,3 +65,5 @@ export type FsListDirParams = Static<typeof FsListDirParamsSchema>;
 export type FsListDirResult = Static<typeof FsListDirResultSchema>;
 export type FsPickDirectoryParams = Static<typeof FsPickDirectoryParamsSchema>;
 export type FsPickDirectoryResult = Static<typeof FsPickDirectoryResultSchema>;
+export type FsPickFileParams = Static<typeof FsPickFileParamsSchema>;
+export type FsPickFileResult = Static<typeof FsPickFileResultSchema>;

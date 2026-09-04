@@ -1,7 +1,7 @@
 import type * as AgentSchema from "./schema/agent.js";
 import type * as BoardSchema from "./schema/board.js";
 import type { CommandsListParams } from "./schema/commands.js";
-import type { FsPickDirectoryParams } from "./schema/fs.js";
+import type { FsPickDirectoryParams, FsPickFileParams } from "./schema/fs.js";
 import type { LogsTailParams } from "./schema/logs-chat.js";
 import type { PortalCloseParams, PortalListParams, PortalOpenParams } from "./schema/portals.js";
 import type { UiCommandParams } from "./schema/ui-command.js";
@@ -24,6 +24,7 @@ export type GatewayCoreRequestParams = {
   "conversations.turn.cancel": AgentSchema.ConversationTurnCancelParams;
   "logs.tail": LogsTailParams;
   "fs.pickDirectory": FsPickDirectoryParams;
+  "fs.pickFile": FsPickFileParams;
   "portal.close": PortalCloseParams;
   "portal.list": PortalListParams;
   "portal.open": PortalOpenParams;

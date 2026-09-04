@@ -167,7 +167,7 @@ Open **Settings → Security → Access Map** to see the selected agent's effect
   <Step title="Choose a source">
     Click **Add from PC** to browse files and folders on the Gateway computer. To use a file on the computer running the browser or the macOS app, choose **Upload file**; browser and macOS uploads are always copied. **Create new** creates an empty file or folder in the sandbox inbox.
 
-    On a direct local connection to a macOS Gateway, administrators can click **Choose folder in Finder** to open the folder dialog on the Gateway host. Choose a folder to continue to the access-mode drawer, or cancel to keep browsing. Choosing a folder does not add or share it. This option is available in both the browser and the macOS app; other connections and operating systems keep the in-page browser.
+    On a direct local connection to a macOS Gateway, administrators can click **Choose file or image in Finder** or **Choose folder in Finder** to open the corresponding dialog on the Gateway host. Select one regular file (including images) or one folder to continue to the access-mode drawer, or cancel to keep browsing. Selection alone does not add or share anything. Both options are available in the browser and the macOS app; other connections and operating systems keep the in-page browser.
 
   </Step>
   <Step title="Choose the access mode">

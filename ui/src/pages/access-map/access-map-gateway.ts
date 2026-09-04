@@ -6,6 +6,7 @@ import type {
   FsListDirParams,
   FsListDirResult,
   FsPickDirectoryResult,
+  FsPickFileResult,
   SandboxEntriesAddParams,
   SandboxEntriesAddResult,
   SandboxExplainResult,
@@ -75,13 +76,14 @@ export async function listHostDir(
   return await client.request<FsListDirResult>("fs.listDir", requestParams);
 }
 
-export async function pickHostDirectory(
+export async function pickHostPath(
   client: AccessMapGatewayClient,
   path: string,
-): Promise<FsPickDirectoryResult> {
+  kind: "file" | "directory",
+): Promise<FsPickDirectoryResult | FsPickFileResult> {
   // The native dialog waits for a person; keep the request alive beyond its 2-minute limit.
-  return await client.request<FsPickDirectoryResult>(
-    "fs.pickDirectory",
+  return await client.request<FsPickDirectoryResult | FsPickFileResult>(
+    kind === "directory" ? "fs.pickDirectory" : "fs.pickFile",
     { path },
     { timeoutMs: 150_000 },
   );

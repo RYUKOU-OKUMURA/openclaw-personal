@@ -203,6 +203,7 @@ export function createGatewayAuthenticatedRequestDispatcher(params: {
       const cancelOnDisconnect =
         req.method === "sessions.companion.ask" ||
         req.method === "fs.pickDirectory" ||
+        req.method === "fs.pickFile" ||
         (req.method === "node.invoke" &&
           client.connect.client.id === GATEWAY_CLIENT_IDS.CLI &&
           client.connect.client.mode === GATEWAY_CLIENT_MODES.CLI);

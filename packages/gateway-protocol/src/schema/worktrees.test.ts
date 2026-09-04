@@ -6,8 +6,11 @@ import {
   WorktreesRemoveResultSchema,
   validateSessionsCreateParams,
   validateFsListDirParams,
+  validateFsListDirResult,
   validateFsPickDirectoryParams,
   validateFsPickDirectoryResult,
+  validateFsPickFileParams,
+  validateFsPickFileResult,
   validateWorktreesBranchesParams,
   validateWorktreesCreateParams,
   validateWorktreesGcParams,
@@ -104,6 +107,23 @@ describe("managed worktree protocol schemas", () => {
     expect(validateFsListDirParams({ path: "/repo" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "macbook", path: "/Users/peter" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "" })).toBe(false);
+    expect(
+      validateFsListDirResult({
+        path: "/repo",
+        home: "/home/peter",
+        entries: [],
+        nativeDirectoryPicker: true,
+        nativeFilePicker: true,
+      }),
+    ).toBe(true);
+    expect(
+      validateFsListDirResult({
+        path: "/repo",
+        home: "/home/peter",
+        entries: [],
+        nativeFilePicker: false,
+      }),
+    ).toBe(false);
   });
 
   it("accepts native directory-picker requests and both outcomes", () => {
@@ -115,6 +135,17 @@ describe("managed worktree protocol schemas", () => {
     expect(validateFsPickDirectoryResult({ cancelled: true })).toBe(true);
     expect(validateFsPickDirectoryResult({ cancelled: false })).toBe(false);
     expect(validateFsPickDirectoryResult({ path: "/repo", cancelled: true })).toBe(false);
+  });
+
+  it("accepts native file-picker requests and both outcomes", () => {
+    expect(validateFsPickFileParams({})).toBe(true);
+    expect(validateFsPickFileParams({ path: "/repo" })).toBe(true);
+    expect(validateFsPickFileParams({ path: "" })).toBe(false);
+    expect(validateFsPickFileParams({ nodeId: "node" })).toBe(false);
+    expect(validateFsPickFileResult({ path: "/repo/file.txt" })).toBe(true);
+    expect(validateFsPickFileResult({ cancelled: true })).toBe(true);
+    expect(validateFsPickFileResult({ cancelled: false })).toBe(false);
+    expect(validateFsPickFileResult({ path: "/repo/file.txt", cancelled: true })).toBe(false);
   });
 
   it("rejects invalid names and unknown fields", () => {

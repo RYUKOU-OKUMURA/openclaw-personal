@@ -6,12 +6,14 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 
-const { pickHostDirectoryMock } = vi.hoisted(() => ({
+const { pickHostDirectoryMock, pickHostFileMock } = vi.hoisted(() => ({
   pickHostDirectoryMock: vi.fn(),
+  pickHostFileMock: vi.fn(),
 }));
 
 vi.mock("../../infra/host-directory-picker.js", () => ({
   pickHostDirectory: pickHostDirectoryMock,
+  pickHostFile: pickHostFileMock,
 }));
 
 import { fsHandlers } from "./fs.js";
@@ -54,6 +56,29 @@ function startPickerCall(
   return { promise, respond };
 }
 
+function startFilePickerCall(
+  params: Record<string, unknown>,
+  context: Record<string, unknown> = {
+    getRuntimeConfig: () => ({}),
+    nodeRegistry: { get: vi.fn(), invoke: vi.fn() },
+  },
+  client: Record<string, unknown> = {
+    connect: { scopes: ["operator.admin"] },
+    internal: { isLocalClient: true },
+  },
+  signal?: AbortSignal,
+) {
+  const respond = vi.fn();
+  const promise = fsHandlers["fs.pickFile"]?.({
+    params,
+    respond,
+    context,
+    client,
+    signal,
+  } as never);
+  return { promise, respond };
+}
+
 async function callPicker(
   params: Record<string, unknown>,
   context?: Record<string, unknown>,
@@ -65,11 +90,23 @@ async function callPicker(
   return request.respond.mock.calls[0];
 }
 
+async function callFilePicker(
+  params: Record<string, unknown>,
+  context?: Record<string, unknown>,
+  client?: Record<string, unknown>,
+  signal?: AbortSignal,
+) {
+  const request = startFilePickerCall(params, context, client, signal);
+  await request.promise;
+  return request.respond.mock.calls[0];
+}
+
 const writeClient = { connect: { scopes: ["operator.write"] } };
 
 afterEach(() => {
   vi.restoreAllMocks();
   pickHostDirectoryMock.mockReset();
+  pickHostFileMock.mockReset();
 });
 
 function workspaceContext(workspace: string) {
@@ -262,6 +299,7 @@ describe("fs.listDir", () => {
         path: "/Users/peter",
         home: "/Users/peter",
         nativeDirectoryPicker: true,
+        nativeFilePicker: true,
         entries: [{ name: "Projects", path: "/Users/peter/Projects" }],
       }),
     });
@@ -391,7 +429,10 @@ describe("fs.listDir native picker capability", () => {
       "local native picker listing",
     );
     expect(localOk).toBe(true);
-    expect(localResult).toMatchObject({ nativeDirectoryPicker: true });
+    expect(localResult).toMatchObject({
+      nativeDirectoryPicker: true,
+      nativeFilePicker: true,
+    });
 
     const [remoteOk, remoteResult] = expectDefined(
       await call({ path: root }, undefined, { connect: { scopes: ["operator.admin"] } }),
@@ -399,6 +440,7 @@ describe("fs.listDir native picker capability", () => {
     );
     expect(remoteOk).toBe(true);
     expect(remoteResult).not.toHaveProperty("nativeDirectoryPicker");
+    expect(remoteResult).not.toHaveProperty("nativeFilePicker");
 
     platform.mockReturnValue("linux");
     const [nonDarwinOk, nonDarwinResult] = expectDefined(
@@ -410,6 +452,7 @@ describe("fs.listDir native picker capability", () => {
     );
     expect(nonDarwinOk).toBe(true);
     expect(nonDarwinResult).not.toHaveProperty("nativeDirectoryPicker");
+    expect(nonDarwinResult).not.toHaveProperty("nativeFilePicker");
   });
 });
 
@@ -517,6 +560,102 @@ describe("fs.pickDirectory", () => {
     const request = startPickerCall({}, undefined, undefined, controller.signal);
     await request.promise;
     expect(pickHostDirectoryMock).not.toHaveBeenCalled();
+    expect(request.respond).not.toHaveBeenCalled();
+  });
+});
+
+describe("fs.pickFile", () => {
+  it("requires an authenticated local macOS admin client", async () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+
+    const [remoteOk, , remoteError] = expectDefined(
+      await callFilePicker({ path: "/tmp" }, undefined, {
+        connect: { scopes: ["operator.admin"] },
+      }),
+      "remote file picker request",
+    );
+    expect(remoteOk).toBe(false);
+    expect(remoteError).toMatchObject({ code: "UNAVAILABLE" });
+
+    const [nodeOk, , nodeError] = expectDefined(
+      await callFilePicker({ path: "/tmp" }, undefined, {
+        connect: { role: "node", scopes: [] },
+        internal: { isLocalClient: true },
+      }),
+      "node file picker request",
+    );
+    expect(nodeOk).toBe(false);
+    expect(nodeError).toMatchObject({ code: "FORBIDDEN" });
+
+    const [writeOk, , writeError] = expectDefined(
+      await callFilePicker({ path: "/tmp" }, undefined, {
+        connect: { scopes: ["operator.write"] },
+        internal: { isLocalClient: true },
+      }),
+      "write-scoped file picker request",
+    );
+    expect(writeOk).toBe(false);
+    expect(writeError).toMatchObject({ code: "FORBIDDEN" });
+
+    platform.mockReturnValue("linux");
+    const [nonDarwinOk, , nonDarwinError] = expectDefined(
+      await callFilePicker({ path: "/tmp" }),
+      "non-Darwin file picker request",
+    );
+    expect(nonDarwinOk).toBe(false);
+    expect(nonDarwinError).toMatchObject({ code: "UNAVAILABLE" });
+    expect(pickHostFileMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the selected file and preserves the requested starting path", async () => {
+    const selectedPath = "/Users/example/file with spaces 日本語 (-128) ";
+    const initialPath = "/Users/example/Current Folder ";
+    const controller = new AbortController();
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    pickHostFileMock.mockResolvedValue({ path: selectedPath });
+
+    const [ok, result] = expectDefined(
+      await callFilePicker({ path: initialPath }, undefined, undefined, controller.signal),
+      "successful file picker request",
+    );
+    expect(ok).toBe(true);
+    expect(result).toEqual({ path: selectedPath });
+    expect(pickHostFileMock).toHaveBeenCalledWith({
+      path: initialPath,
+      signal: controller.signal,
+    });
+  });
+
+  it("returns cancellation and exposes helper failures", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    pickHostFileMock.mockResolvedValueOnce({ cancelled: true });
+    const [cancelledOk, cancelledResult] = expectDefined(
+      await callFilePicker({}),
+      "cancelled file picker request",
+    );
+    expect(cancelledOk).toBe(true);
+    expect(cancelledResult).toEqual({ cancelled: true });
+
+    pickHostFileMock.mockRejectedValueOnce(new Error("native file picker timed out"));
+    const [failedOk, , failedError] = expectDefined(
+      await callFilePicker({}),
+      "failed file picker request",
+    );
+    expect(failedOk).toBe(false);
+    expect(failedError).toMatchObject({
+      code: "UNAVAILABLE",
+      message: "native file picker timed out",
+    });
+  });
+
+  it("discards a result when the request is already aborted", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const controller = new AbortController();
+    controller.abort();
+    const request = startFilePickerCall({}, undefined, undefined, controller.signal);
+    await request.promise;
+
+    expect(pickHostFileMock).not.toHaveBeenCalled();
     expect(request.respond).not.toHaveBeenCalled();
   });
 });

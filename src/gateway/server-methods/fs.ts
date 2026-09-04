@@ -1,25 +1,89 @@
-// Host directory browsing for the new-session folder picker. Write-scoped
-// callers stay inside configured agent workspaces; admin retains host access.
+// Host filesystem browsing and native picker RPCs. Write-scoped callers stay
+// inside configured agent workspaces; admin retains host access.
 import { safeParseJson } from "@openclaw/normalization-core";
 import {
   ErrorCodes,
   errorShape,
   missingScopeErrorShape,
   validateFsPickDirectoryParams,
+  validateFsPickFileParams,
   validateFsListDirParams,
   validateFsListDirResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { listHostDirectories } from "../../infra/host-directory-listing.js";
-import { pickHostDirectory } from "../../infra/host-directory-picker.js";
+import { pickHostDirectory, pickHostFile } from "../../infra/host-directory-picker.js";
 import { NODE_FS_LIST_DIR_COMMAND } from "../../infra/node-commands.js";
 import { errorShapeFromError } from "../error-shape.js";
 import { isNodeCommandAllowed, resolveNodeCommandAllowlist } from "../node-command-policy.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
-import type { GatewayClient, GatewayRequestHandlers } from "./types.js";
+import type {
+  GatewayClient,
+  GatewayRequestHandlerOptions,
+  GatewayRequestHandlers,
+} from "./types.js";
 import { resolveWorkspacePathContainment } from "./workspace-path-containment.js";
 
-function isNativeDirectoryPickerAvailable(client: GatewayClient | null): boolean {
+function isNativePickerAvailable(client: GatewayClient | null): boolean {
   return process.platform === "darwin" && client?.internal?.isLocalClient === true;
+}
+
+type NativePickerParams = { path?: string };
+type NativePickerKind = "directory" | "file";
+type NativePickerRequestOptions = Pick<
+  GatewayRequestHandlerOptions,
+  "params" | "respond" | "client" | "signal"
+>;
+type NativePickerDefinition = {
+  kind: NativePickerKind;
+  validateParams: (value: unknown) => value is NativePickerParams;
+  pick: (options: {
+    path?: string;
+    signal?: AbortSignal;
+  }) => Promise<{ path: string } | { cancelled: true }>;
+};
+
+async function handleNativePickerRequest(
+  { params, respond, client, signal }: NativePickerRequestOptions,
+  picker: NativePickerDefinition,
+) {
+  if (!picker.validateParams(params)) {
+    respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid fs parameters"));
+    return;
+  }
+  const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
+  if (!scopes.includes(ADMIN_SCOPE)) {
+    respond(
+      false,
+      undefined,
+      missingScopeErrorShape({ missingScope: ADMIN_SCOPE, requiredScopes: [ADMIN_SCOPE] }),
+    );
+    return;
+  }
+  if (!isNativePickerAvailable(client)) {
+    respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.UNAVAILABLE,
+        `native ${picker.kind} picker requires a local macOS client`,
+      ),
+    );
+    return;
+  }
+  if (signal?.aborted) {
+    return;
+  }
+
+  try {
+    const result = await picker.pick({ path: params.path, signal });
+    if (!signal?.aborted) {
+      respond(true, result, undefined);
+    }
+  } catch (error) {
+    if (!signal?.aborted) {
+      respond(false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, error));
+    }
+  }
 }
 
 function parseNodePayload(payload: unknown, payloadJSON?: string | null): unknown {
@@ -107,7 +171,11 @@ export const fsHandlers: GatewayRequestHandlers = {
           );
           return;
         }
-        const { nativeDirectoryPicker: _nativeDirectoryPicker, ...listing } = payload;
+        const {
+          nativeDirectoryPicker: _nativeDirectoryPicker,
+          nativeFilePicker: _nativeFilePicker,
+          ...listing
+        } = payload;
         respond(true, listing, undefined);
         return;
       }
@@ -118,8 +186,12 @@ export const fsHandlers: GatewayRequestHandlers = {
         });
         respond(
           true,
-          isNativeDirectoryPickerAvailable(client)
-            ? { ...listing, nativeDirectoryPicker: true as const }
+          isNativePickerAvailable(client)
+            ? {
+                ...listing,
+                nativeDirectoryPicker: true as const,
+                nativeFilePicker: true as const,
+              }
             : listing,
           undefined,
         );
@@ -151,41 +223,16 @@ export const fsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShapeFromError(ErrorCodes.INVALID_REQUEST, error));
     }
   },
-  "fs.pickDirectory": async ({ params, respond, client, signal }) => {
-    if (!validateFsPickDirectoryParams(params)) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid fs parameters"));
-      return;
-    }
-    const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
-    if (!scopes.includes(ADMIN_SCOPE)) {
-      respond(
-        false,
-        undefined,
-        missingScopeErrorShape({ missingScope: ADMIN_SCOPE, requiredScopes: [ADMIN_SCOPE] }),
-      );
-      return;
-    }
-    if (!isNativeDirectoryPickerAvailable(client)) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, "native directory picker requires a local macOS client"),
-      );
-      return;
-    }
-    if (signal?.aborted) {
-      return;
-    }
-
-    try {
-      const result = await pickHostDirectory({ path: params.path, signal });
-      if (!signal?.aborted) {
-        respond(true, result, undefined);
-      }
-    } catch (error) {
-      if (!signal?.aborted) {
-        respond(false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, error));
-      }
-    }
-  },
+  "fs.pickDirectory": (options) =>
+    handleNativePickerRequest(options, {
+      kind: "directory",
+      validateParams: validateFsPickDirectoryParams,
+      pick: pickHostDirectory,
+    }),
+  "fs.pickFile": (options) =>
+    handleNativePickerRequest(options, {
+      kind: "file",
+      validateParams: validateFsPickFileParams,
+      pick: pickHostFile,
+    }),
 };
