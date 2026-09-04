@@ -61,11 +61,11 @@ export async function listWorkspacePath(
 }
 
 export async function readWorkspaceFile(
-  rootDir: string,
+  rootDir: string | WorkspaceRoot,
   browserPath: string,
   opts?: { maxBytes?: number },
 ): Promise<WorkspaceFileReadResult | undefined | "too-large"> {
-  const workspaceRoot = await openWorkspaceRoot(rootDir);
+  const workspaceRoot = typeof rootDir === "string" ? await openWorkspaceRoot(rootDir) : rootDir;
   if (!workspaceRoot) {
     return undefined;
   }
@@ -90,14 +90,14 @@ export async function readWorkspaceFile(
 
 /** Reads only a bounded prefix after fs-safe opens and verifies the file identity. */
 export async function readWorkspaceFilePrefix(
-  rootDir: string,
+  rootDir: string | WorkspaceRoot,
   browserPath: string,
   maxBytes: number,
 ): Promise<WorkspaceFilePrefixResult | undefined> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     return undefined;
   }
-  const workspaceRoot = await openWorkspaceRoot(rootDir);
+  const workspaceRoot = typeof rootDir === "string" ? await openWorkspaceRoot(rootDir) : rootDir;
   if (!workspaceRoot) {
     return undefined;
   }

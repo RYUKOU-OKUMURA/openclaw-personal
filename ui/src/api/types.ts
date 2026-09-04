@@ -4,6 +4,7 @@ import type {
   CronListParams,
   CronRunLogEntry as ProtocolCronRunLogEntry,
   CronRunsParams,
+  SessionFileRoot as ProtocolSessionFileRoot,
   SessionsFilesListResult as ProtocolSessionsFilesListResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { AgentsListResult as ProtocolAgentsListResult } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
@@ -320,6 +321,8 @@ type SessionWorkspaceArtifactEntry = {
     mode: "bytes" | "url" | "unsupported";
   };
 };
+
+export type SessionWorkspaceRoot = ProtocolSessionFileRoot;
 
 // The workspace view joins file results with separately fetched artifacts.
 export type SessionWorkspaceListResult = ProtocolSessionsFilesListResult & {

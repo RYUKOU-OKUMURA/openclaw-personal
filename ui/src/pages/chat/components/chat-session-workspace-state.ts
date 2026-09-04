@@ -1,5 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import type { SessionWorkspaceListResult } from "../../../api/types.ts";
+import type { SessionWorkspaceListResult, SessionWorkspaceRoot } from "../../../api/types.ts";
 import { normalizeChatWorkspaceDock } from "../../../app/settings.ts";
 import { formatUiError } from "../../../lib/format-error.ts";
 import {
@@ -79,6 +79,10 @@ function createSessionWorkspaceState(
     list: null,
     loading: false,
     pendingReload: false,
+    rootId: null,
+    roots: null,
+    rootSelectionEpoch: 0,
+    sharedRootsExpanded: false,
     sessionKey: state.sessionKey,
   };
 }
@@ -111,6 +115,57 @@ export function requestWorkspaceUpdate(state: SessionWorkspaceHost) {
   state.requestUpdate?.();
 }
 
+function isKnownWorkspaceRoot(workspace: SessionWorkspaceState, rootId: string): boolean {
+  return rootId === "workspace" || Boolean(workspace.roots?.some((root) => root.id === rootId));
+}
+
+export function selectSessionWorkspaceRoot(
+  state: SessionWorkspaceHost,
+  rootId: string,
+  options: { load?: boolean } = {},
+) {
+  const workspace = getSessionWorkspace(state);
+  const normalizedRootId = rootId.trim();
+  if (!normalizedRootId || !isKnownWorkspaceRoot(workspace, normalizedRootId)) {
+    return;
+  }
+  const nextRootId = normalizedRootId === "workspace" ? null : normalizedRootId;
+  const sharedRoot = workspace.roots?.find((root) => root.id === normalizedRootId);
+  if (workspace.rootId === nextRootId) {
+    if (sharedRoot?.kind === "shared") {
+      workspace.sharedRootsExpanded = true;
+      requestWorkspaceUpdate(state);
+    }
+    return;
+  }
+  clearWorkspaceTimer(workspace);
+  workspace.rootId = nextRootId;
+  workspace.rootSelectionEpoch += 1;
+  workspace.browserPath = "";
+  workspace.browserSearch = "";
+  workspace.activeId = null;
+  workspace.error = null;
+  workspace.list = null;
+  workspace.sharedRootsExpanded = sharedRoot?.kind === "shared";
+  if (options.load !== false) {
+    loadSessionWorkspace(state, workspace, true);
+  }
+  requestWorkspaceUpdate(state);
+}
+
+export function toggleSessionWorkspaceSharedRoots(state: SessionWorkspaceHost) {
+  const workspace = getSessionWorkspace(state);
+  workspace.sharedRootsExpanded = !workspace.sharedRootsExpanded;
+  requestWorkspaceUpdate(state);
+}
+
+export function sessionWorkspaceRoot(
+  workspace: SessionWorkspaceState,
+  rootId = workspace.rootId ?? "workspace",
+): SessionWorkspaceRoot | null {
+  return workspace.roots?.find((root) => root.id === rootId) ?? null;
+}
+
 export function loadSessionWorkspace(
   state: SessionWorkspaceHost,
   workspace: SessionWorkspaceState,
@@ -133,6 +188,8 @@ export function loadSessionWorkspace(
   workspace.pendingReload = false;
   const sessionKey = state.sessionKey;
   const agentId = workspace.agentId;
+  const rootId = workspace.rootId;
+  const rootSelectionEpoch = workspace.rootSelectionEpoch;
   const client = state.client;
   void (async () => {
     try {
@@ -140,29 +197,43 @@ export function loadSessionWorkspace(
         path: workspace.browserSearch ? "" : workspace.browserPath,
         search: workspace.browserSearch,
         agentId,
+        ...(rootId ? { rootId } : {}),
       });
-      if (!isCurrentSessionWorkspace(state, workspace)) {
+      if (
+        !isCurrentSessionWorkspace(state, workspace) ||
+        workspace.rootId !== rootId ||
+        workspace.rootSelectionEpoch !== rootSelectionEpoch
+      ) {
         return;
       }
-      const artifacts = await client.request<{
-        artifacts?: SessionWorkspaceListResult["artifacts"];
-      } | null>("artifacts.list", {
-        sessionKey,
-        ...(agentId ? { agentId } : {}),
-      });
-      if (!isCurrentSessionWorkspace(state, workspace)) {
+      const artifacts = rootId
+        ? null
+        : await client.request<{
+            artifacts?: SessionWorkspaceListResult["artifacts"];
+          } | null>("artifacts.list", {
+            sessionKey,
+            ...(agentId ? { agentId } : {}),
+          });
+      if (
+        !isCurrentSessionWorkspace(state, workspace) ||
+        workspace.rootId !== rootId ||
+        workspace.rootSelectionEpoch !== rootSelectionEpoch
+      ) {
         return;
       }
       const fileItems = files?.files ?? [];
       const artifactItems = artifacts?.artifacts ?? [];
       const browserItems = files?.browser?.entries ?? [];
+      workspace.roots = files?.roots ?? null;
       workspace.list = {
         sessionKey,
         ...(files?.root ? { root: files.root } : {}),
+        ...(files?.rootId ? { rootId: files.rootId } : rootId ? { rootId } : {}),
         ...(typeof files?.gitCheckout === "boolean" ? { gitCheckout: files.gitCheckout } : {}),
         files: fileItems,
         ...(files?.browser ? { browser: files.browser } : {}),
-        artifacts: artifactItems,
+        ...(workspace.roots ? { roots: workspace.roots } : {}),
+        ...(rootId ? {} : { artifacts: artifactItems }),
       };
       if (
         workspace.activeId &&
@@ -173,7 +244,11 @@ export function loadSessionWorkspace(
         workspace.activeId = null;
       }
     } catch (error) {
-      if (isCurrentSessionWorkspace(state, workspace)) {
+      if (
+        isCurrentSessionWorkspace(state, workspace) &&
+        workspace.rootId === rootId &&
+        workspace.rootSelectionEpoch === rootSelectionEpoch
+      ) {
         workspace.error = formatUiError(error);
       }
     } finally {

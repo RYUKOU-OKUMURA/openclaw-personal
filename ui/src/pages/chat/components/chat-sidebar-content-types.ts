@@ -113,6 +113,8 @@ type FileSidebarContent = {
   /** Stable per-session identity used to retain an unsaved in-memory draft. */
   draftKey?: string;
   root?: string | null;
+  /** Extra file locations support inspection, not workspace or external editor actions. */
+  previewOnly?: boolean;
   language?: string;
   line?: number | null;
   rawText?: string | null;

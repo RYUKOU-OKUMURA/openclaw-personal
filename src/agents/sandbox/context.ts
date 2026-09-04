@@ -22,6 +22,7 @@ import { getSandboxBackendWorkdirResolver, requireSandboxBackendFactory } from "
 import { ensureSandboxBrowser } from "./browser.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
 import { resolveSandboxDockerUser } from "./docker-user.js";
+import { buildSandboxFileLocationsPrompt } from "./file-locations-prompt.js";
 import { createSandboxFsBridge } from "./fs-bridge.js";
 import { toSandboxProvisioningError } from "./provisioning-error.js";
 import { readRegisteredSandboxRuntimeIds, updateRegistry } from "./registry.js";
@@ -363,6 +364,7 @@ async function resolveProvisionedSandboxContext(
   sandboxContext.fsBridge =
     backend.createFsBridge?.({ sandbox: sandboxContext }) ??
     createSandboxFsBridge({ sandbox: sandboxContext });
+  sandboxContext.fileLocationsPrompt = buildSandboxFileLocationsPrompt(sandboxContext);
 
   return sandboxContext;
 }

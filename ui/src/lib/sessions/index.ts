@@ -638,6 +638,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     compact: operations.compact,
     listFiles: operations.listFiles,
     getFile: operations.getFile,
+    revealFiles: operations.revealFiles,
     setFile: operations.setFile,
     subscribeMessages: operations.subscribeMessages,
     unsubscribeMessages: operations.unsubscribeMessages,

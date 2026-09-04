@@ -8,11 +8,10 @@ import {
   ErrorCodes,
   errorShape,
   isCloudWorkerPlacementState,
-  type SessionFileBrowserEntry,
-  type SessionFileBrowserResult,
   type SessionFileEntry,
   type SessionFileRelevance,
   type SessionsFilesGetParams,
+  type SessionsFilesListResult,
   validateSessionsFilesRevealParams,
   validateSessionsFilesGetParams,
   validateSessionsFilesListParams,
@@ -26,6 +25,7 @@ import { FsSafeError } from "../../infra/fs-safe.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
+import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import {
   readSessionTranscriptVisibleMessageDeltaCore,
@@ -42,24 +42,32 @@ import {
   resolveOpenPathCommand,
   sanitizePathForLog,
 } from "./open-path.js";
-import type { GatewayRequestHandlers, RespondFn } from "./types.js";
+import { buildWorkspaceBrowser } from "./session-file-browser.js";
+import {
+  listSessionBrowserRoot,
+  resolveSessionBrowserRoots,
+  sessionBrowserRootPath,
+  type SessionBrowserRoot,
+} from "./session-file-roots.js";
+import type {
+  GatewayClient,
+  GatewayRequestContext,
+  GatewayRequestHandlers,
+  RespondFn,
+} from "./types.js";
 import { assertValidParams } from "./validation.js";
 import {
   decodeUtf8Strict,
-  listWorkspacePath,
   normalizeRelativePath,
   openWorkspaceRoot,
   readWorkspaceFile,
   readWorkspaceFilePrefix,
   resolveWorkspacePath,
-  sortDirents,
-  sortWorkspaceEntries,
   statWorkspacePath,
   toUpdatedAtMs,
   updateWorkspaceFile,
   WORKSPACE_PREVIEW_MAX_BYTES,
   workspaceStatKind,
-  type WorkspaceDirEntry,
   type WorkspaceFileUpdateResult,
   type WorkspaceRoot,
 } from "./workspace-fs.js";
@@ -84,9 +92,6 @@ type TouchedFilesCacheEntry = {
 };
 
 const MAX_PREVIEW_BYTES = WORKSPACE_PREVIEW_MAX_BYTES;
-const MAX_BROWSER_ENTRIES = 250;
-const MAX_SEARCH_ENTRIES = 500;
-const MAX_SEARCH_VISITED_ENTRIES = 5_000;
 // Control UI requests fan out per visible session; keep enough folds to avoid
 // eviction and full-transcript reparsing across realistic concurrent viewers.
 const TOUCHED_FILES_CACHE_LIMIT = 256;
@@ -109,16 +114,6 @@ const DETECTED_TEXT_MIME_TYPES = new Set([
   "application/xml",
   "application/x-ms-regedit",
   "model/stl",
-]);
-const SEARCH_SKIP_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".next",
-  ".turbo",
-  ".yarn",
-  "coverage",
-  "dist",
-  "node_modules",
 ]);
 
 // Request latency must not scale with transcript size: delta resets rebuild the
@@ -353,19 +348,6 @@ function relevanceForKind(kind: FileKind): SessionFileRelevance {
   return kind;
 }
 
-function mergeRelevance(
-  current: SessionFileRelevance | undefined,
-  next: SessionFileRelevance | undefined,
-): SessionFileRelevance | undefined {
-  if (!current) {
-    return next;
-  }
-  if (!next || current === next) {
-    return current;
-  }
-  return "mixed";
-}
-
 function buildSessionRelevanceMap(
   files: readonly TouchedFile[],
   root: string | undefined,
@@ -386,24 +368,6 @@ function buildSessionRelevanceMap(
     relevance.set(toDisplayPath(root, resolved), relevanceForKind(file.kind));
   }
   return relevance;
-}
-
-function relevanceForBrowserPath(
-  browserPath: string,
-  kind: "file" | "directory",
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
-): SessionFileRelevance | undefined {
-  if (kind === "file") {
-    return relevance.get(browserPath);
-  }
-  const prefix = browserPath ? `${browserPath}/` : "";
-  let aggregate: SessionFileRelevance | undefined;
-  for (const [filePath, sessionKind] of relevance) {
-    if (filePath.startsWith(prefix) && filePath !== browserPath) {
-      aggregate = mergeRelevance(aggregate, sessionKind);
-    }
-  }
-  return aggregate;
 }
 
 function displayNameForPath(filePath: string): string {
@@ -490,7 +454,7 @@ async function toSessionFileEntry(
     return entry;
   }
   if (stat.size <= MAX_PREVIEW_BYTES) {
-    const read = await readWorkspaceFile(root!, browserPath);
+    const read = await readWorkspaceFile(opts.workspaceRoot ?? root!, browserPath);
     if (!read) {
       return { ...base, missing: true };
     }
@@ -504,7 +468,11 @@ async function toSessionFileEntry(
     applyInlineFilePreview(entry, read.buffer, mimeType);
     return entry;
   }
-  const prefix = await readWorkspaceFilePrefix(root!, browserPath, MIME_SNIFF_PREFIX_BYTES);
+  const prefix = await readWorkspaceFilePrefix(
+    opts.workspaceRoot ?? root!,
+    browserPath,
+    MIME_SNIFF_PREFIX_BYTES,
+  );
   if (!prefix) {
     return { ...base, missing: true };
   }
@@ -577,142 +545,13 @@ function resolveSessionFileCandidates(params: {
   });
 }
 
-async function toBrowserEntry(
-  browserPath: string,
-  dirent: WorkspaceDirEntry,
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
-): Promise<SessionFileBrowserEntry | undefined> {
-  const statKind = workspaceStatKind(dirent);
-  const kind = statKind === "directory" ? "directory" : statKind === "file" ? "file" : null;
-  if (!kind) {
-    return undefined;
-  }
-  const sessionKind = relevanceForBrowserPath(browserPath, kind, relevance);
-  return {
-    path: browserPath,
-    name: dirent.name,
-    kind,
-    ...(kind === "file" ? { size: dirent.size } : {}),
-    updatedAtMs: toUpdatedAtMs(dirent.mtimeMs),
-    ...(sessionKind ? { sessionKind } : {}),
-  };
-}
-
-function matchesSearch(entryPath: string, name: string, query: string): boolean {
-  const normalizedQuery = query.toLowerCase();
-  return (
-    name.toLowerCase().includes(normalizedQuery) ||
-    entryPath.toLowerCase().includes(normalizedQuery)
-  );
-}
-
-async function searchBrowserEntries(params: {
-  root: string | WorkspaceRoot;
-  query: string;
-  relevance: ReadonlyMap<string, SessionFileRelevance>;
-}): Promise<{ entries: SessionFileBrowserEntry[]; truncated?: boolean }> {
-  const entries: SessionFileBrowserEntry[] = [];
-  let visitedEntries = 0;
-  let truncated = false;
-  const shouldStop = (): boolean => {
-    if (entries.length >= MAX_SEARCH_ENTRIES || visitedEntries >= MAX_SEARCH_VISITED_ENTRIES) {
-      truncated = true;
-      return true;
-    }
-    return false;
-  };
-  const visit = async (dir: string): Promise<void> => {
-    if (shouldStop()) {
-      return;
-    }
-    const dirents = await listWorkspacePath(params.root, dir);
-    if (!dirents) {
-      return;
-    }
-    for (const dirent of sortDirents(dirents)) {
-      if (shouldStop()) {
-        return;
-      }
-      visitedEntries += 1;
-      const browserPath = dir ? `${dir}/${dirent.name}` : dirent.name;
-      if (matchesSearch(browserPath, dirent.name, params.query)) {
-        const entry = await toBrowserEntry(browserPath, dirent, params.relevance);
-        if (entry) {
-          entries.push(entry);
-        }
-      }
-      if (workspaceStatKind(dirent) === "directory" && !SEARCH_SKIP_DIRS.has(dirent.name)) {
-        await visit(browserPath);
-      }
-    }
-  };
-  await visit("");
-  return { entries: sortWorkspaceEntries(entries), ...(truncated ? { truncated } : {}) };
-}
-
-async function buildBrowserResult(params: {
-  root: string | undefined;
-  workspaceRoot?: WorkspaceRoot;
-  fileRoot: string | undefined;
-  path?: string;
-  search?: string;
-  files: readonly TouchedFile[];
-}): Promise<SessionFileBrowserResult | undefined> {
-  if (!params.root) {
-    return undefined;
-  }
-  const search = normalizeOptionalString(params.search);
-  const relevance = buildSessionRelevanceMap(params.files, params.root, params.fileRoot);
-  if (search) {
-    const result = await searchBrowserEntries({
-      root: params.workspaceRoot ?? params.root,
-      query: search,
-      relevance,
-    });
-    return {
-      path: "",
-      search,
-      entries: result.entries,
-      ...(result.truncated ? { truncated: result.truncated } : {}),
-    };
-  }
-  const browserPath = normalizeRelativePath(params.path);
-  const resolved = resolveWorkspacePath(params.root, browserPath);
-  if (!resolved) {
-    return undefined;
-  }
-  const stat = await statWorkspacePath(params.workspaceRoot ?? params.root, browserPath);
-  if (!stat || workspaceStatKind(stat) !== "directory") {
-    return undefined;
-  }
-  const dirents = await listWorkspacePath(params.workspaceRoot ?? params.root, browserPath);
-  if (!dirents) {
-    return undefined;
-  }
-  const entries = (
-    await Promise.all(
-      sortDirents(dirents)
-        .slice(0, MAX_BROWSER_ENTRIES + 1)
-        .map((dirent) => {
-          const entryPath = browserPath ? `${browserPath}/${dirent.name}` : dirent.name;
-          return toBrowserEntry(entryPath, dirent, relevance);
-        }),
-    )
-  ).filter((entry): entry is SessionFileBrowserEntry => Boolean(entry));
-  const parent = path.dirname(browserPath);
-  return {
-    path: browserPath,
-    ...(browserPath ? { parentPath: parent === "." ? "" : parent } : {}),
-    entries: sortWorkspaceEntries(entries.slice(0, MAX_BROWSER_ENTRIES)),
-    ...(entries.length > MAX_BROWSER_ENTRIES ? { truncated: true } : {}),
-  };
-}
-
-async function loadSessionFiles(params: {
-  sessionKey: string;
-  agentId?: string;
-}): Promise<LoadedSessionFiles> {
-  const loaded = loadSessionFileRoot(params);
+async function loadSessionFiles(
+  params: {
+    sessionKey: string;
+    agentId?: string;
+  },
+  loaded = loadSessionFileRoot(params),
+): Promise<LoadedSessionFiles> {
   const { storePath, entry, canonicalKey, agentId } = loaded;
   if (!entry?.sessionId || !storePath || !agentId) {
     return { files: [] };
@@ -744,18 +583,16 @@ async function loadSessionFiles(params: {
   };
 }
 
-async function buildListResult(params: {
-  sessionKey: string;
-  agentId?: string;
-  path?: string;
-  search?: string;
-}): Promise<{
-  root?: string;
-  gitCheckout?: boolean;
-  files: SessionFileEntry[];
-  browser?: SessionFileBrowserResult;
-}> {
-  const loaded = await loadSessionFiles(params);
+async function buildListResult(
+  params: {
+    sessionKey: string;
+    agentId?: string;
+    path?: string;
+    search?: string;
+  },
+  loadedRoot = loadSessionFileRoot(params),
+): Promise<Omit<SessionsFilesListResult, "sessionKey">> {
+  const loaded = await loadSessionFiles(params, loadedRoot);
   const root = loaded.root;
   const gitCheckout = loaded.diffCwd ? insideGitCheckout(loaded.diffCwd) : undefined;
   const workspaceRoot = root ? await openWorkspaceRoot(root) : undefined;
@@ -769,13 +606,12 @@ async function buildListResult(params: {
       toSessionFileEntry(file, loaded.root, loaded.fileRoot, { workspaceRoot }),
     ),
   );
-  const browser = await buildBrowserResult({
+  const browser = await buildWorkspaceBrowser({
     root,
     workspaceRoot,
-    fileRoot: loaded.fileRoot,
     path: params.path,
     search: params.search,
-    files: workspaceFiles,
+    relevance: buildSessionRelevanceMap(workspaceFiles, root, loaded.fileRoot),
   });
   return {
     ...(root ? { root } : {}),
@@ -787,8 +623,9 @@ async function buildListResult(params: {
 
 async function findSessionFile(
   params: SessionsFilesGetParams,
+  loadedRoot = loadSessionFileRoot(params),
 ): Promise<{ root?: string; file?: SessionFileEntry }> {
-  const loaded = await loadSessionFiles(params);
+  const loaded = await loadSessionFiles(params, loadedRoot);
   const exactTouched = loaded.files.find((file) => file.path === params.path);
   if (exactTouched) {
     return {
@@ -877,9 +714,58 @@ function requireSessionFilesAgentId(params: {
   return requestedAgent.agentId;
 }
 
+async function loadBrowserRoots(
+  loaded: ReturnType<typeof loadSessionFileRoot>,
+  client: GatewayClient | null,
+  context: GatewayRequestContext,
+): Promise<SessionBrowserRoot[] | undefined> {
+  if (
+    !loaded.root ||
+    !loaded.agentId ||
+    loaded.entry?.execNode ||
+    !client?.connect.scopes?.includes(ADMIN_SCOPE)
+  ) {
+    return undefined;
+  }
+  const placement = loaded.entry?.sessionId
+    ? context.workerSessionPlacementService
+        ?.getMany([loaded.entry.sessionId])
+        .get(loaded.entry.sessionId)
+    : undefined;
+  if (isCloudWorkerPlacementState(placement?.state)) {
+    return undefined;
+  }
+  const roots = await resolveSessionBrowserRoots({
+    cfg: loaded.cfg,
+    agentId: loaded.agentId,
+    sessionKey: loaded.canonicalKey,
+    workspaceRoot: loaded.root,
+  });
+  return roots.length ? roots : undefined;
+}
+
+function rejectUnknownBrowserRoot(
+  rootId: string | undefined,
+  roots: SessionBrowserRoot[] | undefined,
+  respond: RespondFn,
+): boolean {
+  if (!rootId || rootId === "workspace" || roots?.some((root) => root.info.id === rootId)) {
+    return false;
+  }
+  respond(
+    false,
+    undefined,
+    sessionFilesError(
+      "session_file_root_not_found",
+      "File location is not available for this session.",
+    ),
+  );
+  return true;
+}
+
 /** Gateway handlers for session files and workspace browsing. */
 export const sessionsFilesHandlers: GatewayRequestHandlers = {
-  "sessions.files.list": async ({ params, respond, context }) => {
+  "sessions.files.list": async ({ params, respond, context, client }) => {
     if (
       !assertValidParams(params, validateSessionsFilesListParams, "sessions.files.list", respond)
     ) {
@@ -894,13 +780,30 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const result = await buildListResult({ ...params, agentId });
+    const loaded = loadSessionFileRoot({ ...params, agentId });
+    const roots = await loadBrowserRoots(loaded, client, context);
+    if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+      return;
+    }
+    const selected = roots?.find(
+      (root) => root.info.id === params.rootId && root.info.kind !== "workspace",
+    );
+    const result = selected
+      ? {
+          root: selected.displayRoot,
+          files: [],
+          browser: await listSessionBrowserRoot(selected, params),
+        }
+      : await buildListResult({ ...params, agentId }, loaded);
     respond(true, {
       sessionKey: params.sessionKey,
       ...result,
+      ...(roots
+        ? { rootId: selected?.info.id ?? "workspace", roots: roots.map((root) => root.info) }
+        : {}),
     });
   },
-  "sessions.files.get": async ({ params, respond, context }) => {
+  "sessions.files.get": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsFilesGetParams, "sessions.files.get", respond)) {
       return;
     }
@@ -913,7 +816,40 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const result = await findSessionFile({ ...params, agentId });
+    const loaded = loadSessionFileRoot({ ...params, agentId });
+    const roots =
+      params.rootId && params.rootId !== "workspace"
+        ? await loadBrowserRoots(loaded, client, context)
+        : undefined;
+    if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+      return;
+    }
+    const selected = roots?.find((root) => root.info.id === params.rootId);
+    const selectedPath = selected?.info.available
+      ? sessionBrowserRootPath(selected, params.path)
+      : undefined;
+    const result = selected
+      ? {
+          root: selected.displayRoot,
+          readOnly: true,
+          file: selectedPath
+            ? await toSessionFileEntry(
+                { path: selectedPath, kind: "read" },
+                selected.fsRoot,
+                selected.fsRoot,
+                { includeContent: true, workspaceRoot: selected.workspaceRoot },
+              )
+            : undefined,
+        }
+      : await findSessionFile({ ...params, agentId }, loaded);
+    if (selected && result.file) {
+      const relativePath = toDisplayPath(
+        selected.displayRoot,
+        path.join(selected.fsRoot, result.file.workspacePath ?? selectedPath!),
+      );
+      result.file.path = relativePath;
+      result.file.workspacePath = relativePath;
+    }
     if (!result.file || result.file.missing) {
       respondSessionFileNotFound(respond, params.path);
       return;
@@ -1038,7 +974,7 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       },
     });
   },
-  "sessions.files.reveal": async ({ params, respond, context }) => {
+  "sessions.files.reveal": async ({ params, respond, context, client }) => {
     if (
       !assertValidParams(
         params,
@@ -1059,7 +995,7 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       return;
     }
     const loaded = loadSessionFileRoot({ sessionKey: params.key, agentId });
-    const workspaceRoot = loaded.root;
+    let workspaceRoot = loaded.root;
     if (!workspaceRoot) {
       respond(true, {
         ok: false,
@@ -1087,6 +1023,27 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
         error: `Cannot reveal this workspace because the session runs remotely (${placement.state}).`,
       });
       return;
+    }
+    if (params.rootId && params.rootId !== "workspace") {
+      const roots = await loadBrowserRoots(loaded, client, context);
+      if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+        return;
+      }
+      const selected = roots?.find((root) => root.info.id === params.rootId);
+      // Extra locations are preview-only. Only Outputs has a native folder action;
+      // in particular, a shared file must never be launched through the host OS.
+      if (selected?.info.kind !== "outputs") {
+        respond(true, { ok: false, error: "Shared locations support preview only." });
+        return;
+      }
+      if (!selected?.info.available) {
+        respond(true, {
+          ok: false,
+          error: "This file location does not exist yet or is unavailable.",
+        });
+        return;
+      }
+      workspaceRoot = selected.info.hostPath;
     }
     try {
       await execOpenPath(resolveOpenPathCommand(workspaceRoot));

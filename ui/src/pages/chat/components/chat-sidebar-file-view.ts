@@ -176,7 +176,7 @@ export function renderSidebarFile(
                           ${icons.search}
                         </button>
                       </openclaw-tooltip>
-                      ${controls.onReveal
+                      ${controls.onReveal && !content.previewOnly
                         ? html`
                             <openclaw-tooltip .content=${t("chat.detailPanel.showInFiles")}>
                               <button
@@ -190,12 +190,14 @@ export function renderSidebarFile(
                             </openclaw-tooltip>
                           `
                         : nothing}
-                      ${renderChatSidebarEditorMenu({
-                        absolutePath,
-                        open: controls.editorMenuOpen,
-                        onOpenChange: controls.onEditorMenuOpenChange,
-                        onOpenEditor: controls.onOpenEditor,
-                      })}
+                      ${content.previewOnly
+                        ? nothing
+                        : renderChatSidebarEditorMenu({
+                            absolutePath,
+                            open: controls.editorMenuOpen,
+                            onOpenChange: controls.onEditorMenuOpenChange,
+                            onOpenEditor: controls.onOpenEditor,
+                          })}
                       ${renderFileCopyButton("contents", controls)}
                     `}
               </div>

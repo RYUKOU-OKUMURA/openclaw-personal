@@ -2137,6 +2137,20 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Current elevated level: on");
   });
 
+  it("renders embedded sandbox file-location guidance", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      sandboxInfo: {
+        enabled: true,
+        fileLocationsPrompt:
+          'Sandbox file locations are container paths.\n- "/mnt/shared/脳内メモ" — read-only',
+      },
+    });
+
+    expect(prompt).toContain('"/mnt/shared/脳内メモ" — read-only');
+    expect(prompt).toContain("## Sandbox");
+  });
+
   it("does not advertise /elevated full when auto-approved full access is unavailable", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

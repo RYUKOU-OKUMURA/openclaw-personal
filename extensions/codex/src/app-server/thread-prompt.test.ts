@@ -1,4 +1,7 @@
-import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type {
+  EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
+  SandboxContext,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import { describe, expect, it } from "vitest";
 import {
   CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
@@ -57,6 +60,33 @@ function buildInstructions(overrides: Partial<EmbeddedRunAttemptParams> = {}): s
   });
 }
 
+function createSandbox(): SandboxContext {
+  return {
+    enabled: true,
+    backendId: "docker",
+    sessionKey: "agent:main:main",
+    workspaceDir: "/tmp/openclaw-sandbox",
+    agentWorkspaceDir: "/tmp/openclaw-agent",
+    workspaceAccess: "rw",
+    runtimeId: "openclaw-sbx-test",
+    runtimeLabel: "openclaw-sbx-test",
+    containerName: "openclaw-sbx-test",
+    containerWorkdir: "/workspace",
+    docker: {
+      image: "openclaw-sandbox:bookworm-slim",
+      containerPrefix: "openclaw-sbx-",
+      workdir: "/workspace",
+      readOnlyRoot: true,
+      tmpfs: ["/tmp"],
+      network: "none",
+      capDrop: ["ALL"],
+      binds: ["/host/read:/mnt/shared/脳内メモ:ro", "/host/write:/mnt/shared/out:rw"],
+    },
+    tools: { allow: ["exec"], deny: [] },
+    browserAllowHostControl: false,
+  };
+}
+
 describe("buildDeveloperInstructions delegation guidance", () => {
   it("shares the visible-session delegation policy with a canonical main session", () => {
     const instructions = buildInstructions();
@@ -95,6 +125,25 @@ describe("buildDeveloperInstructions delegation guidance", () => {
     { name: "prompt mode none", overrides: { promptMode: "none" } },
   ] as const)("omits the policy for $name", ({ overrides }) => {
     expect(buildInstructions(overrides)).not.toContain("## Delegation");
+  });
+});
+
+describe("buildDeveloperInstructions sandbox file locations", () => {
+  it("includes shared bind modes and the writable deliverables convention", () => {
+    const instructions = buildDeveloperInstructions(createParams(), {
+      dynamicTools: delegationTools,
+      sandbox: {
+        ...createSandbox(),
+        fileLocationsPrompt:
+          '"/mnt/shared/Shared Notes" — read-only\n"/mnt/shared/out" — read-write\nDeliverables: save under "/workspace/outputs".',
+      },
+    });
+
+    expect(instructions).toContain('"/mnt/shared/Shared Notes" — read-only');
+    expect(instructions).toContain('"/mnt/shared/out" — read-write');
+    expect(instructions).toContain('save under "/workspace/outputs"');
+    expect(instructions).not.toContain("/host/read");
+    expect(instructions).not.toContain("/host/write");
   });
 });
 

@@ -1370,6 +1370,7 @@ export function buildAgentSystemPrompt(params: {
                     : ""
                 }`
               : "",
+            params.sandboxInfo.fileLocationsPrompt ?? "",
             params.sandboxInfo.browserBridgeUrl ? "Sandbox browser: enabled." : "",
             params.sandboxInfo.hostBrowserAllowed === true
               ? "Host browser control: allowed."

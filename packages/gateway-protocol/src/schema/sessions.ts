@@ -268,10 +268,22 @@ export const SessionFileBrowserResultSchema = closedObject({
   truncated: Type.Optional(Type.Boolean()),
 });
 
+/** Server-selected locations; ids are not client-supplied host paths. */
+export const SessionFileRootSchema = closedObject({
+  id: NonEmptyString,
+  kind: Type.Union([Type.Literal("workspace"), Type.Literal("outputs"), Type.Literal("shared")]),
+  name: NonEmptyString,
+  hostPath: NonEmptyString,
+  runtimePath: Type.Optional(NonEmptyString),
+  writable: Type.Boolean(),
+  available: Type.Boolean(),
+});
+
 /** Lists files touched by a session transcript. */
 export const SessionsFilesListParamsSchema = closedObject({
   sessionKey: NonEmptyString,
   agentId: Type.Optional(NonEmptyString),
+  rootId: Type.Optional(NonEmptyString),
   path: Type.Optional(Type.String()),
   search: Type.Optional(Type.String()),
 });
@@ -280,6 +292,8 @@ export const SessionsFilesListParamsSchema = closedObject({
 export const SessionsFilesListResultSchema = closedObject({
   sessionKey: NonEmptyString,
   root: Type.Optional(NonEmptyString),
+  rootId: Type.Optional(NonEmptyString),
+  roots: Type.Optional(Type.Array(SessionFileRootSchema)),
   /** Whether the session workspace directory is inside a git checkout; absent when the workspace root is unknown or the gateway predates the field. */
   gitCheckout: Type.Optional(Type.Boolean()),
   files: Type.Array(SessionFileEntrySchema),
@@ -291,12 +305,15 @@ export const SessionsFilesGetParamsSchema = closedObject({
   sessionKey: NonEmptyString,
   path: NonEmptyString,
   agentId: Type.Optional(NonEmptyString),
+  rootId: Type.Optional(NonEmptyString),
 });
 
 /** Result for reading one session-referenced file. */
 export const SessionsFilesGetResultSchema = closedObject({
   sessionKey: NonEmptyString,
   root: Type.Optional(NonEmptyString),
+  /** Extra locations are preview-only; workspace editor writes keep their existing scope. */
+  readOnly: Type.Optional(Type.Boolean()),
   file: SessionFileEntrySchema,
 });
 
@@ -320,6 +337,7 @@ export const SessionsFilesSetResultSchema = closedObject({
 export const SessionsFilesRevealParamsSchema = closedObject({
   key: NonEmptyString,
   agentId: Type.Optional(NonEmptyString),
+  rootId: Type.Optional(NonEmptyString),
 });
 
 /** Result for revealing a session workspace on the Gateway host. */
@@ -863,6 +881,7 @@ export type SessionFileRelevance = Static<typeof SessionFileRelevanceSchema>;
 export type SessionFileEntry = Static<typeof SessionFileEntrySchema>;
 export type SessionFileBrowserEntry = Static<typeof SessionFileBrowserEntrySchema>;
 export type SessionFileBrowserResult = Static<typeof SessionFileBrowserResultSchema>;
+export type SessionFileRoot = Static<typeof SessionFileRootSchema>;
 export type SessionsFilesListParams = Static<typeof SessionsFilesListParamsSchema>;
 export type SessionsFilesListResult = Static<typeof SessionsFilesListResultSchema>;
 export type SessionsFilesGetParams = Static<typeof SessionsFilesGetParamsSchema>;

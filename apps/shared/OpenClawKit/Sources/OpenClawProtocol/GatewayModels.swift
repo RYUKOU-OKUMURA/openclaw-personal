@@ -9169,6 +9169,44 @@ public struct SessionFileBrowserResult: Codable, Sendable {
     }
 }
 
+public struct SessionFileRoot: Codable, Sendable {
+    public let id: String
+    public let kind: AnyCodable
+    public let name: String
+    public let hostpath: String
+    public let runtimepath: String?
+    public let writable: Bool
+    public let available: Bool
+
+    public init(
+        id: String,
+        kind: AnyCodable,
+        name: String,
+        hostpath: String,
+        runtimepath: String? = nil,
+        writable: Bool,
+        available: Bool)
+    {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.hostpath = hostpath
+        self.runtimepath = runtimepath
+        self.writable = writable
+        self.available = available
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case name
+        case hostpath = "hostPath"
+        case runtimepath = "runtimePath"
+        case writable
+        case available
+    }
+}
+
 public struct SessionFileEntry: Codable, Sendable {
     public let path: String
     public let workspacepath: String?
@@ -9230,17 +9268,20 @@ public struct SessionFileEntry: Codable, Sendable {
 public struct SessionsFilesListParams: Codable, Sendable {
     public let sessionkey: String
     public let agentid: String?
+    public let rootid: String?
     public let path: String?
     public let search: String?
 
     public init(
         sessionkey: String,
         agentid: String? = nil,
+        rootid: String? = nil,
         path: String? = nil,
         search: String? = nil)
     {
         self.sessionkey = sessionkey
         self.agentid = agentid
+        self.rootid = rootid
         self.path = path
         self.search = search
     }
@@ -9248,6 +9289,7 @@ public struct SessionsFilesListParams: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case agentid = "agentId"
+        case rootid = "rootId"
         case path
         case search
     }
@@ -9256,6 +9298,8 @@ public struct SessionsFilesListParams: Codable, Sendable {
 public struct SessionsFilesListResult: Codable, Sendable {
     public let sessionkey: String
     public let root: String?
+    public let rootid: String?
+    public let roots: [SessionFileRoot]?
     public let gitcheckout: Bool?
     public let files: [SessionFileEntry]
     public let browser: SessionFileBrowserResult?
@@ -9263,12 +9307,16 @@ public struct SessionsFilesListResult: Codable, Sendable {
     public init(
         sessionkey: String,
         root: String? = nil,
+        rootid: String? = nil,
+        roots: [SessionFileRoot]? = nil,
         gitcheckout: Bool? = nil,
         files: [SessionFileEntry],
         browser: SessionFileBrowserResult? = nil)
     {
         self.sessionkey = sessionkey
         self.root = root
+        self.rootid = rootid
+        self.roots = roots
         self.gitcheckout = gitcheckout
         self.files = files
         self.browser = browser
@@ -9277,6 +9325,8 @@ public struct SessionsFilesListResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case root
+        case rootid = "rootId"
+        case roots
         case gitcheckout = "gitCheckout"
         case files
         case browser
@@ -9287,42 +9337,50 @@ public struct SessionsFilesGetParams: Codable, Sendable {
     public let sessionkey: String
     public let path: String
     public let agentid: String?
+    public let rootid: String?
 
     public init(
         sessionkey: String,
         path: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        rootid: String? = nil)
     {
         self.sessionkey = sessionkey
         self.path = path
         self.agentid = agentid
+        self.rootid = rootid
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case path
         case agentid = "agentId"
+        case rootid = "rootId"
     }
 }
 
 public struct SessionsFilesGetResult: Codable, Sendable {
     public let sessionkey: String
     public let root: String?
+    public let readonly: Bool?
     public let file: SessionFileEntry
 
     public init(
         sessionkey: String,
         root: String? = nil,
+        readonly: Bool? = nil,
         file: SessionFileEntry)
     {
         self.sessionkey = sessionkey
         self.root = root
+        self.readonly = readonly
         self.file = file
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case root
+        case readonly = "readOnly"
         case file
     }
 }
@@ -9330,18 +9388,22 @@ public struct SessionsFilesGetResult: Codable, Sendable {
 public struct SessionsFilesRevealParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
+    public let rootid: String?
 
     public init(
         key: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        rootid: String? = nil)
     {
         self.key = key
         self.agentid = agentid
+        self.rootid = rootid
     }
 
     private enum CodingKeys: String, CodingKey {
         case key
         case agentid = "agentId"
+        case rootid = "rootId"
     }
 }
 

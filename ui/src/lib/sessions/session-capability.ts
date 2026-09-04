@@ -4,6 +4,7 @@ import type {
   SessionOwner,
   SessionsAssignOwnerParams,
   SessionsDeleteResult,
+  SessionsFilesRevealResult,
   SessionsRecoverResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import type { SessionCatalogPullRequestSummary } from "../../../../packages/gateway-protocol/src/schema/sessions-catalog.js";
@@ -210,13 +211,22 @@ export type SessionCapability = {
   compact: (key: string, options?: { agentId?: string | null }) => Promise<SessionCompactResult>;
   listFiles: (
     key: string,
-    options?: { agentId?: string | null; path?: string; search?: string },
+    options?: {
+      agentId?: string | null;
+      path?: string;
+      search?: string;
+      rootId?: string | null;
+    },
   ) => Promise<SessionWorkspaceListResult | null>;
   getFile: (
     key: string,
     path: string,
-    options?: { agentId?: string | null },
+    options?: { agentId?: string | null; rootId?: string | null },
   ) => Promise<SessionWorkspaceGetResult | null>;
+  revealFiles: (
+    key: string,
+    options?: { agentId?: string | null; rootId?: string | null },
+  ) => Promise<SessionsFilesRevealResult | null>;
   setFile: (
     key: string,
     path: string,

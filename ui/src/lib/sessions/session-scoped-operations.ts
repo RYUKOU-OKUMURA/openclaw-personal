@@ -34,6 +34,7 @@ import {
   requestSessionCompact,
   requestSessionFile,
   requestSessionFilesList,
+  requestSessionFilesReveal,
   requestSessionFileSet,
   requestSessionFork,
   requestSessionRewind,
@@ -90,7 +91,12 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
 
   const listFiles = async (
     key: string,
-    options: { agentId?: string | null; path?: string; search?: string } = {},
+    options: {
+      agentId?: string | null;
+      path?: string;
+      search?: string;
+      rootId?: string | null;
+    } = {},
   ): Promise<SessionWorkspaceListResult | null> => {
     const scope = host.connection.capture();
     if (!scope) {
@@ -103,13 +109,25 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
   const getFile = async (
     key: string,
     path: string,
-    options: { agentId?: string | null } = {},
+    options: { agentId?: string | null; rootId?: string | null } = {},
   ): Promise<SessionWorkspaceGetResult | null> => {
     const scope = host.connection.capture();
     if (!scope) {
       return null;
     }
     const result = await requestSessionFile(scope.client, key, path, options);
+    return host.connection.isCurrent(scope) ? result : null;
+  };
+
+  const revealFiles = async (
+    key: string,
+    options: { agentId?: string | null; rootId?: string | null } = {},
+  ) => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      return null;
+    }
+    const result = await requestSessionFilesReveal(scope.client, key, options);
     return host.connection.isCurrent(scope) ? result : null;
   };
 
@@ -297,6 +315,7 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     listBranches,
     listCheckpoints,
     listFiles,
+    revealFiles,
     recover,
     restoreCheckpoint,
     rewind,

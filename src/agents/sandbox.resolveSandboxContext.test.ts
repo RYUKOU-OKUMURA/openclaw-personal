@@ -711,6 +711,8 @@ describe("resolveSandboxContext", () => {
       });
 
       expect(result?.backendId).toBe("docker");
+      expect(result?.fileLocationsPrompt).toContain('save under "/workspace/outputs"');
+      expect(result?.fileLocationsPrompt).not.toContain("/tmp/openclaw-test");
       expect(containerEngineMocks.resolvePodmanSandboxRuntimeInfo).not.toHaveBeenCalled();
       expect(backendFactory).toHaveBeenCalledWith(
         expect.objectContaining({
