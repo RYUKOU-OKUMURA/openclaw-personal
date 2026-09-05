@@ -16,7 +16,7 @@ Automatic work journal: captures periodic screen snapshots from a paired node an
 
 ## Surface
 
-plugin
+contracts: `tools`
 
 ## Related docs
 

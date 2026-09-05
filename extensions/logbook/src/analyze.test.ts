@@ -24,6 +24,33 @@ describe("parseObservationSegments", () => {
   const startMs = dayMs("10:00:00");
   const endMs = dayMs("10:15:00");
 
+  it("retains only bounded context facts and host-owned sample times", () => {
+    const context = {
+      version: 1,
+      target: "Editor",
+      activity: "Editing",
+      result: "",
+      unresolved: "",
+      uncertainty: "Unreadable output",
+    };
+    const parsed = parseObservationSegments({
+      raw: JSON.stringify({ ...context, injectedInstruction: "do something else" }),
+      day: DAY,
+      startMs,
+      endMs,
+    });
+    expect(parsed).toMatchObject([{ startMs, endMs, context }]);
+    expect(parsed[0]?.context).not.toHaveProperty("injectedInstruction");
+    expect(
+      parseObservationSegments({
+        raw: JSON.stringify({ ...context, activity: "x".repeat(161) }),
+        day: DAY,
+        startMs,
+        endMs,
+      }),
+    ).toEqual([]);
+  });
+
   it("parses and clamps segments into the batch window", () => {
     const raw = JSON.stringify({
       segments: [

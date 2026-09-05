@@ -45,7 +45,7 @@
     },
     "retentionDays": {
       "label": "Frame Retention (days)",
-      "help": "Snapshots older than this are deleted. Timeline cards are kept.",
+      "help": "Completed observation snapshots older than this are deleted. Unfinished snapshots have at least seven days of grace. Text records are kept until explicitly deleted.",
       "advanced": true
     }
   },
@@ -87,5 +87,10 @@
         "default": 14
       }
     }
+  },
+  "contracts": {
+    "tools": [
+      "logbook_context"
+    ]
   }
 }

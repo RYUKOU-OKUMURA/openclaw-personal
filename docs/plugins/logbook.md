@@ -93,15 +93,21 @@ A timeline card appears when the analysis window closes, or you can select
    the selected node's capture command and stores a scaled JPEG frame.
    Consecutive identical frames are marked idle and excluded from analysis.
 2. **Observe**: once an analysis window (default 15 minutes) elapses, the
-   plugin samples up to 16 active frames and sends them to the vision model,
-   which returns timestamped activity observations ("VS Code: editing
-   store.ts, fixing a type error"). A capture gap longer than two minutes or
+   plugin samples up to 16 active frames and analyzes them in chunks of four.
+   Each chunk produces one bounded work-resumption record with host-owned
+   sample times, committed before the next chunk starts. A capture gap longer than two minutes or
    local midnight also closes the current window.
 3. **Synthesize**: observations plus the last 45 minutes of existing cards are
    revised into timeline cards (10-60 minutes each) with a title, summary,
    category, main app, and any brief distractions.
-4. **Prune**: frames older than `retentionDays` (default 14) are deleted.
-   Cards, observations, and cached standups are kept.
+4. **Recover**: a failed stage retries after one minute, then five minutes,
+   with at most three attempts per stage. Completed chunks survive restart;
+   card failures reuse saved observations without another vision pass.
+5. **Prune**: completed observation frames expire after `retentionDays`
+   (default 14). Unfinished frames have a bounded grace period of at least seven
+   days, or `retentionDays` when longer. Expired active captures leave unavailable
+   interval metadata. Cards, observations, and cached standups are kept until
+   explicitly deleted.
 
 Day boundaries and timeline clocks use the Gateway's local timezone, not the
 browser's timezone. Frames and the SQLite timeline database live under
@@ -111,12 +117,12 @@ browser's timezone. Frames and the SQLite timeline database live under
 
 Logbook uses two separate model routes:
 
-| Stage            | Data sent                                                 | Model route                                                       |
-| ---------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
-| Observe          | Up to 16 sampled JPEG frames plus their capture times     | `visionModel`, or a compatible borrowed `tools.media` Codex entry |
-| Synthesize cards | Timestamped observations and recent timeline cards        | `textModel`, otherwise the default agent model                    |
-| Generate standup | Cards for the selected day and previous day               | `textModel`, otherwise the default agent model                    |
-| Ask your day     | The question, selected-day cards, and recent observations | `textModel`, otherwise the default agent model                    |
+| Stage            | Data sent                                                     | Model route                                                       |
+| ---------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Observe          | Up to four sampled JPEG frames per request plus capture times | `visionModel`, or a compatible borrowed `tools.media` Codex entry |
+| Synthesize cards | Timestamped observations and recent timeline cards            | `textModel`, otherwise the default agent model                    |
+| Generate standup | Cards for the selected day and previous day                   | `textModel`, otherwise the default agent model                    |
+| Ask your day     | The question, selected-day cards, and recent observations     | `textModel`, otherwise the default agent model                    |
 
 The full SQLite database is not sent to either model. Raw screenshots go only
 to the observation stage; card synthesis, standup, and Q&A receive derived
@@ -207,7 +213,7 @@ and clamped to the supported range.
 | `maxWidth`                | `1440`  | `480`-`3840`            | Requested capture size cap; headless macOS applies it to the largest dimension                                                     |
 | `visionModel`             | unset   | `provider/model`        | Explicit structured route; malformed refs pause analysis, unsupported providers fail batches                                       |
 | `textModel`               | unset   | `provider/model`        | Model for cards, repairs, standup, and Q&A; defaults to the agent model and requires plugin LLM model override permission when set |
-| `retentionDays`           | `14`    | `1`-`365`               | Deletes old frames; cards, observations, and standups remain                                                                       |
+| `retentionDays`           | `14`    | `1`-`365`               | Deletes completed observation frames; unfinished frames have at least seven days of grace; text remains                            |
 
 Without `nodeId`, Logbook prefers a connected app node exposing
 `screen.snapshot`, then falls back to a headless node exposing
@@ -268,24 +274,97 @@ explicit Logbook `visionModel` still applies.
 
 Logbook registers these Gateway RPC methods:
 
-| Method                | Parameters               | Scope            | Result                                                                        |
-| --------------------- | ------------------------ | ---------------- | ----------------------------------------------------------------------------- |
-| `logbook.status`      | none                     | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status      |
-| `logbook.days`        | none                     | `operator.read`  | Days with timeline-card counts and card time bounds                           |
-| `logbook.timeline`    | `{ day?: "YYYY-MM-DD" }` | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day       |
-| `logbook.frames`      | `{ startMs, endMs }`     | `operator.write` | Frame metadata in the requested epoch-millisecond range                       |
-| `logbook.frame`       | `{ frameId }`            | `operator.write` | One raw JPEG frame as base64                                                  |
-| `logbook.standup`     | `{ day?, refresh? }`     | `operator.write` | Cached or regenerated standup text for a day                                  |
-| `logbook.ask`         | `{ day?, question }`     | `operator.write` | Timeline-grounded answer for a day                                            |
-| `logbook.capture.set` | `{ paused }`             | `operator.write` | Session-only pause state and updated status                                   |
-| `logbook.screen.set`  | `{ screenIndex }`        | `operator.write` | Persistent display selection and updated status, without changing pause state |
-| `logbook.analyze.now` | none                     | `operator.write` | Starts pending analysis, or returns a reason it could not start               |
+| Method                   | Parameters               | Scope            | Result                                                                        |
+| ------------------------ | ------------------------ | ---------------- | ----------------------------------------------------------------------------- |
+| `logbook.status`         | none                     | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status      |
+| `logbook.days`           | none                     | `operator.read`  | Days with timeline-card counts and card time bounds                           |
+| `logbook.context`        | `{ day?, query? }`       | `operator.read`  | Bounded versioned context with source references and incomplete batches       |
+| `logbook.context.delete` | `{ day: "YYYY-MM-DD" }`  | `operator.write` | Deletes source and derived records for the explicit day                       |
+| `logbook.timeline`       | `{ day?: "YYYY-MM-DD" }` | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day       |
+| `logbook.frames`         | `{ startMs, endMs }`     | `operator.write` | Frame metadata in the requested epoch-millisecond range                       |
+| `logbook.frame`          | `{ frameId }`            | `operator.write` | One raw JPEG frame as base64                                                  |
+| `logbook.standup`        | `{ day?, refresh? }`     | `operator.write` | Cached or regenerated standup text for a day                                  |
+| `logbook.ask`            | `{ day?, question }`     | `operator.write` | Timeline-grounded answer for a day                                            |
+| `logbook.capture.set`    | `{ paused }`             | `operator.write` | Session-only pause state and updated status                                   |
+| `logbook.screen.set`     | `{ screenIndex }`        | `operator.write` | Persistent display selection and updated status, without changing pause state |
+| `logbook.analyze.now`    | none                     | `operator.write` | Starts pending analysis, or returns a reason it could not start               |
 
 The read methods return operational state or derived text. Raw screenshot
 pixels, model-spending actions, and runtime mutations require
 `operator.write`. The Control UI tab also requires `operator.write` because it
 exposes those actions and raw frame previews; a read-only client can still call
 the derived-text methods directly.
+
+## Work-resumption context
+
+`logbook_context` lets the agent recall a day by date and an optional keyword
+matching a target, activity, result, or other recorded text. It is available only
+in a host-administrator private dashboard conversation, including sandboxed
+agents. Channel conversations and conversations with an external delivery route
+or native channel id do not receive it. Normal tool allow/deny policy still applies.
+This is the existing host-global Logbook store, not a new per-profile database.
+
+When that tool is authorized for a user turn, a recent context excerpt of at most
+1,300 serialized characters is added to the prompt. Explicit retrieval returns
+at most eight observations and 6,000 serialized characters, including provenance
+and incomplete-batch metadata. The larger explicit result budget lets the agent
+compare several records without injecting an entire day into every turn.
+Truncation, total available records for the day (`availableRecords`), and query
+match counts (`matchedRecords`) are reported. If a query matches zero records
+but the day contains records, retry without the query before concluding there
+is no context. Date defaults to the Gateway local day;
+use an explicit date for earlier work.
+
+Each new observation has context version `1` and these fields, each at most
+160 characters:
+
+| Field         | Meaning                                          |
+| ------------- | ------------------------------------------------ |
+| `target`      | Visible app, project, document, or file          |
+| `activity`    | Work actually visible in the sampled screenshots |
+| `result`      | Visible result or change; empty when unknown     |
+| `unresolved`  | Visibly unresolved issue; empty when unknown     |
+| `uncertainty` | Ambiguous or unreadable evidence                 |
+
+Record IDs and sample intervals come from the host, not model-generated clocks.
+The host supplies `startTime` and `endTime` as ISO 8601 UTC strings ending in `Z`;
+cite these values verbatim with their UTC timezone, without calculating clocks
+from the accompanying epoch milliseconds. The date selector still uses the
+Gateway local day.
+These intervals describe samples, not continuous observation. Missing records
+never prove inactivity or completion. Legacy free-text observations remain
+searchable and are labeled unstructured rather than inventing structured facts.
+Screen text is untrusted evidence, never authorization or instructions. This
+feature does not infer permanent preferences or confirmed decisions.
+
+Read context without invoking another model:
+
+```bash
+openclaw gateway call logbook.context --params '{"day":"2026-09-05","query":"editor"}'
+```
+
+Delete a day of source and derived records with an explicit date:
+
+```bash
+openclaw gateway call logbook.context.delete --params '{"day":"2026-09-05"}'
+```
+
+Deletion requires `operator.write` and is rejected during active capture,
+analysis, or text generation. It removes that day's frames, observations,
+batches, cards, and cached standup, and invalidates the following day's cached
+standup because it can cite yesterday. Existing conversation transcripts and
+external backups are separate artifacts and are not rewritten. To correct a
+record without retaining its old derived interpretation, delete that day; this
+first version does not provide individual-record editing. A failed deletion may
+already have removed some image files. Source and derived metadata remain until
+deletion completes successfully; explicitly retrying the same day safely
+finishes deletion, including after a restart.
+
+No additional runtime settings are required. Existing text retention is
+preserved: observations and summaries do not automatically expire. Raw-image
+retention stays bounded as described above. New nullable SQLite fields preserve
+schema version 1 and older readers; back up state before installing a changed
+runtime.
 
 ## Privacy notes
 
@@ -298,6 +377,13 @@ the derived-text methods directly.
 - Use local routes for both the structured observation model and text model
   when you need a fully local pipeline. Restrict the plugin's completion model
   allowlist as shown above.
+- Normal-conversation recall sends derived context to that conversation's model.
+  The Logbook completion-model allowlist does not control the normal chat model.
+  Use a local chat model or deny `logbook_context` if that text must remain local.
+- The observation prompt omits credentials and unrelated private conversations;
+  this is not guaranteed pixel-level redaction. Pause capture before sensitive
+  work. Per-app/site exclusions and automatic secret detection are not provided
+  by this version.
 - Frames, the timeline database, and temporary captures are written with
   owner-only file permissions.
 - Adding `screen.snapshot` to `gateway.nodes.commands.deny` is the
@@ -349,8 +435,9 @@ then retries. An unpinned setup can rotate to another eligible node.
 - Consecutive identical frames are idle evidence and do not enter analysis
   batches. Change the visible screen before testing.
 - If the latest batch shows an error, fix the model or auth problem and select
-  **Analyze now**. Failed batches are retried only on that explicit action to
-  avoid repeated model spend.
+  **Analyze now** after the bounded automatic retry budget is exhausted.
+  Explicit retry renews the budget but preserves completed observation chunks.
+  Expired or missing source frames cannot be reconstructed by retrying.
 
 ## Related
 

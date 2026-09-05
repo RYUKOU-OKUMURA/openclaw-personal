@@ -287,7 +287,7 @@ describe("LogbookStore", () => {
     expect(store.countUnbatchedActiveFrames()).toBe(1);
   });
 
-  it("resets running batches to pending on startup recovery", () => {
+  it("recovers interrupted batches with persisted retry timing", () => {
     const t0 = Date.now();
     insertFrame(t0);
     const batchId = store.createBatch({
@@ -296,9 +296,15 @@ describe("LogbookStore", () => {
       endMs: t0 + 1000,
       frameIds: [1],
     });
-    store.setBatchStatus(batchId, "running");
+    store.beginBatch(batchId);
+    store.close();
+    store = new LogbookStore(dir);
     store.resetRunningBatches();
-    expect(store.nextPendingBatch()?.id).toBe(batchId);
+    const recovered = expectDefined(store.latestBatch(), "recovered batch");
+    expect(recovered).toMatchObject({ status: "error", attempts: 1 });
+    const due = expectDefined(recovered.retryAfterMs, "persisted retry deadline");
+    expect(store.nextPendingBatch(due - 1)).toBeNull();
+    expect(store.nextPendingBatch(due)?.id).toBe(batchId);
   });
 
   it("replaces only cards overlapping the revision window", () => {
@@ -307,12 +313,16 @@ describe("LogbookStore", () => {
       draft({ startMs: base, endMs: base + 30 * 60_000, title: "Early" }),
       draft({ startMs: base + 60 * 60_000, endMs: base + 90 * 60_000, title: "Mid" }),
     ]);
+    store.saveStandup(DAY, "old summary");
+    store.saveStandup("2026-07-04", "old previous-day summary");
     // Revise only the window covering "Mid"; "Early" must survive untouched.
     store.replaceCardsInWindow(DAY, base + 50 * 60_000, base + 2 * 60 * 60_000, [
       draft({ startMs: base + 55 * 60_000, endMs: base + 95 * 60_000, title: "Mid revised" }),
     ]);
     const titles = store.cardsForDay(DAY).map((card) => card.title);
     expect(titles).toEqual(["Early", "Mid revised"]);
+    expect(store.getStandup(DAY)).toBeNull();
+    expect(store.getStandup("2026-07-04")).toBeNull();
   });
 
   it("round-trips distractions and computes day stats", () => {
@@ -370,29 +380,176 @@ describe("LogbookStore", () => {
     expect(store.cardsForDay(DAY)[0]?.keyframeId).toBeUndefined();
   });
 
-  it("replaces observations on batch retry instead of appending", () => {
+  it("commits resumable evidence atomically and keeps it through retry and reopen", () => {
     const t0 = Date.now();
-    const frameId = insertFrame(t0);
-    const batchId = store.createBatch({
+    const id = store.createBatch({
       day: DAY,
       startMs: t0,
       endMs: t0 + 1000,
-      frameIds: [frameId],
+      frameIds: [insertFrame(t0)],
     });
-    store.replaceObservations(batchId, DAY, [{ startMs: t0, endMs: t0 + 500, text: "first run" }]);
-    store.replaceObservations(batchId, DAY, [{ startMs: t0, endMs: t0 + 500, text: "retry run" }]);
-    const observations = store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER);
-    expect(observations).toHaveLength(1);
-    expect(expectDefined(observations[0], "retried observation").text).toBe("retry run");
+    const batch = expectDefined(store.nextPendingBatch(), "pending batch");
+    const context = {
+      version: 1 as const,
+      target: "test",
+      activity: "edit",
+      result: "saved",
+      unresolved: "verification",
+      uncertainty: "not yet tested",
+    };
+    store.beginBatch(id);
+    store.checkpointObservations(batch, t0 + 500, [
+      { startMs: t0, endMs: t0 + 500, text: "first", context },
+    ]);
+    store.close();
+    store = new LogbookStore(dir);
+    expect(store.latestBatch()).toMatchObject({ observationCursor: t0 + 500, attempts: 0 });
+    expect(store.observationsInRange(DAY, t0, t0 + 1000)[0]?.context).toEqual(context);
+    store.beginBatch(id);
+    const database = new DatabaseSync(path.join(dir, "logbook.sqlite"));
+    try {
+      database.exec(`CREATE TRIGGER reject_checkpoint BEFORE INSERT ON observations
+        WHEN NEW.text = 'fail' BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
+      expect(() =>
+        store.checkpointObservations(batch, t0 + 1000, [
+          { startMs: t0 + 500, endMs: t0 + 700, text: "second" },
+          { startMs: t0 + 700, endMs: t0 + 1000, text: "fail" },
+        ]),
+      ).toThrow("disk failure");
+      expect(store.latestBatch()?.observationCursor).toBe(t0 + 500);
+      expect(store.observationsInRange(DAY, t0, t0 + 1000).map((o) => o.text)).toEqual(["first"]);
+      database.exec("DROP TRIGGER reject_checkpoint");
+    } finally {
+      database.close();
+    }
+    store.setBatchStatus(id, "error", "retry");
+    store.resetErrorBatches();
+    store.beginBatch(id);
+    store.checkpointObservations(batch, t0 + 1000, [
+      { startMs: t0 + 500, endMs: t0 + 1000, text: "second" },
+    ]);
+    expect(() =>
+      store.checkpointObservations(batch, t0 + 1000, [
+        { startMs: t0 + 500, endMs: t0 + 1000, text: "duplicate" },
+      ]),
+    ).toThrow("stale");
+    expect(store.observationsInRange(DAY, t0, t0 + 1000).map((o) => o.text)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(store.latestBatch()).toMatchObject({ observationCursor: t0 + 1000, attempts: 0 });
   });
 
-  it("rejects observations for a missing batch", () => {
-    expect(() =>
-      store.replaceObservations(999_999, DAY, [
-        { startMs: 1, endMs: 2, text: "orphan observation" },
-      ]),
-    ).toThrow();
-    expect(store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER)).toEqual([]);
+  it("bounds repeated failures and restart recovery to three attempts until explicit retry", () => {
+    const t0 = Date.now();
+    const id = store.createBatch({
+      day: DAY,
+      startMs: t0,
+      endMs: t0 + 1000,
+      frameIds: [insertFrame(t0)],
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      store.beginBatch(id);
+      if (attempt === 3) {
+        store.close();
+        store = new LogbookStore(dir);
+        store.resetRunningBatches();
+      } else {
+        store.setBatchStatus(id, "error", "failed");
+      }
+      const failed = expectDefined(store.latestBatch(), "failed batch");
+      const due = expectDefined(failed.retryAfterMs, "retry deadline");
+      expect(failed.attempts).toBe(attempt);
+      expect(store.nextPendingBatch(due - 1)).toBeNull();
+      expect(store.nextPendingBatch(due)?.id).toBe(attempt < 3 ? id : undefined);
+    }
+    store.close();
+    store = new LogbookStore(dir);
+    expect(store.nextPendingBatch(Number.MAX_SAFE_INTEGER)).toBeNull();
+    store.resetErrorBatches();
+    expect(store.nextPendingBatch()).toMatchObject({ id, attempts: 0 });
+  });
+
+  it("gives unfinished observations bounded retention grace but expires completed vision normally", () => {
+    const now = Date.now();
+    const dayMs = 86400000;
+    const pending = insertFrame(now - 4 * dayMs);
+    const expired = insertFrame(now - 8 * dayMs);
+    const complete = insertFrame(now - 5 * dayMs);
+    const failedFrame = insertFrame(now - 9 * dayMs);
+    const failedBatch = store.createBatch({
+      day: dayKeyFor(now - 9 * dayMs),
+      startMs: now - 9 * dayMs,
+      endMs: now - 9 * dayMs + 1000,
+      frameIds: [failedFrame],
+    });
+    store.beginBatch(failedBatch);
+    store.setBatchStatus(failedBatch, "error", "vision timeout");
+    const batchId = store.createBatch({
+      day: DAY,
+      startMs: now - 5 * dayMs,
+      endMs: now - 5 * dayMs + 1000,
+      frameIds: [complete],
+    });
+    const batch = expectDefined(store.nextPendingBatch(), "vision batch");
+    store.beginBatch(batchId);
+    store.checkpointObservations(batch, batch.endMs, [
+      { startMs: batch.startMs, endMs: batch.endMs, text: "saved" },
+    ]);
+    store.setBatchStatus(batchId, "error", "card synthesis failed");
+    expect(store.pruneFrames(now - 3 * dayMs, now - 7 * dayMs)).toBe(3);
+    expect(store.batchesForDay(dayKeyFor(now - 8 * dayMs))[0]).toMatchObject({
+      status: "error",
+      attempts: 3,
+      frameCount: 1,
+      error: expect.stringContaining("unavailable"),
+    });
+    expect(store.batchesForDay(dayKeyFor(now - 9 * dayMs))[0]).toMatchObject({
+      id: failedBatch,
+      status: "error",
+      attempts: 3,
+    });
+    expect(store.frameById(pending)).not.toBeNull();
+    expect(store.frameById(expired)).toBeNull();
+    expect(store.frameById(complete)).toBeNull();
+    expect(store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER)).toHaveLength(1);
+    expect(store.pruneFrames(now - 3 * dayMs, now - 3 * dayMs)).toBe(1);
+  });
+
+  it("reopens an old schema-1 database and remains readable and writable by old SQL", () => {
+    store.close();
+    const databasePath = path.join(dir, "logbook.sqlite");
+    const old = new DatabaseSync(databasePath);
+    old.exec(`ALTER TABLE batches DROP COLUMN observation_cursor;
+      ALTER TABLE batches DROP COLUMN attempts; ALTER TABLE batches DROP COLUMN retry_after_ms;
+      ALTER TABLE observations DROP COLUMN context_json;`);
+    old.exec(`INSERT INTO batches(day,start_ms,end_ms,status,error,frame_count,model,created_ms,updated_ms)
+      VALUES ('${DAY}',10,20,'error','legacy failure',1,NULL,10,20)`);
+    old.close();
+    store = new LogbookStore(dir);
+    expect(store.nextPendingBatch()).toMatchObject({
+      startMs: 10,
+      status: "error",
+      attempts: undefined,
+    });
+    store.close();
+    const downgraded = new DatabaseSync(databasePath);
+    try {
+      expect(downgraded.prepare("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+      expect(
+        downgraded
+          .prepare("SELECT id,day,start_ms,end_ms,status,error,frame_count,model FROM batches")
+          .all(),
+      ).toHaveLength(1);
+      downgraded.exec(`INSERT INTO batches(day,start_ms,end_ms,status,frame_count,created_ms,updated_ms)
+        VALUES ('${DAY}',20,30,'done',1,20,30);
+        INSERT INTO observations(batch_id,day,start_ms,end_ms,text) VALUES (2,'${DAY}',20,30,'old writer');`);
+    } finally {
+      downgraded.close();
+    }
+    store = new LogbookStore(dir);
+    expect(store.batchesForDay(DAY)).toHaveLength(2);
+    expect(store.observationsInRange(DAY, 0, 100)[0]?.text).toBe("old writer");
   });
 
   it("rolls back a card replacement with a missing keyframe", () => {
@@ -423,6 +580,79 @@ describe("LogbookStore", () => {
     expect(requeued?.id).toBe(batchId);
     expect(requeued?.error).toBeUndefined();
   });
+
+  it.each(["later file removal", "SQLite transaction"])(
+    "resumes day deletion after %s fails without recreating removed files",
+    (failure) => {
+      const t0 = new Date(`${DAY}T10:00:00`).getTime();
+      const frame = insertFrame(t0);
+      const secondFrame = insertFrame(t0 + 500);
+      const file = expectDefined(store.frameById(frame), "first frame").path;
+      const secondFile = expectDefined(store.frameById(secondFrame), "second frame").path;
+      store.createBatch({
+        day: DAY,
+        startMs: t0,
+        endMs: t0 + 1000,
+        frameIds: [frame, secondFrame],
+      });
+      const batch = expectDefined(store.nextPendingBatch(), "batch");
+      store.beginBatch(batch.id);
+      store.checkpointObservations(batch, batch.endMs, [
+        { startMs: t0, endMs: batch.endMs, text: "private" },
+      ]);
+      store.replaceCardsInWindow(DAY, t0, t0 + 1000, [
+        draft({ startMs: t0, endMs: t0 + 1000, keyframeId: frame }),
+      ]);
+      store.saveStandup(DAY, "derived");
+      store.saveStandup("2026-07-04", "also derived");
+      store.saveStandup("2026-07-05", "keep");
+      const database = new DatabaseSync(path.join(dir, "logbook.sqlite"));
+      try {
+        if (failure === "later file removal") {
+          rmSync(secondFile);
+          mkdirSync(secondFile);
+        } else {
+          database.exec(`CREATE TRIGGER reject_day_delete BEFORE DELETE ON batches
+            BEGIN SELECT RAISE(ABORT, 'injected transaction failure'); END`);
+        }
+        expect(() => store.deleteDay(DAY)).toThrow();
+        // A real partial unlink happened; recovery must not depend on restoring it.
+        expect(existsSync(file)).toBe(false);
+        expect(store.batchFrames(batch.id)).toHaveLength(2);
+        expect(store.cardsForDay(DAY)).toHaveLength(1);
+        expect(store.observationsInRange(DAY, t0, t0 + 1000)).toHaveLength(1);
+        expect(store.getStandup(DAY)?.text).toBe("derived");
+        expect(store.getStandup("2026-07-04")?.text).toBe("also derived");
+        if (failure === "later file removal") {
+          rmSync(secondFile, { recursive: true });
+        } else {
+          expect(existsSync(secondFile)).toBe(false);
+          database.exec("DROP TRIGGER reject_day_delete");
+        }
+      } finally {
+        database.close();
+      }
+      store.close();
+      store = new LogbookStore(dir);
+      expect(store.deleteDay(DAY)).toEqual({
+        frames: 2,
+        batches: 1,
+        observations: 1,
+        cards: 1,
+        standups: 2,
+      });
+      expect(existsSync(file)).toBe(false);
+      expect(existsSync(secondFile)).toBe(false);
+      expect(store.frameById(frame)).toBeNull();
+      expect(store.frameById(secondFrame)).toBeNull();
+      expect(store.batchesForDay(DAY)).toEqual([]);
+      expect(store.cardsForDay(DAY)).toEqual([]);
+      expect(store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER)).toEqual([]);
+      expect(store.getStandup(DAY)).toBeNull();
+      expect(store.getStandup("2026-07-04")).toBeNull();
+      expect(store.getStandup("2026-07-05")?.text).toBe("keep");
+    },
+  );
 
   it("keeps capture data owner-only on disk", () => {
     const mode = (p: string) => statSync(p).mode & 0o777;

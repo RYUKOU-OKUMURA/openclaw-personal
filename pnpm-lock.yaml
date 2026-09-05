@@ -1357,6 +1357,10 @@ importers:
         version: link:../../packages/plugin-sdk
 
   extensions/logbook:
+    dependencies:
+      typebox:
+        specifier: 1.3.17
+        version: 1.3.17
     devDependencies:
       '@openclaw/plugin-sdk':
         specifier: workspace:*

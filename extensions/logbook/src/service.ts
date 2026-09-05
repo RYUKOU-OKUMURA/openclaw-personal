@@ -1,6 +1,6 @@
 // Logbook background service: snapshot capture loop, batch analysis, retention.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { canonicalizeBase64 } from "openclaw/plugin-sdk/media-runtime";
@@ -9,26 +9,11 @@ import type {
   OpenClawPluginApi,
   PluginLogger,
 } from "openclaw/plugin-sdk/plugin-entry";
-import {
-  CARD_LOOKBACK_MS,
-  MAX_FRAMES_PER_CALL,
-  parseCardsJson,
-  parseObservationSegments,
-  pickKeyframeId,
-  revisionWindow,
-  sampleFrames,
-  selectBatchFrames,
-  validateCardCoverage,
-} from "./analyze.js";
+import { runLogbookBatch } from "./analysis-runner.js";
+import { selectBatchFrames } from "./analyze.js";
 import { parseModelRef, resolveLogbookConfig, type LogbookConfig } from "./config.js";
-import {
-  buildAskPrompt,
-  buildCardsCorrectionPrompt,
-  buildCardsPrompt,
-  buildObservationInstructions,
-  buildStandupPrompt,
-  OBSERVATION_JSON_SCHEMA,
-} from "./prompts.js";
+import { buildLogbookContext } from "./context.js";
+import { buildAskPrompt, buildStandupPrompt } from "./prompts.js";
 import { dayKeyFor, LogbookStore } from "./store.js";
 import type { LogbookBatch, LogbookCard } from "./types.js";
 
@@ -97,6 +82,8 @@ type LogbookStatus = {
 
 export class LogbookService {
   private store: LogbookStore | null = null;
+  private lifetime = new AbortController();
+  private textInFlight = 0;
   private captureTimer: NodeJS.Timeout | null = null;
   private analysisTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
@@ -124,8 +111,11 @@ export class LogbookService {
   ) {}
 
   start(): void {
+    this.lifetime = new AbortController();
+    this.captureInFlight = false;
+    this.analysisInFlight = false;
     this.store = new LogbookStore(this.deps.dataDir);
-    // Batches interrupted by a gateway restart go back to pending.
+    // Interrupted stages retain durable progress and their retry budget.
     this.store.resetRunningBatches();
     this.captureTimer = setInterval(() => {
       void this.captureTick();
@@ -146,6 +136,7 @@ export class LogbookService {
   }
 
   stop(): void {
+    this.lifetime.abort();
     for (const timer of [this.captureTimer, this.analysisTimer, this.pruneTimer]) {
       if (timer) {
         clearInterval(timer);
@@ -278,8 +269,10 @@ export class LogbookService {
       return;
     }
     this.captureInFlight = true;
+    const lifetime = this.lifetime;
     try {
       const resolved = await this.resolveNode();
+      lifetime.signal.throwIfAborted();
       if ("reason" in resolved) {
         if (this.lastCaptureError !== resolved.reason) {
           this.deps.logger.warn(`logbook: ${resolved.reason}`);
@@ -300,6 +293,7 @@ export class LogbookService {
         },
         timeoutMs: 30_000,
       });
+      lifetime.signal.throwIfAborted();
       const raw = unwrapInvokePayload(invoked);
       if (raw?.error) {
         throw new Error(raw.error);
@@ -355,7 +349,9 @@ export class LogbookService {
         );
       }
     } finally {
-      this.captureInFlight = false;
+      if (this.lifetime === lifetime) {
+        this.captureInFlight = false;
+      }
     }
   }
 
@@ -407,8 +403,7 @@ export class LogbookService {
     if (!this.resolveVisionModel().ref) {
       return { started: false, reason: MODEL_MISSING_MESSAGE };
     }
-    // Explicit user action is the retry path for failed batches; automatic
-    // retries could loop model spend on a persistently failing batch.
+    // Explicit action renews an exhausted retry budget, preserving checkpoints.
     store.resetErrorBatches();
     if (!store.nextPendingBatch()) {
       // Force-close the current window so "analyze now" needs no elapsed time.
@@ -436,6 +431,7 @@ export class LogbookService {
       return;
     }
     this.analysisInFlight = true;
+    const lifetime = this.lifetime;
     try {
       this.enqueueElapsedWindow();
       for (let i = 0; i < 4; i += 1) {
@@ -444,11 +440,17 @@ export class LogbookService {
           return;
         }
         await this.runBatch(batch);
+        lifetime.signal.throwIfAborted();
       }
     } catch (err) {
+      if (lifetime.signal.aborted) {
+        return;
+      }
       this.deps.logger.error(`logbook: analysis tick failed: ${String(err)}`);
     } finally {
-      this.analysisInFlight = false;
+      if (this.lifetime === lifetime) {
+        this.analysisInFlight = false;
+      }
     }
   }
 
@@ -481,141 +483,20 @@ export class LogbookService {
   }
 
   private async runBatch(batch: LogbookBatch): Promise<void> {
-    const store = this.requireStore();
     const vision = this.resolveVisionModel();
     if (!vision.ref) {
-      // Stay pending: the analysis tick pauses until a model is configured.
       return;
     }
-    store.setBatchStatus(
-      batch.id,
-      "running",
-      undefined,
-      `${vision.ref.provider}/${vision.ref.model}`,
-    );
-    try {
-      const frames = store.batchFrames(batch.id);
-      const sampled = sampleFrames(frames, MAX_FRAMES_PER_CALL);
-      const images = sampled.map((frame) => ({
-        type: "image" as const,
-        buffer: readFileSync(frame.path),
-        fileName: path.basename(frame.path),
-        mime: "image/jpeg",
-      }));
-      const observationResult =
-        await this.deps.runtime.mediaUnderstanding.extractStructuredWithModel({
-          provider: vision.ref.provider,
-          model: vision.ref.model,
-          profile: vision.ref.profile,
-          preferredProfile: vision.ref.preferredProfile,
-          input: images,
-          instructions: buildObservationInstructions({
-            frameTimes: sampled.map((frame) => frame.capturedAtMs),
-            startMs: batch.startMs,
-            endMs: batch.endMs,
-          }),
-          schemaName: "logbook.observations",
-          jsonSchema: OBSERVATION_JSON_SCHEMA,
-          cfg: this.deps.fullConfig,
-          timeoutMs: 180_000,
-        });
-      const segments = parseObservationSegments({
-        raw: observationResult.text ?? "",
-        day: batch.day,
-        startMs: batch.startMs,
-        endMs: batch.endMs,
-      });
-      if (segments.length === 0) {
-        store.setBatchStatus(batch.id, "error", "vision model returned no usable segments");
-        return;
-      }
-      store.replaceObservations(batch.id, batch.day, segments);
-      await this.reviseCards(batch);
-      store.setBatchStatus(batch.id, "done");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      store.setBatchStatus(batch.id, "error", message);
-      this.deps.logger.warn(`logbook: batch ${batch.id} failed: ${message}`);
-    }
-  }
-
-  private async reviseCards(batch: LogbookBatch): Promise<void> {
-    const store = this.requireStore();
-    const lookbackStart = batch.startMs - CARD_LOOKBACK_MS;
-    const previousCards = store
-      .cardsForDay(batch.day)
-      .filter((card) => card.endMs > lookbackStart && card.startMs < batch.endMs);
-    const observations = store.observationsInRange(
-      batch.day,
-      Math.min(lookbackStart, batch.startMs),
-      batch.endMs,
-    );
-    const window = revisionWindow({
-      batchStartMs: batch.startMs,
-      batchEndMs: batch.endMs,
-      previousCards,
+    await runLogbookBatch({
+      batch,
+      store: this.requireStore(),
+      runtime: this.deps.runtime,
+      fullConfig: this.deps.fullConfig,
+      config: this.config,
+      logger: this.deps.logger,
+      vision: vision.ref,
+      signal: this.lifetime.signal,
     });
-    const prompt = buildCardsPrompt({
-      day: batch.day,
-      observations,
-      previousCards,
-      windowStartMs: window.startMs,
-      windowEndMs: window.endMs,
-    });
-    // Coverage is validated alongside parsing: a partial-but-valid output must
-    // trigger the repair round-trip instead of erasing previous cards below.
-    const requiredSpans = [
-      ...previousCards.map((card) => ({ startMs: card.startMs, endMs: card.endMs })),
-      { startMs: batch.startMs, endMs: batch.endMs },
-    ];
-    const evaluate = (raw: string) => {
-      const parsed = parseCardsJson({
-        raw,
-        day: batch.day,
-        windowStartMs: window.startMs,
-        windowEndMs: window.endMs,
-      });
-      if (!parsed.ok) {
-        return parsed;
-      }
-      const coverage = validateCardCoverage({
-        drafts: parsed.drafts,
-        requiredSpans,
-        windowStartMs: window.startMs,
-        windowEndMs: window.endMs,
-      });
-      return coverage.ok ? parsed : { ok: false as const, error: coverage.error };
-    };
-    const first = await this.deps.runtime.llm.complete({
-      model: this.config.textModel,
-      messages: [{ role: "user", content: prompt }],
-      purpose: "logbook.cards",
-      maxTokens: 4000,
-    });
-    let parsed = evaluate(first.text);
-    if (!parsed.ok) {
-      const retry = await this.deps.runtime.llm.complete({
-        model: this.config.textModel,
-        messages: [
-          { role: "user", content: prompt },
-          { role: "assistant", content: first.text },
-          { role: "user", content: buildCardsCorrectionPrompt(parsed.error) },
-        ],
-        purpose: "logbook.cards.repair",
-        maxTokens: 4000,
-      });
-      parsed = evaluate(retry.text);
-    }
-    if (!parsed.ok) {
-      throw new Error(`card synthesis failed validation: ${parsed.error}`);
-    }
-    const windowFrames = store
-      .framesInRange(window.startMs, window.endMs)
-      .map((frame) => ({ id: frame.id, capturedAtMs: frame.capturedAtMs }));
-    const drafts = parsed.drafts.map((draft) =>
-      Object.assign(draft, { keyframeId: pickKeyframeId(draft, windowFrames) }),
-    );
-    store.replaceCardsInWindow(batch.day, window.startMs, window.endMs, drafts);
   }
 
   // ── Q&A / standup ──────────────────────────────────────────────────
@@ -624,68 +505,109 @@ export class LogbookService {
     day: string,
     refresh: boolean,
   ): Promise<{ day: string; text: string; updatedMs: number }> {
-    const store = this.requireStore();
-    if (!refresh) {
-      const cached = store.getStandup(day);
-      if (cached) {
-        return cached;
+    this.textInFlight += 1;
+    const signal = this.lifetime.signal;
+    try {
+      const store = this.requireStore();
+      if (!refresh) {
+        const cached = store.getStandup(day);
+        if (cached) {
+          return cached;
+        }
       }
+      const previousDay = dayKeyFor(new Date(`${day}T12:00:00`).getTime() - 24 * 60 * 60 * 1000);
+      const cards = store.cardsForDay(day);
+      const previousDayCards = store.cardsForDay(previousDay);
+      const source = JSON.stringify([cards, previousDayCards]);
+      const result = await this.deps.runtime.llm.complete({
+        model: this.config.textModel,
+        signal,
+        messages: [
+          {
+            role: "user",
+            content: buildStandupPrompt({
+              day,
+              cards,
+              previousDayCards,
+            }),
+          },
+        ],
+        purpose: "logbook.standup",
+        maxTokens: 800,
+      });
+      signal.throwIfAborted();
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error("standup model returned no text");
+      }
+      if (source !== JSON.stringify([store.cardsForDay(day), store.cardsForDay(previousDay)])) {
+        throw new Error("timeline changed while generating the standup; generate it again");
+      }
+      store.saveStandup(day, text);
+      const saved = store.getStandup(day);
+      if (!saved) {
+        throw new Error("standup save failed");
+      }
+      return saved;
+    } finally {
+      this.textInFlight -= 1;
     }
-    const previousDay = dayKeyFor(new Date(`${day}T12:00:00`).getTime() - 24 * 60 * 60 * 1000);
-    const result = await this.deps.runtime.llm.complete({
-      model: this.config.textModel,
-      messages: [
-        {
-          role: "user",
-          content: buildStandupPrompt({
-            day,
-            cards: store.cardsForDay(day),
-            previousDayCards: store.cardsForDay(previousDay),
-          }),
-        },
-      ],
-      purpose: "logbook.standup",
-      maxTokens: 800,
-    });
-    const text = result.text.trim();
-    if (!text) {
-      throw new Error("standup model returned no text");
-    }
-    store.saveStandup(day, text);
-    const saved = store.getStandup(day);
-    if (!saved) {
-      throw new Error("standup save failed");
-    }
-    return saved;
   }
 
   async ask(day: string, question: string): Promise<string> {
-    const store = this.requireStore();
-    const observations = store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER).slice(-200);
-    const result = await this.deps.runtime.llm.complete({
-      model: this.config.textModel,
-      messages: [
-        {
-          role: "user",
-          content: buildAskPrompt({
-            day,
-            cards: store.cardsForDay(day),
-            observations,
-            question,
-          }),
-        },
-      ],
-      purpose: "logbook.ask",
-      maxTokens: 600,
-    });
-    const text = result.text.trim();
-    if (!text) {
-      throw new Error("question answering model returned no text");
+    this.textInFlight += 1;
+    const signal = this.lifetime.signal;
+    try {
+      const store = this.requireStore();
+      const observations = store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER).slice(-200);
+      const result = await this.deps.runtime.llm.complete({
+        model: this.config.textModel,
+        signal,
+        messages: [
+          {
+            role: "user",
+            content: buildAskPrompt({
+              day,
+              cards: store.cardsForDay(day),
+              observations,
+              question,
+            }),
+          },
+        ],
+        purpose: "logbook.ask",
+        maxTokens: 600,
+      });
+      signal.throwIfAborted();
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error("question answering model returned no text");
+      }
+      return text;
+    } finally {
+      this.textInFlight -= 1;
     }
-    return text;
   }
 
   // ── Introspection ──────────────────────────────────────────────────
+
+  context(params: { day: string; query?: string }, maxChars = 6000) {
+    const store = this.requireStore();
+    return buildLogbookContext(
+      {
+        ...params,
+        observations: store.observationsInRange(params.day, 0, Number.MAX_SAFE_INTEGER),
+        batches: store.batchesForDay(params.day),
+      },
+      maxChars,
+    );
+  }
+
+  deleteDay(day: string) {
+    if (this.analysisInFlight || this.captureInFlight || this.textInFlight > 0) {
+      throw new Error("Logbook is busy; wait for active capture or analysis before deleting a day");
+    }
+    return this.requireStore().deleteDay(day);
+  }
 
   cardsForDay(day: string): LogbookCard[] {
     return this.requireStore().cardsForDay(day);
@@ -747,7 +669,8 @@ export class LogbookService {
       return;
     }
     const cutoff = Date.now() - this.config.retentionDays * 24 * 60 * 60 * 1000;
-    const removed = this.store.pruneFrames(cutoff);
+    const unfinishedCutoff = Date.now() - Math.max(this.config.retentionDays, 7) * 86_400_000;
+    const removed = this.store.pruneFrames(cutoff, unfinishedCutoff);
     if (removed > 0) {
       this.deps.logger.info(
         `logbook: pruned ${removed} frames older than ${this.config.retentionDays}d`,

@@ -3,7 +3,13 @@
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { CARD_CATEGORIES } from "./prompts.js";
 import { dayKeyFor } from "./store.js";
-import type { LogbookCard, LogbookCardDraft, LogbookDistraction } from "./types.js";
+import type {
+  LogbookCard,
+  LogbookCardDraft,
+  LogbookDistraction,
+  LogbookObservationContext,
+  LogbookObservationSegment,
+} from "./types.js";
 
 /** Cards within this window before a batch are treated as a revisable draft. */
 export const CARD_LOOKBACK_MS = 45 * 60 * 1000;
@@ -12,7 +18,7 @@ const BATCH_MAX_GAP_MS = 2 * 60 * 1000;
 /** Upper bound of images sent to the vision model per batch. */
 export const MAX_FRAMES_PER_CALL = 16;
 
-type ParsedSegment = { startMs: number; endMs: number; text: string };
+type ParsedSegment = LogbookObservationSegment;
 
 /** Parses "HH:MM:SS" (or "H:MM", with optional am/pm) on a local day into epoch ms. */
 function clockToMs(day: string, clock: string): number | null {
@@ -86,6 +92,48 @@ export function parseObservationSegments(params: {
     parsed = JSON.parse(extractJsonPayload(params.raw));
   } catch {
     return [];
+  }
+  if (parsed && typeof parsed === "object" && "version" in parsed) {
+    // SAFETY: JSON is an object above; each retained field is checked below.
+    const record = parsed as Record<string, unknown>;
+    const boundedText = (value: unknown) =>
+      typeof value === "string" && value.length <= 160 ? value.trim() : undefined;
+    const target = boundedText(record.target);
+    const activity = boundedText(record.activity);
+    const result = boundedText(record.result);
+    const unresolved = boundedText(record.unresolved);
+    const uncertainty = boundedText(record.uncertainty);
+    if (
+      record.version !== 1 ||
+      target === undefined ||
+      !activity ||
+      result === undefined ||
+      unresolved === undefined ||
+      uncertainty === undefined
+    ) {
+      return [];
+    }
+    const context: LogbookObservationContext = {
+      version: 1,
+      target,
+      activity,
+      result,
+      unresolved,
+      uncertainty,
+    };
+    const fields = ["target", "activity", "result", "unresolved", "uncertainty"] as const;
+    // Sampling interval is host-owned; model clocks cannot fabricate coverage.
+    return [
+      {
+        startMs: params.startMs,
+        endMs: params.endMs,
+        text: fields
+          .filter((key) => context[key])
+          .map((key) => `${key}: ${context[key]}`)
+          .join("; "),
+        context,
+      },
+    ];
   }
   const list = Array.isArray(parsed)
     ? parsed

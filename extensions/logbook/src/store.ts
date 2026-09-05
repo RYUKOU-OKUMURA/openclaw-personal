@@ -11,186 +11,31 @@ import {
   openNodeSqliteDatabase,
   runSqliteImmediateTransactionSync,
 } from "openclaw/plugin-sdk/sqlite-runtime";
+import {
+  LOGBOOK_SCHEMA as SCHEMA,
+  toFrame,
+  toBatch,
+  toCard,
+  parseObservationContext,
+  type FrameRow,
+  type BatchRow,
+  type CardRow,
+} from "./store-schema.js";
 import type {
   LogbookBatch,
   LogbookBatchStatus,
   LogbookCard,
   LogbookCardDraft,
   LogbookDayStats,
-  LogbookDistraction,
   LogbookFrame,
   LogbookObservation,
+  LogbookObservationSegment,
 } from "./types.js";
 
 type Database = import("node:sqlite").DatabaseSync;
 
 const LOGBOOK_SCHEMA_VERSION = 1;
 const LOGBOOK_SQLITE_BUSY_TIMEOUT_MS = 5_000;
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS batches (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  day TEXT NOT NULL,
-  start_ms INTEGER NOT NULL,
-  end_ms INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'error')),
-  error TEXT,
-  frame_count INTEGER NOT NULL DEFAULT 0,
-  model TEXT,
-  created_ms INTEGER NOT NULL,
-  updated_ms INTEGER NOT NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_logbook_batches_day ON batches (day, start_ms);
-CREATE TABLE IF NOT EXISTS frames (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  captured_at_ms INTEGER NOT NULL,
-  day TEXT NOT NULL,
-  path TEXT NOT NULL,
-  screen_index INTEGER NOT NULL DEFAULT 0,
-  width INTEGER,
-  height INTEGER,
-  byte_size INTEGER NOT NULL DEFAULT 0,
-  content_hash TEXT NOT NULL,
-  idle INTEGER NOT NULL DEFAULT 0 CHECK (idle IN (0, 1)),
-  batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_logbook_frames_day ON frames (day, captured_at_ms);
-CREATE INDEX IF NOT EXISTS idx_logbook_frames_captured_at ON frames (captured_at_ms);
-CREATE INDEX IF NOT EXISTS idx_logbook_frames_unbatched ON frames (batch_id) WHERE batch_id IS NULL;
-CREATE INDEX IF NOT EXISTS idx_logbook_frames_batch ON frames (batch_id, captured_at_ms) WHERE batch_id IS NOT NULL;
-CREATE TABLE IF NOT EXISTS observations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
-  day TEXT NOT NULL,
-  start_ms INTEGER NOT NULL,
-  end_ms INTEGER NOT NULL,
-  text TEXT NOT NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_logbook_observations_day ON observations (day, start_ms);
-CREATE INDEX IF NOT EXISTS idx_logbook_observations_batch ON observations (batch_id);
-CREATE TABLE IF NOT EXISTS cards (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  day TEXT NOT NULL,
-  start_ms INTEGER NOT NULL,
-  end_ms INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  detail TEXT NOT NULL DEFAULT '',
-  category TEXT NOT NULL DEFAULT 'other',
-  app_primary TEXT,
-  app_secondary TEXT,
-  distractions TEXT NOT NULL DEFAULT '[]',
-  keyframe_id INTEGER REFERENCES frames(id) ON DELETE SET NULL,
-  updated_ms INTEGER NOT NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS idx_logbook_cards_day ON cards (day, start_ms);
-CREATE INDEX IF NOT EXISTS idx_logbook_cards_keyframe ON cards (keyframe_id) WHERE keyframe_id IS NOT NULL;
-CREATE TABLE IF NOT EXISTS standups (
-  day TEXT PRIMARY KEY,
-  text TEXT NOT NULL,
-  updated_ms INTEGER NOT NULL
-) STRICT;
-`;
-
-type FrameRow = {
-  id: number;
-  captured_at_ms: number;
-  day: string;
-  path: string;
-  screen_index: number;
-  width: number | null;
-  height: number | null;
-  byte_size: number;
-  idle: number;
-};
-
-type BatchRow = {
-  id: number;
-  day: string;
-  start_ms: number;
-  end_ms: number;
-  status: LogbookBatchStatus;
-  error: string | null;
-  frame_count: number;
-  model: string | null;
-};
-
-type CardRow = {
-  id: number;
-  day: string;
-  start_ms: number;
-  end_ms: number;
-  title: string;
-  summary: string;
-  detail: string;
-  category: string;
-  app_primary: string | null;
-  app_secondary: string | null;
-  distractions: string;
-  keyframe_id: number | null;
-};
-
-function toFrame(row: FrameRow): LogbookFrame {
-  return {
-    id: row.id,
-    capturedAtMs: row.captured_at_ms,
-    day: row.day,
-    path: row.path,
-    screenIndex: row.screen_index,
-    width: row.width ?? undefined,
-    height: row.height ?? undefined,
-    byteSize: row.byte_size,
-    idle: row.idle === 1,
-  };
-}
-
-function toBatch(row: BatchRow): LogbookBatch {
-  return {
-    id: row.id,
-    day: row.day,
-    startMs: row.start_ms,
-    endMs: row.end_ms,
-    status: row.status,
-    error: row.error ?? undefined,
-    frameCount: row.frame_count,
-    model: row.model ?? undefined,
-  };
-}
-
-function parseDistractions(raw: string): LogbookDistraction[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter(
-      (entry): entry is LogbookDistraction =>
-        entry !== null &&
-        typeof entry === "object" &&
-        typeof (entry as LogbookDistraction).title === "string" &&
-        typeof (entry as LogbookDistraction).startMs === "number" &&
-        typeof (entry as LogbookDistraction).endMs === "number",
-    );
-  } catch {
-    return [];
-  }
-}
-
-function toCard(row: CardRow): LogbookCard {
-  return {
-    id: row.id,
-    day: row.day,
-    startMs: row.start_ms,
-    endMs: row.end_ms,
-    title: row.title,
-    summary: row.summary,
-    detail: row.detail,
-    category: row.category,
-    appPrimary: row.app_primary ?? undefined,
-    appSecondary: row.app_secondary ?? undefined,
-    distractions: parseDistractions(row.distractions),
-    keyframeId: row.keyframe_id ?? undefined,
-  };
-}
 
 /** Formats an epoch-ms timestamp as a local-time YYYY-MM-DD day key. */
 export function dayKeyFor(ms: number): string {
@@ -239,6 +84,19 @@ export class LogbookStore {
       if (schemaVersion < LOGBOOK_SCHEMA_VERSION) {
         migrateSqliteSchemaToStrict(db, SCHEMA, { databaseLabel: dbPath });
         db.exec(`PRAGMA user_version = ${LOGBOOK_SCHEMA_VERSION};`);
+      }
+      // Bare nullable additions are understood by new readers and ignored by old writers.
+      for (const [table, columns] of [
+        ["batches", ["observation_cursor INTEGER", "attempts INTEGER", "retry_after_ms INTEGER"]],
+        ["observations", ["context_json TEXT"]],
+      ] as const) {
+        // SAFETY: SQLite table_info returns each column name as TEXT.
+        const existing = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        for (const column of columns) {
+          if (!existing.some((entry) => entry.name === column.split(" ")[0])) {
+            db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+          }
+        }
       }
     } catch (error) {
       walMaintenance?.close();
@@ -380,54 +238,106 @@ export class LogbookStore {
     );
   }
 
+  beginBatch(batchId: number, model?: string): void {
+    this.db
+      .prepare(`UPDATE batches SET status = 'running', error = NULL,
+      model = COALESCE(?, model), attempts = COALESCE(attempts, 0) + 1,
+      retry_after_ms = NULL, updated_ms = ? WHERE id = ?`)
+      .run(model ?? null, Date.now(), batchId);
+  }
+
   setBatchStatus(
     batchId: number,
     status: LogbookBatchStatus,
     error?: string,
     model?: string,
   ): void {
+    const now = Date.now();
     this.db
-      .prepare(
-        `UPDATE batches SET status = ?, error = ?, model = COALESCE(?, model), updated_ms = ? WHERE id = ?`,
-      )
-      .run(status, error ?? null, model ?? null, Date.now(), batchId);
+      .prepare(`UPDATE batches SET status = ?, error = ?, model = COALESCE(?, model),
+      retry_after_ms = CASE WHEN ? = 'error' THEN ? +
+        CASE WHEN COALESCE(attempts, 0) <= 1 THEN 60000 ELSE 300000 END ELSE NULL END,
+      updated_ms = ? WHERE id = ?`)
+      .run(status, error ?? null, model ?? null, status, now, now, batchId);
   }
 
   latestBatch(): LogbookBatch | null {
     const row = this.db
       .prepare(
-        `SELECT id, day, start_ms, end_ms, status, error, frame_count, model
+        `SELECT id, day, start_ms, end_ms, status, error, frame_count, model, observation_cursor, attempts, retry_after_ms
          FROM batches ORDER BY id DESC LIMIT 1`,
       )
       .get() as BatchRow | undefined;
     return row ? toBatch(row) : null;
   }
 
-  /** Requeues batches stuck in `running` after a crash so frames are not orphaned. */
+  /** Interrupted stages retain their attempt budget and enter the same retry schedule. */
   resetRunningBatches(): void {
-    this.db
-      .prepare(`UPDATE batches SET status = 'pending', updated_ms = ? WHERE status = 'running'`)
-      .run(Date.now());
+    // An older writer can replace observations without updating additive cursors.
+    for (const row of this.db
+      .prepare(`SELECT id, start_ms, observation_cursor FROM batches
+      WHERE observation_cursor IS NOT NULL AND status != 'done'`)
+      // SAFETY: Owned STRICT integer columns are selected with NULL cursors excluded.
+      .all() as Array<{ id: number; start_ms: number; observation_cursor: number }>) {
+      let cursor = row.start_ms;
+      const spans = this.db
+        .prepare(`SELECT start_ms, end_ms FROM observations
+        WHERE batch_id = ? ORDER BY start_ms`)
+        // SAFETY: Both selected times are NOT NULL INTEGER in the owned STRICT table.
+        .all(row.id) as Array<{ start_ms: number; end_ms: number }>;
+      for (const span of spans) {
+        if (span.start_ms > cursor) {
+          break;
+        }
+        cursor = Math.max(cursor, span.end_ms);
+      }
+      if (cursor < row.observation_cursor) {
+        this.db.prepare("UPDATE batches SET observation_cursor = NULL WHERE id = ?").run(row.id);
+      }
+    }
+    const rows = this.db
+      .prepare(`SELECT id FROM batches WHERE status = 'running'
+      OR (status = 'pending' AND attempts >= 3)`)
+      // SAFETY: batches.id is the owned STRICT INTEGER primary key.
+      .all() as Array<{
+      id: number;
+    }>;
+    for (const row of rows) {
+      this.setBatchStatus(row.id, "error", "analysis interrupted by restart");
+    }
   }
 
-  /** Requeues failed batches for an explicit user-driven retry (analyze now). */
+  /** Explicit retry renews the budget without discarding completed observations. */
   resetErrorBatches(): number {
     const result = this.db
-      .prepare(
-        `UPDATE batches SET status = 'pending', error = NULL, updated_ms = ? WHERE status = 'error'`,
-      )
+      .prepare(`UPDATE batches SET status = 'pending', error = NULL,
+      attempts = 0, retry_after_ms = NULL, updated_ms = ? WHERE status = 'error'`)
       .run(Date.now());
     return Number(result.changes);
   }
 
-  nextPendingBatch(): LogbookBatch | null {
+  nextPendingBatch(nowMs = Date.now()): LogbookBatch | null {
     const row = this.db
-      .prepare(
-        `SELECT id, day, start_ms, end_ms, status, error, frame_count, model
-         FROM batches WHERE status = 'pending' ORDER BY start_ms ASC LIMIT 1`,
-      )
-      .get() as BatchRow | undefined;
+      .prepare(`SELECT id, day, start_ms, end_ms, status, error, frame_count,
+      model, observation_cursor, attempts, retry_after_ms FROM batches
+      WHERE COALESCE(attempts, 0) < 3 AND (status = 'pending' OR
+        (status = 'error' AND COALESCE(retry_after_ms, 0) <= ?))
+      ORDER BY start_ms ASC LIMIT 1`)
+      .get(nowMs) as BatchRow | undefined;
     return row ? toBatch(row) : null;
+  }
+
+  batchesForDay(day: string): LogbookBatch[] {
+    return (
+      (
+        this.db
+          .prepare(`SELECT id, day, start_ms, end_ms, status, error, frame_count,
+      model, observation_cursor, attempts, retry_after_ms FROM batches
+      WHERE day = ? ORDER BY start_ms ASC`)
+          // SAFETY: This exact projection matches BatchRow and the owned STRICT batches schema.
+          .all(day) as BatchRow[]
+      ).map(toBatch)
+    );
   }
 
   batchFrames(batchId: number): LogbookFrame[] {
@@ -440,32 +350,54 @@ export class LogbookStore {
     return rows.map(toFrame);
   }
 
-  /**
-   * Replaces a batch's observations atomically. Batch retries (analyze now
-   * after an error) rerun the vision stage, so appending would duplicate
-   * evidence into card synthesis, standups, and ask answers.
-   */
-  replaceObservations(
-    batchId: number,
-    day: string,
-    segments: Array<{ startMs: number; endMs: number; text: string }>,
+  /** Commit completed vision evidence and its resume boundary together. */
+  checkpointObservations(
+    batch: LogbookBatch,
+    endMs: number,
+    segments: LogbookObservationSegment[],
   ): void {
-    const deleteBatch = this.db.prepare(`DELETE FROM observations WHERE batch_id = ?`);
-    const insert = this.db.prepare(
-      `INSERT INTO observations (batch_id, day, start_ms, end_ms, text) VALUES (?, ?, ?, ?, ?)`,
-    );
     runSqliteImmediateTransactionSync(
       this.db,
       () => {
-        deleteBatch.run(batchId);
-        for (const segment of segments) {
-          insert.run(batchId, day, segment.startMs, segment.endMs, segment.text);
+        const current = this.db
+          .prepare(`SELECT COALESCE(observation_cursor, start_ms) AS cursor,
+        end_ms FROM batches WHERE id = ?`)
+          // SAFETY: COALESCE uses NOT NULL start_ms; both selected times are STRICT INTEGER.
+          .get(batch.id) as { cursor: number; end_ms: number } | undefined;
+        if (
+          !current ||
+          endMs <= current.cursor ||
+          endMs > current.end_ms ||
+          segments.length === 0 ||
+          segments.some((segment) => segment.startMs < current.cursor || segment.endMs > endMs)
+        ) {
+          throw new Error("invalid or stale Logbook observation checkpoint");
         }
+        this.db
+          .prepare(`DELETE FROM observations WHERE batch_id = ? AND
+          end_ms > ? AND start_ms < ?`)
+          .run(batch.id, current.cursor, endMs);
+        const insert = this.db.prepare(`INSERT INTO observations
+        (batch_id, day, start_ms, end_ms, text, context_json) VALUES (?, ?, ?, ?, ?, ?)`);
+        for (const segment of segments) {
+          insert.run(
+            batch.id,
+            batch.day,
+            segment.startMs,
+            segment.endMs,
+            segment.text,
+            segment.context ? JSON.stringify(segment.context) : null,
+          );
+        }
+        this.db
+          .prepare(`UPDATE batches SET observation_cursor = ?, attempts = 0,
+        retry_after_ms = NULL, updated_ms = ? WHERE id = ?`)
+          .run(endMs, Date.now(), batch.id);
       },
       {
         busyTimeoutMs: LOGBOOK_SQLITE_BUSY_TIMEOUT_MS,
         databaseLabel: "logbook",
-        operationLabel: "logbook.observations.replace",
+        operationLabel: "logbook.observations.checkpoint",
       },
     );
   }
@@ -473,7 +405,7 @@ export class LogbookStore {
   observationsInRange(day: string, startMs: number, endMs: number): LogbookObservation[] {
     const rows = this.db
       .prepare(
-        `SELECT id, batch_id, day, start_ms, end_ms, text FROM observations
+        `SELECT id, batch_id, day, start_ms, end_ms, text, context_json FROM observations
          WHERE day = ? AND end_ms > ? AND start_ms < ? ORDER BY start_ms ASC`,
       )
       .all(day, startMs, endMs) as Array<{
@@ -483,6 +415,7 @@ export class LogbookStore {
       start_ms: number;
       end_ms: number;
       text: string;
+      context_json: string | null;
     }>;
     return rows.map((row) => ({
       id: row.id,
@@ -491,6 +424,7 @@ export class LogbookStore {
       startMs: row.start_ms,
       endMs: row.end_ms,
       text: row.text,
+      context: parseObservationContext(row.context_json),
     }));
   }
 
@@ -537,6 +471,7 @@ export class LogbookStore {
       this.db,
       () => {
         deleteWindow.run(day, startMs, endMs);
+        this.invalidateStandups(day);
         for (const draft of drafts) {
           insert.run(
             draft.day,
@@ -621,15 +556,68 @@ export class LogbookStore {
       .run(day, text, Date.now());
   }
 
-  /** Deletes frame rows and files older than the retention window. */
-  pruneFrames(olderThanMs: number): number {
-    const selectExpired = this.db.prepare(
-      `SELECT id, path, day FROM frames WHERE captured_at_ms < ?`,
+  private invalidateStandups(day: string): number {
+    // The next day's standup also quotes this day's cards.
+    return Number(
+      this.db
+        .prepare(`DELETE FROM standups
+      WHERE day = ? OR day = date(?, '+1 day')`)
+        .run(day, day).changes,
     );
-    const rows = selectExpired.all(olderThanMs) as Array<{
+  }
+
+  /** Explicit operator deletion includes both captured evidence and all derived day data. */
+  deleteDay(day: string): {
+    frames: number;
+    batches: number;
+    observations: number;
+    cards: number;
+    standups: number;
+  } {
+    // SAFETY: frames.path is NOT NULL TEXT in the owned STRICT frames table.
+    const files = this.db.prepare("SELECT path FROM frames WHERE day = ?").all(day) as Array<{
+      path: string;
+    }>;
+    // Metadata remains the retry manifest if a later unlink or the transaction fails.
+    // force tolerates files removed by an earlier attempt, including after reopen.
+    for (const file of files) {
+      rmSync(file.path, { force: true });
+    }
+    return runSqliteImmediateTransactionSync(
+      this.db,
+      () => {
+        const counts = { frames: 0, batches: 0, observations: 0, cards: 0, standups: 0 };
+        for (const table of ["cards", "observations", "frames", "batches"] as const) {
+          counts[table] = Number(
+            this.db.prepare(`DELETE FROM ${table} WHERE day = ?`).run(day).changes,
+          );
+        }
+        counts.standups = this.invalidateStandups(day);
+        return counts;
+      },
+      {
+        busyTimeoutMs: LOGBOOK_SQLITE_BUSY_TIMEOUT_MS,
+        databaseLabel: "logbook",
+        operationLabel: "logbook.day.delete",
+      },
+    );
+  }
+
+  /** Deletes frame rows and files older than the retention window. */
+  pruneFrames(olderThanMs: number, olderUnfinishedThanMs = olderThanMs): number {
+    const selectExpired = this.db.prepare(
+      `SELECT id, path, day, captured_at_ms, batch_id, idle FROM frames WHERE captured_at_ms < ? AND
+       (captured_at_ms < ? OR idle = 1 OR EXISTS (
+         SELECT 1 FROM batches WHERE batches.id = frames.batch_id
+         AND (status = 'done' OR observation_cursor >= end_ms)))`,
+    );
+    const rows = selectExpired.all(olderThanMs, olderUnfinishedThanMs) as Array<{
       id: number;
       path: string;
       day: string;
+      captured_at_ms: number;
+      batch_id: number | null;
+      idle: number;
     }>;
     if (rows.length === 0) {
       return 0;
@@ -647,6 +635,8 @@ export class LogbookStore {
       this.db,
       () => {
         let count = 0;
+        const unavailable = new Map<string, { start: number; end: number; count: number }>();
+        const affected = new Set<number>();
         for (const row of rows) {
           const current = selectCurrent.get(row.id) as { path: string } | undefined;
           if (!current) {
@@ -658,6 +648,35 @@ export class LogbookStore {
           // keyframe_id uses ON DELETE SET NULL, so the same commit cannot
           // leave surviving cards pointed at removed frame rows.
           count += Number(deleteById.run(row.id).changes);
+          if (row.batch_id !== null) {
+            affected.add(row.batch_id);
+          } else if (row.idle === 0) {
+            const span = unavailable.get(row.day) ?? {
+              start: row.captured_at_ms,
+              end: row.captured_at_ms + 1,
+              count: 0,
+            };
+            span.start = Math.min(span.start, row.captured_at_ms);
+            span.end = Math.max(span.end, row.captured_at_ms + 1);
+            span.count += 1;
+            unavailable.set(row.day, span);
+          }
+        }
+        const now = Date.now();
+        const reason =
+          "source frames expired before analysis completed; captured interval is unavailable";
+        for (const [day, span] of unavailable) {
+          this.db
+            .prepare(`INSERT INTO batches(day,start_ms,end_ms,status,error,frame_count,
+            created_ms,updated_ms,attempts) VALUES (?,?,?,'error',?,?,?,?,3)`)
+            .run(day, span.start, span.end, reason, span.count, now, now);
+        }
+        for (const id of affected) {
+          this.db
+            .prepare(`UPDATE batches SET status='error',error=?,attempts=3,
+            retry_after_ms=NULL,updated_ms=? WHERE id=? AND status!='done'
+            AND COALESCE(observation_cursor,start_ms)<end_ms`)
+            .run(reason, now, id);
         }
         return count;
       },

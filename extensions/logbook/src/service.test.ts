@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveLogbookConfig } from "./config.js";
 import { LogbookService } from "./service.js";
+import { LogbookStore } from "./store.js";
 
 type NodeRecord = { nodeId: string; displayName?: string; commands: string[] };
 
@@ -408,6 +409,45 @@ describe("LogbookService text model routing", () => {
 });
 
 describe("LogbookService text completion validation", () => {
+  it("does not restore a stale standup after its source timeline changes", async () => {
+    const fixture = makeService({
+      nodes: [],
+      invoke: async () => framePayload,
+      complete: async () => {
+        const writer = new LogbookStore(fixture.dataDir);
+        try {
+          writer.replaceCardsInWindow("2026-08-01", 1, 1000, [
+            {
+              day: "2026-08-01",
+              startMs: 1,
+              endMs: 1000,
+              title: "Updated",
+              summary: "New evidence",
+              detail: "",
+              category: "other",
+              distractions: [],
+            },
+          ]);
+        } finally {
+          writer.close();
+        }
+        return { text: "Old evidence summary" };
+      },
+    });
+    try {
+      await expect(fixture.service.standup("2026-08-01", true)).rejects.toThrow("timeline changed");
+      const reader = new LogbookStore(fixture.dataDir);
+      try {
+        expect(reader.getStandup("2026-08-01")).toBeNull();
+      } finally {
+        reader.close();
+      }
+    } finally {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(["", " \n\t "])("preserves the saved standup when a refresh returns %j", async (text) => {
     const complete = vi
       .fn<(request: { model?: string; purpose?: string }) => Promise<{ text: string }>>()
@@ -443,6 +483,56 @@ describe("LogbookService text completion validation", () => {
     } finally {
       service.stop();
       rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("LogbookService bounded observation dispatch", () => {
+  it("dispatches no more than four screenshots per vision request", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T10:00:00"));
+    let frame = 0;
+    const extractStructured = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        version: 1,
+        target: "Editor",
+        activity: "Editing",
+        result: "",
+        unresolved: "",
+        uncertainty: "",
+      }),
+    });
+    const fixture = makeService({
+      nodes: [{ nodeId: "capture-node", commands: ["screen.snapshot"] }],
+      invoke: async () => ({
+        payload: { format: "jpeg", base64: Buffer.from(`frame-${frame++}`).toString("base64") },
+      }),
+      config: { visionModel: "ollama/local-vision-model" },
+      extractStructured,
+      complete: async () => ({
+        text: JSON.stringify([
+          {
+            startTime: "10:00:00",
+            endTime: "10:03:30",
+            title: "Editing",
+            summary: "Editing a file",
+          },
+        ]),
+      }),
+    });
+    try {
+      for (let i = 0; i < 8; i += 1) {
+        vi.setSystemTime(new Date("2026-08-01T10:00:00").getTime() + i * 30_000);
+        await fixture.tick();
+      }
+      await fixture.service.analyzeNow();
+      await vi.waitFor(() => expect(fixture.service.status().analysisRunning).toBe(false));
+      expect(extractStructured.mock.calls.map(([request]) => request.input.length)).toEqual([4, 4]);
+      expect(fixture.service.status().lastBatch?.status).toBe("done");
+    } finally {
+      fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+      vi.useRealTimers();
     }
   });
 });
