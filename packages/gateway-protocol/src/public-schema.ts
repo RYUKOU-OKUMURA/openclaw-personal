@@ -3,7 +3,6 @@ export * from "./schema/sessions-goal.js";
 export * from "./public-schema-push.js";
 export * from "./public-schema-users.js";
 export * from "./schema/sandbox.js";
-export { FsPickFileParamsSchema, FsPickFileResultSchema } from "./schema/fs.js";
 export {
   isCloudWorkerPlacementState,
   ConnectParamsSchema,
@@ -677,6 +676,6 @@ export {
   FsDirEntrySchema,
   FsListDirParamsSchema,
   FsListDirResultSchema,
-  FsPickDirectoryParamsSchema,
-  FsPickDirectoryResultSchema,
+  FsPickPathParamsSchema,
+  FsPickPathResultSchema,
 } from "./schema-modules.js";

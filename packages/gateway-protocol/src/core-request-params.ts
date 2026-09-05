@@ -2,7 +2,7 @@ import type { Static } from "typebox";
 import type * as AgentSchema from "./schema/agent.js";
 import type * as BoardSchema from "./schema/board.js";
 import type { CommandsListParams } from "./schema/commands.js";
-import type { FsPickDirectoryParams, FsPickFileParams } from "./schema/fs.js";
+import type { FsPickPathParams } from "./schema/fs.js";
 import type { LogsTailParams } from "./schema/logs-chat.js";
 import type { PortalCloseParams, PortalListParams, PortalOpenParams } from "./schema/portals.js";
 import type * as GitHubSchema from "./schema/session-github-publication.js";
@@ -26,8 +26,7 @@ export type GatewayCoreRequestParams = {
   "conversations.turn": AgentSchema.ConversationTurnParams;
   "conversations.turn.cancel": AgentSchema.ConversationTurnCancelParams;
   "logs.tail": LogsTailParams;
-  "fs.pickDirectory": FsPickDirectoryParams;
-  "fs.pickFile": FsPickFileParams;
+  "fs.pickPath": FsPickPathParams;
   "portal.close": PortalCloseParams;
   "portal.list": PortalListParams;
   "portal.open": PortalOpenParams;

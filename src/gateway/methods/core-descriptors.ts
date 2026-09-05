@@ -172,8 +172,7 @@ const CORE_GATEWAY_METHOD_SPECS = [
   // Params-aware: Gateway paths start at write scope and are containment-checked
   // by the handler; node browsing remains admin-only.
   ["fs.listDir", "fs", "dynamic", "<=2026.7"],
-  ["fs.pickDirectory", "fs", "operator.admin", "2026.8"],
-  ["fs.pickFile", "fs", "operator.admin", "2026.8"],
+  ["fs.pickPath", "fs", "operator.admin", "2026.9"],
   ["worktrees.create", "worktrees", "operator.write", "2026.7", { controlPlaneWrite: true }],
   ["worktrees.remove", "worktrees", "operator.admin", "2026.7", { controlPlaneWrite: true }],
   ["worktrees.restore", "worktrees", "operator.admin", "2026.7", { controlPlaneWrite: true }],

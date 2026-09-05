@@ -12,7 +12,7 @@ vi.mock("../process/exec.js", () => ({
   runCommandWithTimeout: runCommandWithTimeoutMock,
 }));
 
-import { pickHostDirectory, pickHostFile } from "./host-directory-picker.js";
+import { pickHostPath } from "./host-directory-picker.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -36,7 +36,7 @@ function commandResult(
   };
 }
 
-describe("pickHostDirectory", () => {
+describe("pickHostPath", () => {
   beforeEach(() => {
     runCommandWithTimeoutMock.mockReset();
   });
@@ -47,19 +47,23 @@ describe("pickHostDirectory", () => {
     const selectedPath = path.join(root, "selected");
     await fs.mkdir(initialPath);
     await fs.mkdir(selectedPath);
-    runCommandWithTimeoutMock.mockResolvedValue(commandResult({ stdout: `${selectedPath}\n` }));
+    runCommandWithTimeoutMock.mockResolvedValue(
+      commandResult({ stdout: JSON.stringify(selectedPath) }),
+    );
 
-    await expect(pickHostDirectory({ path: initialPath })).resolves.toEqual({ path: selectedPath });
+    await expect(pickHostPath({ path: initialPath })).resolves.toEqual({
+      path: selectedPath,
+      kind: "directory",
+    });
 
     const [argv, options] = runCommandWithTimeoutMock.mock.calls[0] as [
       string[],
       Record<string, unknown>,
     ];
     expect(argv[0]).toBe("/usr/bin/osascript");
-    expect(argv[1]).toBe("-e");
-    expect(argv[2]).toContain("choose folder");
-    expect(argv[2]).not.toContain(initialPath);
-    expect(argv[3]).toBe(initialPath);
+    expect(argv.slice(0, 4)).toEqual(["/usr/bin/osascript", "-l", "JavaScript", "-e"]);
+    expect(argv[4]).not.toContain(initialPath);
+    expect(argv[5]).toBe(initialPath);
     expect(options).toMatchObject({
       timeoutMs: 120_000,
       killProcessTree: true,
@@ -67,45 +71,41 @@ describe("pickHostDirectory", () => {
     });
   });
 
-  it("passes a file picker script and verifies the selected file", async () => {
+  it.each([
+    "selected.png",
+    "other.custom-extension",
+    "no-extension",
+    '日本語 "資料" (-128)\nfile ',
+  ])("classifies regular file %s without extension filtering", async (name) => {
     const root = tempDirs.make("openclaw-native-picker-");
-    const initialPath = path.join(root, 'folder "with quotes" 日本語 ');
-    const selectedPath = path.join(root, "selected (-128) file ");
-    await fs.mkdir(initialPath);
+    const selectedPath = path.join(root, name);
     await fs.writeFile(selectedPath, "selected");
-    runCommandWithTimeoutMock.mockResolvedValue(commandResult({ stdout: `${selectedPath}\n` }));
-
-    await expect(pickHostFile({ path: initialPath })).resolves.toEqual({ path: selectedPath });
-
-    const [argv] = runCommandWithTimeoutMock.mock.calls[0] as [string[]];
-    expect(argv[2]).toContain("choose file");
-    expect(argv[2]).not.toContain(initialPath);
-    expect(argv[3]).toBe(initialPath);
+    runCommandWithTimeoutMock.mockResolvedValue(
+      commandResult({ stdout: JSON.stringify(selectedPath) }),
+    );
+    await expect(pickHostPath({ path: root })).resolves.toEqual({
+      path: selectedPath,
+      kind: "file",
+    });
   });
 
   it("keeps spaces and the literal cancel marker in a successful selected path", async () => {
     const root = tempDirs.make("openclaw-native-picker-");
     const selectedPath = path.join(root, "folder (-128) with trailing space ");
     await fs.mkdir(selectedPath);
-    runCommandWithTimeoutMock.mockResolvedValue(commandResult({ stdout: `${selectedPath}\n` }));
-
-    await expect(pickHostDirectory({ path: root })).resolves.toEqual({ path: selectedPath });
-  });
-
-  it("maps AppleScript user cancellation to the protocol cancellation result", async () => {
     runCommandWithTimeoutMock.mockResolvedValue(
-      commandResult({ code: 1, stderr: "execution error: User canceled. (-128)" }),
+      commandResult({ stdout: JSON.stringify(selectedPath) }),
     );
 
-    await expect(pickHostDirectory({ path: "/tmp" })).resolves.toEqual({ cancelled: true });
+    await expect(pickHostPath({ path: root })).resolves.toEqual({
+      path: selectedPath,
+      kind: "directory",
+    });
   });
 
-  it("maps file picker cancellation to the protocol cancellation result", async () => {
-    runCommandWithTimeoutMock.mockResolvedValue(
-      commandResult({ code: 1, stderr: "execution error: User canceled. (-128)" }),
-    );
-
-    await expect(pickHostFile({ path: "/tmp" })).resolves.toEqual({ cancelled: true });
+  it("maps panel cancellation to the protocol cancellation result", async () => {
+    runCommandWithTimeoutMock.mockResolvedValue(commandResult({ stdout: "null\n" }));
+    await expect(pickHostPath({ path: "/tmp" })).resolves.toEqual({ cancelled: true });
   });
 
   it.each([
@@ -120,16 +120,12 @@ describe("pickHostDirectory", () => {
       commandResult({ code: 1, stderr: 'execution error: Cannot open "folder (-128)". (42)' }),
       "failed",
     ],
-    ["file picker directory output", commandResult({ stdout: "/tmp\n" }), "non-file"],
-    ["relative output", commandResult({ stdout: "relative/path\n" }), "non-absolute"],
-  ] as const)("reports a visible %s", async (name, result, message) => {
+    ["malformed output", commandResult({ stdout: "not JSON" }), "JSON"],
+    ["relative output", commandResult({ stdout: JSON.stringify("relative/path") }), "non-absolute"],
+  ] as const)("reports a visible %s", async (_name, result, message) => {
     runCommandWithTimeoutMock.mockResolvedValue(result);
 
-    await expect(
-      name === "file picker directory output"
-        ? pickHostFile({ path: "/tmp" })
-        : pickHostDirectory({ path: "/tmp" }),
-    ).rejects.toThrow(message);
+    await expect(pickHostPath({ path: "/tmp" })).rejects.toThrow(message);
   });
 
   it("releases the single-flight guard after a failure", async () => {
@@ -138,10 +134,13 @@ describe("pickHostDirectory", () => {
     await fs.mkdir(selectedPath);
     runCommandWithTimeoutMock
       .mockResolvedValueOnce(commandResult({ code: 1, stderr: "failed (42)" }))
-      .mockResolvedValueOnce(commandResult({ stdout: `${selectedPath}\n` }));
+      .mockResolvedValueOnce(commandResult({ stdout: JSON.stringify(selectedPath) }));
 
-    await expect(pickHostDirectory({ path: root })).rejects.toThrow("failed");
-    await expect(pickHostDirectory({ path: root })).resolves.toEqual({ path: selectedPath });
+    await expect(pickHostPath({ path: root })).rejects.toThrow("failed");
+    await expect(pickHostPath({ path: root })).resolves.toEqual({
+      path: selectedPath,
+      kind: "directory",
+    });
     expect(runCommandWithTimeoutMock).toHaveBeenCalledTimes(2);
   });
 
@@ -157,12 +156,12 @@ describe("pickHostDirectory", () => {
         }),
     );
 
-    const first = pickHostDirectory({ path: root });
+    const first = pickHostPath({ path: root });
     await vi.waitFor(() => expect(runCommandWithTimeoutMock).toHaveBeenCalledOnce());
-    await expect(pickHostFile({ path: root })).rejects.toThrow("already open");
+    await expect(pickHostPath({ path: root })).rejects.toThrow("already open");
 
-    resolveCommand?.(commandResult({ stdout: `${selectedPath}\n` }));
-    await expect(first).resolves.toEqual({ path: selectedPath });
+    resolveCommand?.(commandResult({ stdout: JSON.stringify(selectedPath) }));
+    await expect(first).resolves.toEqual({ path: selectedPath, kind: "directory" });
     expect(runCommandWithTimeoutMock).toHaveBeenCalledOnce();
   });
 });

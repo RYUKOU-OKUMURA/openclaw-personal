@@ -32,29 +32,20 @@ export const FsListDirResultSchema = closedObject({
   /** Selected host's home directory, for the picker's "home" shortcut. */
   home: NonEmptyString,
   entries: Type.Array(FsDirEntrySchema),
-  /** Native Finder folder selection is available to this local macOS listing caller. */
-  nativeDirectoryPicker: Type.Optional(Type.Literal(true)),
-  /** Native Finder file selection is available to this local macOS listing caller. */
-  nativeFilePicker: Type.Optional(Type.Literal(true)),
+  /** Native Finder file-or-folder selection is available to this local macOS listing caller. */
+  nativePathPicker: Type.Optional(Type.Literal(true)),
 });
 
-export const FsPickDirectoryParamsSchema = closedObject({
+export const FsPickPathParamsSchema = closedObject({
   /** Absolute directory to show initially in the native Finder chooser. */
   path: Type.Optional(NonEmptyString),
 });
 
-export const FsPickDirectoryResultSchema = Type.Union([
-  closedObject({ path: NonEmptyString }),
-  closedObject({ cancelled: Type.Literal(true) }),
-]);
-
-export const FsPickFileParamsSchema = closedObject({
-  /** Absolute directory to show initially in the native Finder chooser. */
-  path: Type.Optional(NonEmptyString),
-});
-
-export const FsPickFileResultSchema = Type.Union([
-  closedObject({ path: NonEmptyString }),
+export const FsPickPathResultSchema = Type.Union([
+  closedObject({
+    path: NonEmptyString,
+    kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
+  }),
   closedObject({ cancelled: Type.Literal(true) }),
 ]);
 
@@ -63,7 +54,5 @@ export const FsPickFileResultSchema = Type.Union([
 export type FsDirEntry = Static<typeof FsDirEntrySchema>;
 export type FsListDirParams = Static<typeof FsListDirParamsSchema>;
 export type FsListDirResult = Static<typeof FsListDirResultSchema>;
-export type FsPickDirectoryParams = Static<typeof FsPickDirectoryParamsSchema>;
-export type FsPickDirectoryResult = Static<typeof FsPickDirectoryResultSchema>;
-export type FsPickFileParams = Static<typeof FsPickFileParamsSchema>;
-export type FsPickFileResult = Static<typeof FsPickFileResultSchema>;
+export type FsPickPathParams = Static<typeof FsPickPathParamsSchema>;
+export type FsPickPathResult = Static<typeof FsPickPathResultSchema>;

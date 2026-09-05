@@ -168,8 +168,7 @@ function accessMapScenario(
       ...defaultControlUiFeatureMethods,
       "agents.list",
       "fs.listDir",
-      "fs.pickDirectory",
-      "fs.pickFile",
+      "fs.pickPath",
       "sandbox.entries.add",
       "sandbox.explain",
       "sandbox.recreate",
@@ -468,26 +467,26 @@ suite.define(() => {
 
   it.each([
     {
-      kind: "folder",
-      method: "fs.pickDirectory",
-      capability: "nativeDirectoryPicker",
-      buttonName: "Choose folder in Finder",
+      kind: "directory",
+      method: "fs.pickPath",
+      capability: "nativePathPicker",
+      buttonName: "Choose file or folder in Finder",
       selectedPath: PICKER_FOLDER,
       selectedName: "fixtures",
       scope: "This folder and its contents",
     },
     {
-      kind: "image file",
-      method: "fs.pickFile",
-      capability: "nativeFilePicker",
-      buttonName: "Choose file or image in Finder",
+      kind: "file",
+      method: "fs.pickPath",
+      capability: "nativePathPicker",
+      buttonName: "Choose file or folder in Finder",
       selectedPath: `${PICKER_ROOT}/日本語 '画像' (-128).png`,
       selectedName: "日本語 '画像' (-128).png",
       scope: "This file only",
     },
   ])(
     "keeps native $kind selection separate from adding, including cancellation and errors",
-    async ({ method, capability, buttonName, selectedPath, selectedName, scope }) => {
+    async ({ kind, method, capability, buttonName, selectedPath, selectedName, scope }) => {
       await suite.withPage(
         { locale: "en-US", serviceWorkers: "block", viewport: { width: 1280, height: 900 } },
         async ({ page }) => {
@@ -500,6 +499,8 @@ suite.define(() => {
           await root.getByRole("button", { name: "Add from PC", exact: true }).click();
           const mapPicker = picker(page);
           const nativeButton = mapPicker.getByRole("button", { name: buttonName });
+          await nativeButton.waitFor();
+          expect(await mapPicker.getByRole("button", { name: /in Finder/ }).count()).toBe(1);
           await nativeButton.click();
           const request = await gateway.waitForRequest(method);
           expect(requestParams(request)).toEqual({ path: PICKER_ROOT });
@@ -522,12 +523,12 @@ suite.define(() => {
           await nativeButton.click();
           await gateway.waitForRequest(method, { after: 2 });
           await mapPicker.getByRole("button", { name: "Close", exact: true }).click();
-          await gateway.resolveDeferred(method, { path: selectedPath });
+          await gateway.resolveDeferred(method, { path: selectedPath, kind });
           await root.getByRole("button", { name: "Add from PC", exact: true }).click();
           await expectDisabled(nativeButton, false);
           expect(await drawer(page).count()).toBe(0);
 
-          await gateway.setMethodResponse(method, { path: selectedPath });
+          await gateway.setMethodResponse(method, { path: selectedPath, kind });
           await nativeButton.click();
           const mapDrawer = drawer(page);
           await mapDrawer.waitFor();
@@ -556,11 +557,9 @@ suite.define(() => {
           methodResponses: {
             "fs.listDir": {
               ...PICKER_LISTING,
-              nativeDirectoryPicker: true,
-              nativeFilePicker: true,
+              nativePathPicker: true,
             },
-            "fs.pickDirectory": { path: PICKER_FOLDER },
-            "fs.pickFile": { path: PICKER_FILE },
+            "fs.pickPath": { path: PICKER_FOLDER, kind: "directory" },
           },
         });
         const shares = [
@@ -576,10 +575,14 @@ suite.define(() => {
           await root.getByRole("button", { name: "Add from PC", exact: true }).click();
           const mapPicker = picker(page);
           await mapPicker.waitFor();
-          if (share.filePath === PICKER_FOLDER) {
-            await mapPicker.getByRole("button", { name: "Choose folder in Finder" }).click();
-          } else if ("nativeFile" in share && share.nativeFile) {
-            await mapPicker.getByRole("button", { name: "Choose file or image in Finder" }).click();
+          await gateway.setMethodResponse("fs.pickPath", {
+            path: share.filePath,
+            kind: share.filePath === PICKER_FOLDER ? "directory" : "file",
+          });
+          if (share.filePath === PICKER_FOLDER || ("nativeFile" in share && share.nativeFile)) {
+            await mapPicker
+              .getByRole("button", { name: "Choose file or folder in Finder" })
+              .click();
           } else {
             await mapPicker.locator(".access-map-picker__entry", { hasText: "draft.md" }).click();
           }
@@ -679,8 +682,7 @@ suite.define(() => {
         expect(await gateway.getRequests("sandbox.entries.add")).toHaveLength(0);
         expect(await gateway.getRequests("sandbox.recreate")).toHaveLength(0);
         expect(await gateway.getRequests("fs.listDir")).toHaveLength(0);
-        expect(await gateway.getRequests("fs.pickDirectory")).toHaveLength(0);
-        expect(await gateway.getRequests("fs.pickFile")).toHaveLength(0);
+        expect(await gateway.getRequests("fs.pickPath")).toHaveLength(0);
       },
     );
   });

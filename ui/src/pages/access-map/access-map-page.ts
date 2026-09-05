@@ -168,14 +168,14 @@ class AccessMapPage extends OpenClawLightDomElement {
     };
   }
 
-  private async pickNativePath(kind: "file" | "directory") {
+  private async pickNativePath() {
     const scope = this.gateway.capture();
     const listing = this.listing;
     if (
       !scope ||
       !this.pickerOpen ||
       !listing ||
-      !(kind === "directory" ? listing.nativeDirectoryPicker : listing.nativeFilePicker) ||
+      !listing.nativePathPicker ||
       !this.canManageFiles ||
       this.pickerLoading ||
       this.busy
@@ -188,10 +188,10 @@ class AccessMapPage extends OpenClawLightDomElement {
     const current = () =>
       this.gateway.isCurrent(scope) && this.pickerOpen && version === this.pickerVersion;
     try {
-      const selected = await pickHostPath(scope.client, listing.path, kind);
+      const selected = await pickHostPath(scope.client, listing.path);
       if (current() && this.canManageFiles && "path" in selected) {
         this.pickerLoading = false;
-        this.selectPath(selected.path, kind);
+        this.selectPath(selected.path, selected.kind);
       }
     } catch (error) {
       if (current()) {
@@ -498,7 +498,7 @@ class AccessMapPage extends OpenClawLightDomElement {
             this.pickerPath = value;
           },
           onBrowse: (path) => void this.browse(path),
-          onNativeSelect: (kind) => void this.pickNativePath(kind),
+          onNativeSelect: () => void this.pickNativePath(),
           onSelect: (path, kind) => this.selectPath(path, kind),
           onUpload: () => {
             this.pickerOpen = false;
