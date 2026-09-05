@@ -41,33 +41,40 @@ describe("Ollama structured image extraction", () => {
       .mockResolvedValue({ text: '{"summary":"Synthetic screen"}', model: "vision-local" });
   });
 
-  it("sends images and the schema through the existing model transport", async () => {
-    const result = await ollamaMediaUnderstandingProvider.extractStructured(request);
-    const [params, transform] = mocks.describe.mock.calls[0] ?? [];
-    expect(params.images).toEqual([request.input[1]]);
-    expect(params).toMatchObject({
-      model: request.model,
-      provider: "ollama",
-      cfg: request.cfg,
-      timeoutMs: 1000,
-    });
-    expect(params.prompt).toContain("Captured at 12:00.");
-    expect(params.prompt).toContain(JSON.stringify(schema));
-    const payload = {
-      messages: [{ role: "user", images: ["synthetic"] }],
-      options: { num_predict: 4096 },
-    };
-    expect(await transform(payload, { api: "ollama" })).toEqual({
-      ...payload,
-      format: schema,
-      think: false,
-    });
-    expect(result).toMatchObject({
-      parsed: { summary: "Synthetic screen" },
-      contentType: "json",
-      provider: "ollama",
-    });
-  });
+  it.each([undefined, 1024])(
+    "sends images, schema, and output budget %s through the model transport",
+    async (maxTokens) => {
+      const result = await ollamaMediaUnderstandingProvider.extractStructured({
+        ...request,
+        maxTokens,
+      });
+      const [params, transform] = mocks.describe.mock.calls[0] ?? [];
+      expect(params.images).toEqual([request.input[1]]);
+      expect(params).toMatchObject({
+        model: request.model,
+        provider: "ollama",
+        cfg: request.cfg,
+        timeoutMs: 1000,
+      });
+      expect(params.maxTokens).toBe(maxTokens);
+      expect(params.prompt).toContain("Captured at 12:00.");
+      expect(params.prompt).toContain(JSON.stringify(schema));
+      const payload = {
+        messages: [{ role: "user", images: ["synthetic"] }],
+        options: { num_predict: 4096 },
+      };
+      expect(await transform(payload, { api: "ollama" })).toEqual({
+        ...payload,
+        format: schema,
+        think: false,
+      });
+      expect(result).toMatchObject({
+        parsed: { summary: "Synthetic screen" },
+        contentType: "json",
+        provider: "ollama",
+      });
+    },
+  );
 
   it.each(["", "not JSON", '{"summary":42}'])("rejects unusable output: %j", async (text) => {
     mocks.describe.mockResolvedValue({ text });

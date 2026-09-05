@@ -51,11 +51,17 @@ afterEach(() => {
 
 describe("structured extraction runtime", () => {
   it.each([
-    { name: "default", agentDir: undefined, expectedAgentDir: "/tmp/default-agent" },
-    { name: "explicit", agentDir: "/tmp/agent", expectedAgentDir: "/tmp/agent" },
+    {
+      name: "default",
+      agentDir: undefined,
+      expectedAgentDir: "/tmp/default-agent",
+      maxTokens: undefined,
+    },
+    { name: "explicit", agentDir: "/tmp/agent", expectedAgentDir: "/tmp/agent", maxTokens: 1024 },
   ])("routes structured extraction with the $name owner", async (testCase) => {
     const providerRegistry = new Map();
     const authStore = {} as AuthProfileStore;
+    const signal = new AbortController().signal;
     const cfg = {
       agents: {
         ownership: "explicit",
@@ -97,6 +103,8 @@ describe("structured extraction runtime", () => {
         preferredProfile: "preferred-work",
         authStore,
         timeoutMs: 45_000,
+        maxTokens: testCase.maxTokens,
+        signal,
         cfg,
         agentDir: testCase.agentDir,
       }),
@@ -126,6 +134,8 @@ describe("structured extraction runtime", () => {
               preferredProfile?: string;
               authStore?: AuthProfileStore;
               timeoutMs?: number;
+              maxTokens?: number;
+              signal?: AbortSignal;
               agentDir?: string;
             },
           ]
@@ -149,6 +159,8 @@ describe("structured extraction runtime", () => {
     expect(extractOptions?.preferredProfile).toBe("preferred-work");
     expect(extractOptions?.authStore).toBe(authStore);
     expect(extractOptions?.timeoutMs).toBe(45_000);
+    expect(extractOptions?.maxTokens).toBe(testCase.maxTokens);
+    expect(extractOptions?.signal).toBe(signal);
     expect(extractOptions?.agentDir).toBe(testCase.expectedAgentDir);
   });
 

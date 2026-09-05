@@ -854,11 +854,17 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
         },
         required: ["vendor", "total"],
       },
+      maxTokens: 1024,
       cfg: api.config,
     });
     ```
 
     Returns `{ text: undefined }` when no output is produced (e.g. skipped input).
+
+    `extractStructuredWithModel(...)` accepts an optional `signal` for cancellation
+    and optional `maxTokens` output budget. Native Ollama forwards the budget to
+    its image transport. Providers without an output-token control, including the
+    Codex transport, treat it as advisory; schema constraints and timeouts still apply.
 
     `describeImageFileWithModel(...)` describes an already-known image through a specific provider/model, bypassing the default active-model resolution that `describeImageFile(...)` uses.
 

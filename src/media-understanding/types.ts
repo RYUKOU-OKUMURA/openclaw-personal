@@ -228,6 +228,8 @@ export type StructuredExtractionRequest = {
   schemaName?: string;
   jsonSchema?: unknown;
   jsonMode?: boolean;
+  /** Output-token budget when the provider transport supports it; otherwise advisory. */
+  maxTokens?: number;
   timeoutMs: number;
   signal?: AbortSignal;
   profile?: string;

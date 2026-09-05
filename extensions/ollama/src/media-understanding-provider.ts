@@ -36,6 +36,7 @@ async function extractOllamaStructured(
       profile: request.profile,
       preferredProfile: request.preferredProfile,
       authStore: request.authStore,
+      maxTokens: request.maxTokens,
       timeoutMs: request.timeoutMs,
       signal: request.signal,
     },

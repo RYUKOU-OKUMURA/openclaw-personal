@@ -379,7 +379,9 @@ export async function extractStructuredWithModel(params: ExtractStructuredWithMo
     profile: params.profile,
     preferredProfile: params.preferredProfile,
     authStore: params.authStore,
+    maxTokens: params.maxTokens,
     timeoutMs,
+    signal: params.signal,
     cfg: params.cfg,
     agentDir: params.agentDir ?? resolveDefaultAgentDir(params.cfg),
   });
