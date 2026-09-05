@@ -303,6 +303,11 @@ in a host-administrator private dashboard conversation, including sandboxed
 agents. Channel conversations and conversations with an external delivery route
 or native channel id do not receive it. Normal tool allow/deny policy still applies.
 This is the existing host-global Logbook store, not a new per-profile database.
+Retrieval uses the running Gateway, so tool discovery does not need to start
+another capture or analysis service. Sandboxed agents also need
+`logbook_context` in `tools.sandbox.tools.alsoAllow` (preserve any existing
+entries); the default sandbox allowlist does not include it. This allowance
+does not override the private-dashboard restriction or an explicit tool deny.
 
 When that tool is authorized for a user turn, a recent context excerpt of at most
 1,300 serialized characters is added to the prompt. Explicit retrieval returns

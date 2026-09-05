@@ -159,8 +159,7 @@ export default definePluginEntry({
               ctx.deliveryContext.to !== undefined ||
               ctx.deliveryContext.threadId !== undefined ||
               ctx.deliveryContext.accountId !== undefined ||
-              ctx.deliveryContext.deliveryIntent !== undefined)) ||
-          !service
+              ctx.deliveryContext.deliveryIntent !== undefined))
         ) {
           return null;
         }
@@ -177,10 +176,13 @@ export default definePluginEntry({
             { additionalProperties: false },
           ),
           async execute(_toolCallId, params) {
-            const details = requireService().context({
-              day: readDayParam(params),
-              query: readLogbookContextQuery(params),
-            });
+            // Tool discovery can load a registry without starting its services.
+            // Dispatch to the running Gateway's owner instead of this closure.
+            const details = await api.runtime.gateway.request(
+              "logbook.context",
+              { day: readDayParam(params), query: readLogbookContextQuery(params) },
+              { scopes: ["operator.read"], timeoutMs: 10_000 },
+            );
             return { content: [{ type: "text", text: JSON.stringify(details) }], details };
           },
         };

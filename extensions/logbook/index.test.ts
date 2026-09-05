@@ -100,14 +100,17 @@ describe("logbook snapshot invoke policy", () => {
 });
 
 describe("Logbook conversation context authorization", () => {
-  function harness() {
+  function harness(start = true) {
+    const contextResult = { version: 1, records: [] };
+    const request = vi.fn().mockResolvedValue(contextResult);
+    serviceMock.context.mockClear();
     const registerTool = vi.fn<OpenClawPluginApi["registerTool"]>();
     const on = vi.fn<OpenClawPluginApi["on"]>();
     const registerService = vi.fn<OpenClawPluginApi["registerService"]>();
     const registerGatewayMethod = vi.fn<OpenClawPluginApi["registerGatewayMethod"]>();
     plugin.register({
       pluginConfig: {},
-      runtime: {},
+      runtime: { gateway: { request } },
       session: { controls: { registerControlUiDescriptor: () => {} } },
       registerNodeInvokePolicy: () => {},
       registerService,
@@ -120,53 +123,74 @@ describe("Logbook conversation context authorization", () => {
       throw new Error("Expected context tool factory");
     }
     const service = registerService.mock.calls[0]![0];
-    void service.start({
-      stateDir: "/unused",
-      config: {},
-      logger: { info() {}, warn() {}, error() {} },
-    });
-    return { factory, service, on, registerGatewayMethod };
+    if (start) {
+      void service.start({
+        stateDir: "/unused",
+        config: {},
+        logger: { info() {}, warn() {}, error() {} },
+      });
+    }
+    return { factory, service, on, registerGatewayMethod, request, contextResult };
   }
 
-  it("exposes context only to host-owner private dashboard turns", () => {
-    const { factory } = harness();
-    const owner = { senderIsOwner: true, messageChannel: "webchat" };
-    const denied: OpenClawPluginToolContext[] = [
-      {},
-      { ...owner, senderIsOwner: false },
-      { ...owner, messageChannel: "discord" },
-      { ...owner, messageChannel: "telegram" },
-      { ...owner, nativeChannelId: "group" },
-      { ...owner, deliveryContext: { to: "external" } },
-      ...[
+  it.each([true, false])(
+    "exposes context only to host-owner private dashboard turns (service started=%s)",
+    (start) => {
+      const { factory } = harness(start);
+      const owner = { senderIsOwner: true, messageChannel: "webchat" };
+      const denied: OpenClawPluginToolContext[] = [
         {},
-        { channel: "discord" },
-        { channel: "unknown" },
-        { channel: "" },
-        { channel: "webchat", to: "external" },
-        { channel: "webchat", threadId: "group" },
-        { channel: "webchat", accountId: "other" },
-      ].map((deliveryContext) => Object.assign({}, owner, { deliveryContext })),
-    ];
-    for (const context of denied) {
-      expect(factory(context)).toBeNull();
-    }
-    expect(factory({ ...owner, deliveryContext: { channel: "webchat" } })).toMatchObject({
-      name: "logbook_context",
-    });
-    expect(factory(owner)).toMatchObject({ name: "logbook_context" });
-    expect(factory({ ...owner, sandboxed: true })).toMatchObject({ name: "logbook_context" });
-  });
+        { ...owner, senderIsOwner: false },
+        { ...owner, messageChannel: "discord" },
+        { ...owner, messageChannel: "telegram" },
+        { ...owner, nativeChannelId: "group" },
+        { ...owner, deliveryContext: { to: "external" } },
+        ...[
+          {},
+          { channel: "discord" },
+          { channel: "unknown" },
+          { channel: "" },
+          { channel: "webchat", to: "external" },
+          { channel: "webchat", threadId: "group" },
+          { channel: "webchat", accountId: "other" },
+        ].map((deliveryContext) => Object.assign({}, owner, { deliveryContext })),
+      ];
+      for (const context of denied) {
+        expect(factory(context)).toBeNull();
+      }
+      expect(factory({ ...owner, deliveryContext: { channel: "webchat" } })).toMatchObject({
+        name: "logbook_context",
+      });
+      expect(factory(owner)).toMatchObject({ name: "logbook_context" });
+      expect(factory({ ...owner, sandboxed: true })).toMatchObject({ name: "logbook_context" });
+    },
+  );
 
-  it("passes bounded recall through the same service as the read RPC and requires explicit deletion day", async () => {
-    const { factory, registerGatewayMethod } = harness();
+  it("routes cold-discovery recall through the read Gateway and requires explicit deletion day", async () => {
+    const { factory, registerGatewayMethod, request, contextResult } = harness(false);
     const tool = factory({ senderIsOwner: true, messageChannel: "webchat" });
     if (!tool || Array.isArray(tool)) {
       throw new Error("Expected recall tool");
     }
     expect(tool.description).toContain("retry the same day without query");
-    await tool.execute("call", { day: "2026-09-05", query: "  OpenClaw  " });
-    expect(serviceMock.context).toHaveBeenLastCalledWith({ day: "2026-09-05", query: "OpenClaw" });
+    const result = await tool.execute("call", { day: "2026-09-05", query: "  OpenClaw  " });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      "logbook.context",
+      { day: "2026-09-05", query: "OpenClaw" },
+      { scopes: ["operator.read"], timeoutMs: 10_000 },
+    );
+    expect(result).toEqual({
+      content: [{ type: "text", text: JSON.stringify(contextResult) }],
+      details: contextResult,
+    });
+    expect(serviceMock.context).not.toHaveBeenCalled();
+    await expect(tool.execute("invalid", { day: "today" })).rejects.toThrow(
+      "day must be YYYY-MM-DD",
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    const failure = new Error("Gateway unavailable");
+    request.mockRejectedValueOnce(failure);
+    await expect(tool.execute("failed", { day: "2026-09-05" })).rejects.toBe(failure);
     const read = registerGatewayMethod.mock.calls.find(([method]) => method === "logbook.context")!;
     const remove = registerGatewayMethod.mock.calls.find(
       ([method]) => method === "logbook.context.delete",
