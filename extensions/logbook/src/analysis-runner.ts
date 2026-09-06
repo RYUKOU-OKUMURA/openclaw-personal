@@ -128,9 +128,10 @@ export async function runLogbookBatch(params: BatchParams): Promise<void> {
 async function reviseCards(params: BatchParams): Promise<void> {
   const { batch, store, runtime, config, signal } = params;
   const lookbackStart = batch.startMs - CARD_LOOKBACK_MS;
-  const previousCards = store
-    .cardsForDay(batch.day)
-    .filter((card) => card.endMs > lookbackStart && card.startMs < batch.endMs);
+  const previousCards = store.cardsForDay(batch.day, {
+    startMs: lookbackStart,
+    endMs: batch.endMs,
+  });
   const observations = store.observationsInRange(
     batch.day,
     Math.min(lookbackStart, batch.startMs),

@@ -1,5 +1,6 @@
 {
   "id": "openai",
+  "capabilityCatalogEntry": "./capability-catalog.ts",
   "sessionRouteStateOwners": [
     {
       "id": "openai",
@@ -42,6 +43,9 @@
     }
   },
   "modelCatalog": {
+    "modelsDev": {
+      "openai": "openai"
+    },
     "providers": {
       "openai": {
         "baseUrl": "https://api.openai.com/v1",
@@ -233,6 +237,7 @@
     {
       "provider": "openai",
       "method": "oauth",
+      "personalAccount": true,
       "choiceId": "openai",
       "appGuidedAuth": "oauth",
       "choiceLabel": "ChatGPT Login",
@@ -246,6 +251,7 @@
     {
       "provider": "openai",
       "method": "device-code",
+      "personalAccount": true,
       "choiceId": "openai-device-code",
       "appGuidedAuth": "device-code",
       "choiceLabel": "ChatGPT Device Pairing",
@@ -258,6 +264,7 @@
     {
       "provider": "openai",
       "method": "api-key",
+      "personalAccount": true,
       "choiceId": "openai-api-key",
       "appGuidedSecret": true,
       "choiceLabel": "OpenAI API Key",

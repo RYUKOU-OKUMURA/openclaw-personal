@@ -468,106 +468,117 @@ class AccessMapPage extends OpenClawLightDomElement {
         this.selectedShare = mount;
       },
     })}
-    ${this.draft && this.report
-      ? renderAccessMapDrawer({
-          draft: this.draft,
-          report: this.report,
-          busy: this.busy,
-          error: this.formError,
-          onClose: () => {
-            if (!this.busy) {
-              this.draft = null;
-            }
-          },
-          onChange: (patch) => {
-            if (this.draft && !this.busy) {
-              this.draft = { ...this.draft, ...patch };
-              this.formError = null;
-            }
-          },
-          onSubmit: () => void this.submitDraft(),
-        })
-      : nothing}
-    ${this.pickerOpen
-      ? renderAccessMapPicker({
-          listing: this.listing,
-          path: this.pickerPath,
-          loading: this.pickerLoading,
-          error: this.pickerError,
-          onPath: (value) => {
-            this.pickerPath = value;
-          },
-          onBrowse: (path) => void this.browse(path),
-          onNativeSelect: () => void this.pickNativePath(),
-          onSelect: (path, kind) => this.selectPath(path, kind),
-          onUpload: () => {
-            this.pickerOpen = false;
-            this.querySelector<HTMLInputElement>(".access-map-upload")?.click();
-          },
-          onClose: () => {
-            this.pickerOpen = false;
-            this.pickerVersion++;
-          },
-        })
-      : nothing}
-    ${this.selectedShare
-      ? html`<openclaw-modal-dialog
-          label=${t("accessMap.sharedEntry")}
-          @modal-cancel=${(event: Event) => {
-            if (this.busy) {
-              event.preventDefault();
-            } else {
-              this.selectedShare = null;
-            }
-          }}
-          ><section class="access-map-share">
-            <header class="access-map-drawer__header">
-              <h2>${t("accessMap.sharedEntry")}</h2>
+    ${
+      this.draft && this.report
+        ? renderAccessMapDrawer({
+            draft: this.draft,
+            report: this.report,
+            busy: this.busy,
+            error: this.formError,
+            onClose: () => {
+              if (!this.busy) {
+                this.draft = null;
+              }
+            },
+            onChange: (patch) => {
+              if (this.draft && !this.busy) {
+                this.draft = { ...this.draft, ...patch };
+                this.formError = null;
+              }
+            },
+            onSubmit: () => void this.submitDraft(),
+          })
+        : nothing
+    }
+    ${
+      this.pickerOpen
+        ? renderAccessMapPicker({
+            listing: this.listing,
+            path: this.pickerPath,
+            loading: this.pickerLoading,
+            error: this.pickerError,
+            onPath: (value) => {
+              this.pickerPath = value;
+            },
+            onBrowse: (path) => void this.browse(path),
+            onNativeSelect: () => void this.pickNativePath(),
+            onSelect: (path, kind) => this.selectPath(path, kind),
+            onUpload: () => {
+              this.pickerOpen = false;
+              this.querySelector<HTMLInputElement>(".access-map-upload")?.click();
+            },
+            onClose: () => {
+              this.pickerOpen = false;
+              this.pickerVersion++;
+            },
+          })
+        : nothing
+    }
+    ${
+      this.selectedShare
+        ? html`<openclaw-modal-dialog
+            label=${t("accessMap.sharedEntry")}
+            @modal-cancel=${(event: Event) => {
+              if (this.busy) {
+                event.preventDefault();
+              } else {
+                this.selectedShare = null;
+              }
+            }}
+            ><section class="access-map-share">
+              <header class="access-map-drawer__header">
+                <h2>${t("accessMap.sharedEntry")}</h2>
+                <button
+                  class="access-map-icon-button"
+                  type="button"
+                  aria-label=${t("common.close")}
+                  ?disabled=${this.busy}
+                  @click=${() => {
+                    this.selectedShare = null;
+                  }}
+                >
+                  ${icon("x")}
+                </button>
+              </header>
+              <dl>
+                <dt>${t("accessMap.originalLocation")}</dt>
+                <dd>${this.selectedShare.hostRoot}</dd>
+                <dt>${t("accessMap.containerLocation")}</dt>
+                <dd>${this.selectedShare.containerRoot}</dd>
+              </dl>
+              <p>
+                ${t(
+                  this.selectedShare.writable
+                    ? "accessMap.modeReadWriteHint"
+                    : "accessMap.modeReadOnlyHint",
+                )}
+              </p>
+              <p class="access-map-help">
+                ${t("accessMap.inheritedShareHint")}
+                <a
+                  href="https://docs.openclaw.ai/gateway/sandboxing"
+                  target="_blank"
+                  rel="noreferrer"
+                  >${t("accessMap.sandboxSettings")}</a
+                >
+              </p>
+              ${
+                this.formError
+                  ? html`<p class="access-map-message is-error" role="alert">${this.formError}</p>`
+                  : nothing
+              }
               <button
-                class="access-map-icon-button"
+                class="access-map-button"
                 type="button"
-                aria-label=${t("common.close")}
-                ?disabled=${this.busy}
-                @click=${() => {
-                  this.selectedShare = null;
-                }}
+                ?disabled=${!this.canManageFiles || this.busy}
+                @click=${() => void this.removeShare()}
               >
-                ${icon("x")}
+                ${t("accessMap.removeShare")}
               </button>
-            </header>
-            <dl>
-              <dt>${t("accessMap.originalLocation")}</dt>
-              <dd>${this.selectedShare.hostRoot}</dd>
-              <dt>${t("accessMap.containerLocation")}</dt>
-              <dd>${this.selectedShare.containerRoot}</dd>
-            </dl>
-            <p>
-              ${t(
-                this.selectedShare.writable
-                  ? "accessMap.modeReadWriteHint"
-                  : "accessMap.modeReadOnlyHint",
-              )}
-            </p>
-            <p class="access-map-help">
-              ${t("accessMap.inheritedShareHint")}
-              <a href="https://docs.openclaw.ai/gateway/sandboxing" target="_blank" rel="noreferrer"
-                >${t("accessMap.sandboxSettings")}</a
-              >
-            </p>
-            ${this.formError
-              ? html`<p class="access-map-message is-error" role="alert">${this.formError}</p>`
-              : nothing}
-            <button
-              class="access-map-button"
-              type="button"
-              ?disabled=${!this.canManageFiles || this.busy}
-              @click=${() => void this.removeShare()}
-            >
-              ${t("accessMap.removeShare")}
-            </button>
-          </section></openclaw-modal-dialog
-        >`
-      : nothing}`;
+            </section></openclaw-modal-dialog
+          >`
+        : nothing
+    }`;
   }
 }
 

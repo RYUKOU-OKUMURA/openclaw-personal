@@ -79,10 +79,10 @@ const framePayload = {
 };
 
 describe("LogbookService capture node selection", () => {
-  const cleanups: Array<() => void> = [];
-  afterEach(() => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => {
     for (const cleanup of cleanups.splice(0)) {
-      cleanup();
+      await cleanup();
     }
   });
 
@@ -97,8 +97,8 @@ describe("LogbookService capture node selection", () => {
         return framePayload;
       },
     });
-    cleanups.push(() => {
-      fixture.service.stop();
+    cleanups.push(async () => {
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     });
     fixture.currentConfig.plugins!.entries!.logbook!.config!.screenIndex = 1;
@@ -120,8 +120,8 @@ describe("LogbookService capture node selection", () => {
       ],
       invoke: async () => framePayload,
     });
-    cleanups.push(() => {
-      service.stop();
+    cleanups.push(async () => {
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -143,8 +143,8 @@ describe("LogbookService capture node selection", () => {
         return framePayload;
       },
     });
-    cleanups.push(() => {
-      service.stop();
+    cleanups.push(async () => {
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -163,8 +163,8 @@ describe("LogbookService capture node selection", () => {
       nodes: [{ nodeId: "capture-node", commands: ["logbook.snapshot"] }],
       invoke: async () => ({ payload: { format: "jpeg", base64 } }),
     });
-    cleanups.push(() => {
-      service.stop();
+    cleanups.push(async () => {
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -178,10 +178,10 @@ describe("LogbookService capture node selection", () => {
 });
 
 describe("LogbookService vision model selection", () => {
-  const cleanups: Array<() => void> = [];
-  afterEach(() => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => {
     for (const cleanup of cleanups.splice(0)) {
-      cleanup();
+      await cleanup();
     }
   });
 
@@ -200,8 +200,8 @@ describe("LogbookService vision model selection", () => {
         },
       },
     });
-    cleanups.push(() => {
-      service.stop();
+    cleanups.push(async () => {
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -223,8 +223,8 @@ describe("LogbookService vision model selection", () => {
         },
       },
     });
-    cleanups.push(() => {
-      service.stop();
+    cleanups.push(async () => {
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -236,7 +236,7 @@ describe("LogbookService vision model selection", () => {
 });
 
 describe("LogbookService status", () => {
-  it("returns the capture-host timezone without exposing the state path", () => {
+  it("returns the capture-host timezone without exposing the state path", async () => {
     const { service, dataDir } = makeService({
       nodes: [],
       invoke: async () => framePayload,
@@ -248,7 +248,7 @@ describe("LogbookService status", () => {
       });
       expect(service.status()).not.toHaveProperty("dataDir");
     } finally {
-      service.stop();
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
@@ -278,7 +278,7 @@ describe("LogbookService screen selection", () => {
         }),
       );
     } finally {
-      fixture.service.stop();
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   });
@@ -305,7 +305,7 @@ describe("LogbookService screen selection", () => {
       expect(fixture.currentConfig.plugins!.entries!.logbook!.config).toBeUndefined();
       expect(fixture.service.status().capturePaused).toBe(true);
     } finally {
-      fixture.service.stop();
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   });
@@ -338,7 +338,7 @@ describe("LogbookService screen selection", () => {
       await failure;
       expect(fixture.service.status()).toMatchObject({ screenIndex: 0, capturePaused: true });
     } finally {
-      fixture.service.stop();
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
       vi.useRealTimers();
     }
@@ -386,7 +386,9 @@ describe("LogbookService text model routing", () => {
         await tick();
         await expect(service.analyzeNow()).resolves.toEqual({ started: true });
         await vi.waitFor(() => expect(service.status().lastBatch?.status).toBe("done"));
-        expect(service.cardsForDay("2026-08-01")).toMatchObject([{ title: "Editing a document" }]);
+        expect(service.timelineForDay("2026-08-01").cards).toMatchObject([
+          { title: "Editing a document" },
+        ]);
         await expect(service.standup("2026-08-01", true)).resolves.toMatchObject({
           text: "Updated the project document.",
         });
@@ -400,7 +402,7 @@ describe("LogbookService text model routing", () => {
           ["logbook.ask", expectedModel],
         ]);
       } finally {
-        service.stop();
+        await service.stop();
         rmSync(dataDir, { recursive: true, force: true });
         vi.useRealTimers();
       }
@@ -443,7 +445,7 @@ describe("LogbookService text completion validation", () => {
         reader.close();
       }
     } finally {
-      fixture.service.stop();
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   });
@@ -466,7 +468,7 @@ describe("LogbookService text completion validation", () => {
       await expect(service.standup("2026-08-01", false)).resolves.toEqual(saved);
       expect(complete).toHaveBeenCalledTimes(2);
     } finally {
-      service.stop();
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
@@ -481,7 +483,7 @@ describe("LogbookService text completion validation", () => {
     try {
       await expect(service.ask("2026-08-01", "What did I work on?")).rejects.toThrow(/no text/i);
     } finally {
-      service.stop();
+      await service.stop();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
@@ -530,7 +532,7 @@ describe("LogbookService bounded observation dispatch", () => {
       expect(extractStructured.mock.calls.map(([request]) => request.input.length)).toEqual([4, 4]);
       expect(fixture.service.status().lastBatch?.status).toBe("done");
     } finally {
-      fixture.service.stop();
+      await fixture.service.stop();
       rmSync(fixture.dataDir, { recursive: true, force: true });
       vi.useRealTimers();
     }

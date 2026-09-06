@@ -508,7 +508,6 @@ async function refreshOpenAICodexOAuthCredential(cred: OAuthCredential) {
 }
 
 type OpenAICodexOAuthContext = ProviderAuthContext & {
-  signal?: AbortSignal;
   onManualCodeInput?: () => Promise<string>;
 };
 
@@ -521,6 +520,7 @@ async function runOpenAICodexOAuth(ctx: OpenAICodexOAuthContext) {
     isRemote: ctx.isRemote,
     openUrl: ctx.openUrl,
     signal: ctx.signal,
+    assertCurrent: ctx.assertCurrent,
     onManualCodeInput: ctx.onManualCodeInput,
     localBrowserMessage: "Complete sign-in in browser…",
   });
@@ -552,6 +552,7 @@ async function runOpenAICodexDeviceCode(ctx: ProviderAuthContext) {
     const { loginOpenAICodexDeviceCode } = await import("./openai-chatgpt-device-code.js");
     const creds = await loginOpenAICodexDeviceCode({
       ...(ctx.signal ? { signal: ctx.signal } : {}),
+      assertCurrent: ctx.assertCurrent,
       onProgress: (message) => spin.update(message),
       onVerification: async ({ verificationUrl, userCode, expiresInMs }) => {
         const expiresInMinutes = Math.max(1, Math.round(expiresInMs / 60_000));

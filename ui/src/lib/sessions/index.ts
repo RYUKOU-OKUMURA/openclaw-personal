@@ -4,7 +4,6 @@ import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { formatUiError } from "../format-error.ts";
 import { createGatewayConnectionLifecycle } from "../gateway-connection-lifecycle.ts";
 import type { SessionCreateOutcome } from "./create.ts";
-import { scopedAgentListParamsForSession } from "./navigation.ts";
 import {
   readSessionChangedEvent,
   reconcileSessionChanged,
@@ -17,6 +16,7 @@ import {
 import type { SessionCapability, SessionGateway, SessionState } from "./session-capability.ts";
 import { createSessionDeletions } from "./session-deletions.ts";
 import { createSessionEventSubscriptionOwner } from "./session-event-subscription.ts";
+import { createSessionGitHubPublication } from "./session-github-publication.ts";
 import { createSessionGroupCatalog } from "./session-group-catalog.ts";
 import {
   isUiGlobalSessionKey,
@@ -31,7 +31,6 @@ import { createSessionRosterRefresh } from "./session-roster-refresh.ts";
 import { createSessionScopedOperations } from "./session-scoped-operations.ts";
 import { SwarmActivityTracker } from "./swarm-activity.ts";
 
-export type { SessionArchivedFilter } from "./navigation.ts";
 export type {
   SessionCapability,
   SessionListOptions,
@@ -41,8 +40,6 @@ export type {
 export type { SessionPatch, SessionPatchResult } from "./patch.ts";
 export { DEFAULT_SESSION_LIST_QUERY, SESSIONS_PAGE_DEFAULT_LIMIT } from "./session-requests.ts";
 export { reconcileSessionRunTerminal, type SessionRunTerminal } from "./reconcile.ts";
-export { requestSessionCreate } from "./create.ts";
-export { resolveSessionKey } from "./navigation.ts";
 export {
   compareSessionRowsByUpdatedAt,
   filterSessionRows,
@@ -50,6 +47,7 @@ export {
   getVisibleSessionRows,
   isSystemCreatedSessionRow,
   resolveSessionNavigation,
+  resolveSessionKey,
   sessionMatchesArchivedFilter,
   sessionMatchesVisibleSessionScope,
   scopedAgentIdForSession,
@@ -57,11 +55,10 @@ export {
   scopedAgentListParamsForSession,
   scopedAgentParamsForSession,
   visibleSessionMatches,
-} from "./navigation.ts";
-export type {
-  SessionRefreshTarget,
-  SessionScopeHost,
-  SessionScopeHostWithKey,
+  type SessionArchivedFilter,
+  type SessionRefreshTarget,
+  type SessionScopeHost,
+  type SessionScopeHostWithKey,
 } from "./navigation.ts";
 
 const SESSION_RETRY_DEFAULT_MS = 500;
@@ -83,7 +80,15 @@ function isSessionStateEvent(event: GatewayEventFrame): boolean {
   return event.event === "sessions.changed" || event.event === "session.message";
 }
 
-export function createSessionCapability(gateway: SessionGateway): SessionCapability {
+type SessionAgentSelection = {
+  readonly state: { readonly selectedId: string | null };
+  subscribe: (listener: () => void) => () => void;
+};
+
+export function createSessionCapability(
+  gateway: SessionGateway,
+  agentSelection: SessionAgentSelection,
+): SessionCapability {
   let state: SessionState = {
     result: null,
     agentId: null,
@@ -96,6 +101,11 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     sectionOrder: [],
   };
   const connection = createGatewayConnectionLifecycle(gateway.snapshot);
+  const githubPublication = createSessionGitHubPublication({
+    connection,
+    snapshot: () => gateway.snapshot,
+    deletionState: (row) => deletions.deletionState(row.key, row.agentId, row.sessionId),
+  });
   const swarmActivity = new SwarmActivityTracker();
   const pullRequestSummaries = new Map<string, SessionCatalogPullRequestSummary>();
   const pullRequestEpochs = new Map<string, object>();
@@ -112,6 +122,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
   let hydratedClient: SessionGateway["snapshot"]["client"] = null;
   let hydratedSelfUserId: string | null = null;
   let connectionClient = gateway.snapshot.client;
+  let selectedAgentId = agentSelection.state.selectedId;
   let sessionEventSubscriptionError: string | null = null;
   let publishedErrorSource: "session-observer" | "operation" | null = null;
 
@@ -152,6 +163,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       publishedErrorSource = errorSource ?? "operation";
     }
     state = next;
+    githubPublication.observeRows(next.result?.sessions ?? [], next.agentId);
     for (const listener of listeners) {
       listener(state);
     }
@@ -165,13 +177,13 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
 
   // Canonical Gateway rows are the source of truth for everything except the
   // UI-owned facts the capability keeps beside them, so every published result
-  // passes through the same overlay: swarm notes, then in-flight pin intents.
+  // passes through the same overlay: swarm notes, then in-flight row intents.
   const decorateRows = (
     result: SessionsListResult | null,
     owner = roster.primaryList(),
   ): SessionsListResult | null =>
     deletions.apply(
-      mutations.applyConfirmedArchives(mutations.applyPendingPins(swarmActivity.decorate(result))),
+      mutations.applyConfirmedArchives(mutations.applyPendingRows(swarmActivity.decorate(result))),
       owner,
     );
 
@@ -191,8 +203,9 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
         publish({ ...state, error: null });
       }
       if (previousError !== null && error === null) {
-        // Observer outages do not replay events; one canonical list closes the gap.
+        // Observer outages do not replay events; every held query must close the gap.
         void roster.refresh({ ...roster.lastOptions(), backgroundHydrate: true, force: true });
+        roster.invalidateManagedLists();
       }
     },
   });
@@ -208,6 +221,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     reconcileList: (result, revision, agentId) =>
       deletions.reconcileList(result, revision, agentId),
     onCanonicalList(result, requestRevision, agentId, observed) {
+      githubPublication.observeRows(observed?.sessions ?? result?.sessions ?? [], agentId);
       mutations.settlePrepared(result);
       for (const row of observed?.sessions ?? []) {
         settleThinkingLevelClaim(row, requestRevision, agentId);
@@ -290,8 +304,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     if (!normalizedKey || (epoch !== undefined && pullRequestEpochs.get(normalizedKey) !== epoch)) {
       return;
     }
-    const previous = pullRequestSummaries.get(normalizedKey);
-    if (previous === summary) {
+    if (pullRequestSummaries.get(normalizedKey) === summary) {
       return;
     }
     if (summary) {
@@ -326,6 +339,9 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     const result = decorateRows(
       reconcileSessionHistory(state.result, row, defaults, historyOptions, preserveCanonicalRow),
     );
+    if (row && !preserveCanonicalRow) {
+      githubPublication.observeRows([row], historyAgentId);
+    }
     const agentId = options?.resultAgentId?.trim()
       ? normalizeAgentId(options.resultAgentId)
       : state.agentId;
@@ -364,6 +380,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       const reconciled: SessionChangedResult = { applied: false, result: previous };
       return { eventInfo: null, reconciled, claimChanged: false };
     }
+    githubPublication.observeEvent(payload);
     const selectedSessionKey = gateway.snapshot.sessionKey?.trim();
     const archivesSelectedSession =
       eventInfo?.archived === true &&
@@ -456,6 +473,11 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
   };
 
   const reconcileRunTerminal = (terminal: SessionRunTerminal): boolean => {
+    for (const key of terminal.sessionKeys) {
+      if (key.trim()) {
+        roster.invalidateManagedLists(parseAgentSessionKey(key)?.agentId);
+      }
+    }
     const result = reconcileSessionRunTerminal(state.result, terminal);
     if (result === state.result) {
       return false;
@@ -470,6 +492,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     const selfUserId = next.selfUser?.id.trim() || null;
     const connectionChanged = connection.transition(next);
     connectionClient = next.client;
+    githubPublication.observeRows([]);
     if (connectionChanged) {
       if (previousClient !== next.client) {
         deletions.clear();
@@ -522,13 +545,9 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       }
       const hydrate = async () => {
         if (connection.isCurrent(scope)) {
-          const sessionKey = gateway.snapshot.sessionKey?.trim();
-          const agentScope = sessionKey
-            ? scopedAgentListParamsForSession(gateway.snapshot, sessionKey)
-            : { agentId: resolveUiSelectedGlobalAgentId(gateway.snapshot) };
           await roster.bootstrap({
             ...roster.lastOptions(), // Keep visible roster filters through reconnect hydration.
-            ...agentScope,
+            agentId: agentSelection.state.selectedId ?? undefined,
             includeDerivedTitles: true,
             includeLastMessage: true,
             backgroundHydrate: true,
@@ -540,6 +559,19 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
         }
       };
       void hydrate().catch(() => undefined);
+    }
+  });
+
+  const stopSelection = agentSelection.subscribe(() => {
+    const nextAgentId = agentSelection.state.selectedId;
+    if (selectedAgentId === nextAgentId) {
+      return;
+    }
+    selectedAgentId = nextAgentId;
+    // Selection publishes before Gateway hydration. A new connection bootstraps
+    // the current selection; route changes on a hydrated connection replace its roster.
+    if (nextAgentId && hydratedClient === gateway.snapshot.client) {
+      void roster.refreshReplacement(nextAgentId);
     }
   });
 
@@ -618,9 +650,11 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     get canonicalListRevision() {
       return canonicalListRevision;
     },
+    githubPublication,
     captureConnectionScope: () => connection.capture(),
     isConnectionScopeCurrent: (scope) => connection.isCurrent(scope),
     list: roster.list,
+    observeList: roster.observeList,
     listSnapshot: (scope) => roster.listSnapshot(scope),
     subscribeList(scope, listener) {
       if (!roster.isPrimaryList(scope)) {
@@ -685,6 +719,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       return () => listeners.delete(listener);
     },
     dispose() {
+      githubPublication.clear();
       roster.dispose();
       operations.dispose();
       connection.dispose();
@@ -698,6 +733,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       pullRequestEpochs.clear();
       sessionEventSubscription.dispose();
       stopGateway();
+      stopSelection();
       stopEvents();
       createdListeners.clear();
       listeners.clear();

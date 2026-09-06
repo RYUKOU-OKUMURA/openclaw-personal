@@ -49,29 +49,33 @@ export function renderAccessMapView(p: {
         <h1>${t("accessMap.title")}</h1>
         <p class="access-map-subtitle">${t("accessMap.subtitle")}</p>
       </div>
-      ${report
-        ? html`<div class="access-map-runtime">
-            <span
-              class="access-map-status-dot ${report.registry?.running && !report.registry.stale
-                ? "is-running"
-                : ""}"
-            ></span>
-            <div>
-              ${t("accessMap.runtime", {
-                backend: isDocker ? t("accessMap.docker") : report.sandbox.backend,
-              })}<small>${supported ? t(scopeKey) : t("common.disabled")}</small
-              ><small
-                >${!supported
-                  ? nothing
-                  : report.registry
-                    ? report.registry.running
-                      ? t("common.running")
-                      : t("accessMap.stopped")
-                    : t("accessMap.notProvisioned")}</small
-              >
-            </div>
-          </div>`
-        : nothing}
+      ${
+        report
+          ? html`<div class="access-map-runtime">
+              <span
+                class="access-map-status-dot ${
+                  report.registry?.running && !report.registry.stale ? "is-running" : ""
+                }"
+              ></span>
+              <div>
+                ${t("accessMap.runtime", {
+                  backend: isDocker ? t("accessMap.docker") : report.sandbox.backend,
+                })}<small>${supported ? t(scopeKey) : t("common.disabled")}</small
+                ><small
+                  >${
+                    !supported
+                      ? nothing
+                      : report.registry
+                        ? report.registry.running
+                          ? t("common.running")
+                          : t("accessMap.stopped")
+                        : t("accessMap.notProvisioned")
+                  }</small
+                >
+              </div>
+            </div>`
+          : nothing
+      }
     </header>
     <div class="access-map-toolbar">
       <button
@@ -125,84 +129,100 @@ export function renderAccessMapView(p: {
         ${icon("refresh")}
       </button>
     </div>
-    ${p.error
-      ? html`<div class="access-map-message is-error" role="alert">
-          ${p.error}<button
-            class="access-map-button"
-            ?disabled=${p.loading || !p.canRead}
-            @click=${p.onRefresh}
-          >
-            ${t("common.retry")}
-          </button>
-        </div>`
-      : nothing}
+    ${
+      p.error
+        ? html`<div class="access-map-message is-error" role="alert">
+            ${p.error}<button
+              class="access-map-button"
+              ?disabled=${p.loading || !p.canRead}
+              @click=${p.onRefresh}
+            >
+              ${t("common.retry")}
+            </button>
+          </div>`
+        : nothing
+    }
     ${p.notice ? html`<p class="access-map-message" role="status">${p.notice}</p>` : nothing}
-    ${p.loading && !report
-      ? html`<p class="access-map-empty" role="status">${t("common.loading")}</p>`
-      : nothing}
-    ${!p.connected
-      ? html`<p class="access-map-empty">${t("accessMap.disconnected")}</p>`
-      : !p.canRead
-        ? html`<p class="access-map-empty">${t("accessMap.noReadAccess")}</p>`
-        : nothing}
-    ${report
-      ? html`
-          ${!p.canMutate
-            ? html`<p class="access-map-help">${t("accessMap.readOnlyNotice")}</p>`
-            : nothing}
-          ${!report.sandbox.sessionIsSandboxed
-            ? html`<div class="access-map-empty">
-                <p>${t("accessMap.sandboxDisabled")}</p>
-                <a
-                  href="https://docs.openclaw.ai/gateway/sandboxing"
-                  target="_blank"
-                  rel="noreferrer"
-                  >${t("accessMap.enableSandbox")}</a
-                >
-              </div>`
-            : !isDocker
-              ? html`<p class="access-map-empty">
-                  ${t("accessMap.unsupportedBackend", { backend: report.sandbox.backend })}
-                </p>`
-              : html` ${report.registry?.stale || p.pending
-                  ? html`<div class="access-map-message is-warning" role="status">
-                      <span
-                        >${report.registry
-                          ? t("accessMap.staleBanner")
-                          : t("accessMap.notProvisioned")}</span
-                      ><button
-                        class="access-map-button"
-                        ?disabled=${!p.canMutate || p.busy}
-                        @click=${p.onRecreate}
-                      >
-                        ${t("accessMap.recreate")}
-                      </button>
-                    </div>`
-                  : nothing}
-                ${renderAccessMapDiagram({
-                  report,
-                  assetBase: p.assetBase,
-                  onShare: p.onShare,
-                  onDetails: p.onDetails,
-                })}`}
-          <button
-            type="button"
-            class="access-map-footer"
-            aria-expanded=${p.detailsOpen}
-            aria-controls="access-map-effective-permissions"
-            @click=${p.onDetails}
-          >
-            ${icon("info")}<span>${t("accessMap.footerScope")}</span
-            ><strong>${t("accessMap.viewEffectivePermissions")}</strong>${icon(
-              p.detailsOpen ? "chevronDown" : "chevronRight",
-            )}
-          </button>
-          ${p.detailsOpen ? renderAccessMapDetails(report) : nothing}
-          <p class="access-map-caption">
-            ${t("accessMap.agent", { agent: report.agentId })} ·
-            ${t("accessMap.createdEntriesHint")}
-          </p>
-        `
-      : nothing}
+    ${
+      p.loading && !report
+        ? html`<p class="access-map-empty" role="status">${t("common.loading")}</p>`
+        : nothing
+    }
+    ${
+      !p.connected
+        ? html`<p class="access-map-empty">${t("accessMap.disconnected")}</p>`
+        : !p.canRead
+          ? html`<p class="access-map-empty">${t("accessMap.noReadAccess")}</p>`
+          : nothing
+    }
+    ${
+      report
+        ? html`
+            ${
+              !p.canMutate
+                ? html`<p class="access-map-help">${t("accessMap.readOnlyNotice")}</p>`
+                : nothing
+            }
+            ${
+              !report.sandbox.sessionIsSandboxed
+                ? html`<div class="access-map-empty">
+                    <p>${t("accessMap.sandboxDisabled")}</p>
+                    <a
+                      href="https://docs.openclaw.ai/gateway/sandboxing"
+                      target="_blank"
+                      rel="noreferrer"
+                      >${t("accessMap.enableSandbox")}</a
+                    >
+                  </div>`
+                : !isDocker
+                  ? html`<p class="access-map-empty">
+                      ${t("accessMap.unsupportedBackend", { backend: report.sandbox.backend })}
+                    </p>`
+                  : html` ${
+                      report.registry?.stale || p.pending
+                        ? html`<div class="access-map-message is-warning" role="status">
+                            <span
+                              >${
+                                report.registry
+                                  ? t("accessMap.staleBanner")
+                                  : t("accessMap.notProvisioned")
+                              }</span
+                            ><button
+                              class="access-map-button"
+                              ?disabled=${!p.canMutate || p.busy}
+                              @click=${p.onRecreate}
+                            >
+                              ${t("accessMap.recreate")}
+                            </button>
+                          </div>`
+                        : nothing
+                    }
+                    ${renderAccessMapDiagram({
+                      report,
+                      assetBase: p.assetBase,
+                      onShare: p.onShare,
+                      onDetails: p.onDetails,
+                    })}`
+            }
+            <button
+              type="button"
+              class="access-map-footer"
+              aria-expanded=${p.detailsOpen}
+              aria-controls="access-map-effective-permissions"
+              @click=${p.onDetails}
+            >
+              ${icon("info")}<span>${t("accessMap.footerScope")}</span
+              ><strong>${t("accessMap.viewEffectivePermissions")}</strong>${icon(
+                p.detailsOpen ? "chevronDown" : "chevronRight",
+              )}
+            </button>
+            ${p.detailsOpen ? renderAccessMapDetails(report) : nothing}
+            <p class="access-map-caption">
+              ${t("accessMap.agent", { agent: report.agentId })} ·
+              ${t("accessMap.createdEntriesHint")}
+            </p>
+          `
+        : nothing
+    }
   </div>`;
 }

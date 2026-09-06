@@ -1,5 +1,4 @@
 import { html, nothing, type TemplateResult } from "lit";
-import type { SessionWorkspaceRoot } from "../../../api/types.ts";
 import { renderCopyButton } from "../../../components/copy-button.ts";
 import { icons } from "../../../components/icons.ts";
 import "../../../components/tooltip.ts";
@@ -11,6 +10,7 @@ import {
   isApplePlatform,
   KEYBOARD_SHORTCUT_COMBOS,
 } from "../../../lib/keyboard-shortcut-catalog.ts";
+import { renderWorkspaceRootSelector, workspaceRootLabel } from "./chat-session-workspace-roots.ts";
 import type { SessionWorkspaceProps } from "./chat-session-workspace-types.ts";
 
 function formatWorkspaceFileSize(file: { size?: number }): string {
@@ -42,111 +42,6 @@ function renderWorkspaceRailSection(
       <div class="chat-workspace-rail__section-title">${title}</div>
       ${content}
     </section>
-  `;
-}
-
-function rootLabel(root: SessionWorkspaceRoot): string {
-  if (root.kind === "workspace") {
-    return t("chat.workspaceFiles.workspaceRoot");
-  }
-  if (root.kind === "outputs") {
-    return t("chat.workspaceFiles.outputsRoot");
-  }
-  return root.name;
-}
-
-function rootIsSelected(
-  sessionWorkspace: SessionWorkspaceProps,
-  root: SessionWorkspaceRoot,
-): boolean {
-  return (sessionWorkspace.rootId ?? "workspace") === root.id;
-}
-
-function renderRootButton(
-  sessionWorkspace: SessionWorkspaceProps,
-  root: SessionWorkspaceRoot,
-): TemplateResult {
-  const label = rootLabel(root);
-  const selected = rootIsSelected(sessionWorkspace, root);
-  return html`
-    <button
-      type="button"
-      class="chat-workspace-rail__root-button ${selected
-        ? "chat-workspace-rail__root-button--active"
-        : ""}"
-      aria-label=${label}
-      aria-pressed=${selected ? "true" : "false"}
-      @click=${() => sessionWorkspace.onSelectRoot?.(root.id)}
-    >
-      <span class="chat-workspace-rail__file-icon" aria-hidden="true">${icons.folder}</span>
-      <span class="chat-workspace-rail__root-label">${label}</span>
-      ${root.writable
-        ? nothing
-        : html`<span class="chat-workspace-rail__root-badge"
-            >${t("chat.workspaceFiles.readOnly")}</span
-          >`}
-    </button>
-  `;
-}
-
-function renderRootSelector(
-  sessionWorkspace: SessionWorkspaceProps,
-): TemplateResult | typeof nothing {
-  const roots = sessionWorkspace.roots ?? [];
-  if (roots.length === 0 || !sessionWorkspace.onSelectRoot) {
-    return nothing;
-  }
-  const workspaceRoot = roots.find((root) => root.kind === "workspace" || root.id === "workspace");
-  const outputsRoot = roots.find((root) => root.kind === "outputs");
-  const sharedRoots = roots.filter((root) => root.kind === "shared");
-  const sharedExpanded = sessionWorkspace.sharedRootsExpanded === true;
-  return html`
-    <nav class="chat-workspace-rail__roots" aria-label=${t("chat.workspaceFiles.rootSelector")}>
-      ${workspaceRoot ? renderRootButton(sessionWorkspace, workspaceRoot) : nothing}
-      ${outputsRoot ? renderRootButton(sessionWorkspace, outputsRoot) : nothing}
-      ${sharedRoots.length > 0
-        ? html`
-            <button
-              type="button"
-              class="chat-workspace-rail__root-button ${sharedRoots.some((root) =>
-                rootIsSelected(sessionWorkspace, root),
-              )
-                ? "chat-workspace-rail__root-button--active"
-                : ""}"
-              aria-label=${t("chat.workspaceFiles.sharedRoot")}
-              aria-pressed=${sharedRoots.some((root) => rootIsSelected(sessionWorkspace, root))
-                ? "true"
-                : "false"}
-              aria-expanded=${sharedExpanded ? "true" : "false"}
-              @click=${() => {
-                const singleSharedRoot = sharedRoots.length === 1 ? sharedRoots[0] : undefined;
-                if (singleSharedRoot && !sessionWorkspace.onToggleSharedRoots) {
-                  sessionWorkspace.onSelectRoot?.(singleSharedRoot.id);
-                  return;
-                }
-                sessionWorkspace.onToggleSharedRoots?.();
-              }}
-            >
-              <span class="chat-workspace-rail__file-icon" aria-hidden="true">${icons.folder}</span>
-              <span class="chat-workspace-rail__root-label"
-                >${t("chat.workspaceFiles.sharedRoot")}</span
-              >
-              <span>${sharedRoots.length}</span>
-            </button>
-            ${sharedExpanded
-              ? html`
-                  <div class="chat-workspace-rail__shared-list" role="list">
-                    ${sharedRoots.map(
-                      (root) => html`
-                        <div role="listitem">${renderRootButton(sessionWorkspace, root)}</div>
-                      `,
-                    )}
-                  </div>
-                `
-              : nothing}
-          `
-        : nothing}
-    </nav>
   `;
 }
 
@@ -281,9 +176,9 @@ export function renderSessionWorkspaceRail(
               const isActive = itemId === sessionWorkspace.activeId;
               return html`
                 <div
-                  class="chat-workspace-rail__file ${isActive
-                    ? "chat-workspace-rail__file--active"
-                    : ""}"
+                  class="chat-workspace-rail__file ${
+                    isActive ? "chat-workspace-rail__file--active" : ""
+                  }"
                   role="listitem"
                 >
                   <button
@@ -298,16 +193,20 @@ export function renderSessionWorkspaceRail(
                           >${file.path || file.name}</span
                         >
                       </openclaw-tooltip>
-                      ${size
-                        ? html`<span class="chat-workspace-rail__file-meta">${size}</span>`
-                        : nothing}
+                      ${
+                        size
+                          ? html`<span class="chat-workspace-rail__file-meta">${size}</span>`
+                          : nothing
+                      }
                     </span>
                   </button>
-                  ${file.missing
-                    ? html`<span class="chat-workspace-rail__file-badge"
-                        >${t("chat.workspaceFiles.missing")}</span
-                      >`
-                    : nothing}
+                  ${
+                    file.missing
+                      ? html`<span class="chat-workspace-rail__file-badge"
+                          >${t("chat.workspaceFiles.missing")}</span
+                        >`
+                      : nothing
+                  }
                   ${renderPathActions(file.path, "session")}
                 </div>
               `;
@@ -347,84 +246,96 @@ export function renderSessionWorkspaceRail(
             />
           </label>
         </div>
-        ${browser?.search
-          ? html`<div class="chat-workspace-rail__browser-caption">
-              ${t("chat.workspaceFiles.searchResults")}
-            </div>`
-          : nothing}
-        <div class="chat-workspace-rail__list chat-workspace-rail__list--browser" role="list">
-          ${!browser?.search && parentPath != null
-            ? html`
-                <div
-                  class="chat-workspace-rail__file chat-workspace-rail__file--directory"
-                  role="listitem"
-                >
-                  <button
-                    class="chat-workspace-rail__file-open"
-                    type="button"
-                    @click=${() => sessionWorkspace.onBrowsePath(parentPath)}
-                  >
-                    <span class="chat-workspace-rail__file-icon">${icons.folder}</span>
-                    <span class="chat-workspace-rail__file-main">
-                      <span class="chat-workspace-rail__file-name">..</span>
-                      <span class="chat-workspace-rail__file-meta"
-                        >${t("chat.workspaceFiles.parentFolder")}</span
-                      >
-                    </span>
-                  </button>
-                </div>
-              `
-            : nothing}
-          ${entries.length === 0
-            ? html`<div class="chat-workspace-rail__state">
-                ${browser?.search
-                  ? t("chat.workspaceFiles.noSearchResults")
-                  : t("chat.workspaceFiles.noBrowserFiles")}
+        ${
+          browser?.search
+            ? html`<div class="chat-workspace-rail__browser-caption">
+                ${t("chat.workspaceFiles.searchResults")}
               </div>`
-            : entries.map((entry) => {
-                const size = entry.kind === "file" ? formatWorkspaceFileSize(entry) : "";
-                const itemId = `file:${entry.path}`;
-                const isActive = itemId === sessionWorkspace.activeId;
-                return html`
+            : nothing
+        }
+        <div class="chat-workspace-rail__list chat-workspace-rail__list--browser" role="list">
+          ${
+            !browser?.search && parentPath != null
+              ? html`
                   <div
-                    class="chat-workspace-rail__file ${entry.kind === "directory"
-                      ? "chat-workspace-rail__file--directory"
-                      : ""} ${isActive ? "chat-workspace-rail__file--active" : ""}"
+                    class="chat-workspace-rail__file chat-workspace-rail__file--directory"
                     role="listitem"
                   >
                     <button
                       class="chat-workspace-rail__file-open"
                       type="button"
-                      @click=${() =>
-                        entry.kind === "directory"
-                          ? sessionWorkspace.onBrowsePath(entry.path)
-                          : sessionWorkspace.onOpenFile(entry.path, "workspace")}
+                      @click=${() => sessionWorkspace.onBrowsePath(parentPath)}
                     >
-                      <span class="chat-workspace-rail__file-icon"
-                        >${entry.kind === "directory" ? icons.folder : icons.fileText}</span
-                      >
+                      <span class="chat-workspace-rail__file-icon">${icons.folder}</span>
                       <span class="chat-workspace-rail__file-main">
-                        <openclaw-tooltip .content=${entry.path || entry.name}>
-                          <span class="chat-workspace-rail__file-name">${entry.name}</span>
-                        </openclaw-tooltip>
-                        <span class="chat-workspace-rail__file-meta">
-                          ${entry.kind === "directory"
-                            ? entry.path || t("chat.workspaceFiles.root")
-                            : [entry.path, size].filter(Boolean).join(" / ")}
-                        </span>
+                        <span class="chat-workspace-rail__file-name">..</span>
+                        <span class="chat-workspace-rail__file-meta"
+                          >${t("chat.workspaceFiles.parentFolder")}</span
+                        >
                       </span>
                     </button>
-                    ${renderBrowserBadge(entry.sessionKind)}
-                    ${entry.kind === "file" ? renderPathActions(entry.path, "workspace") : nothing}
                   </div>
-                `;
-              })}
+                `
+              : nothing
+          }
+          ${
+            entries.length === 0
+              ? html`<div class="chat-workspace-rail__state">
+                  ${
+                    browser?.search
+                      ? t("chat.workspaceFiles.noSearchResults")
+                      : t("chat.workspaceFiles.noBrowserFiles")
+                  }
+                </div>`
+              : entries.map((entry) => {
+                  const size = entry.kind === "file" ? formatWorkspaceFileSize(entry) : "";
+                  const itemId = `file:${entry.path}`;
+                  const isActive = itemId === sessionWorkspace.activeId;
+                  return html`
+                    <div
+                      class="chat-workspace-rail__file ${
+                        entry.kind === "directory" ? "chat-workspace-rail__file--directory" : ""
+                      } ${isActive ? "chat-workspace-rail__file--active" : ""}"
+                      role="listitem"
+                    >
+                      <button
+                        class="chat-workspace-rail__file-open"
+                        type="button"
+                        @click=${() =>
+                          entry.kind === "directory"
+                            ? sessionWorkspace.onBrowsePath(entry.path)
+                            : sessionWorkspace.onOpenFile(entry.path, "workspace")}
+                      >
+                        <span class="chat-workspace-rail__file-icon"
+                          >${entry.kind === "directory" ? icons.folder : icons.fileText}</span
+                        >
+                        <span class="chat-workspace-rail__file-main">
+                          <openclaw-tooltip .content=${entry.path || entry.name}>
+                            <span class="chat-workspace-rail__file-name">${entry.name}</span>
+                          </openclaw-tooltip>
+                          <span class="chat-workspace-rail__file-meta">
+                            ${
+                              entry.kind === "directory"
+                                ? entry.path || t("chat.workspaceFiles.root")
+                                : [entry.path, size].filter(Boolean).join(" / ")
+                            }
+                          </span>
+                        </span>
+                      </button>
+                      ${renderBrowserBadge(entry.sessionKind)}
+                      ${entry.kind === "file" ? renderPathActions(entry.path, "workspace") : nothing}
+                    </div>
+                  `;
+                })
+          }
         </div>
-        ${browser?.truncated
-          ? html`<div class="chat-workspace-rail__state">
-              ${t("chat.workspaceFiles.truncated")}
-            </div>`
-          : nothing}
+        ${
+          browser?.truncated
+            ? html`<div class="chat-workspace-rail__state">
+                ${t("chat.workspaceFiles.truncated")}
+              </div>`
+            : nothing
+        }
       </section>
     `;
   };
@@ -443,11 +354,13 @@ export function renderSessionWorkspaceRail(
                 : "chat.workspaceFiles.outputsReadOnly",
             )}</span
           >
-          ${selectedRoot.runtimePath
-            ? html`<span
-                >${t("chat.workspaceFiles.runtimePath", { path: selectedRoot.runtimePath })}</span
-              >`
-            : nothing}
+          ${
+            selectedRoot.runtimePath
+              ? html`<span
+                  >${t("chat.workspaceFiles.runtimePath", { path: selectedRoot.runtimePath })}</span
+                >`
+              : nothing
+          }
         </div>
       `;
     }
@@ -470,9 +383,9 @@ export function renderSessionWorkspaceRail(
               const isImage = artifact.mimeType?.startsWith("image/");
               return html`
                 <div
-                  class="chat-workspace-rail__file ${isActive
-                    ? "chat-workspace-rail__file--active"
-                    : ""}"
+                  class="chat-workspace-rail__file ${
+                    isActive ? "chat-workspace-rail__file--active" : ""
+                  }"
                   role="listitem"
                 >
                   <button
@@ -487,11 +400,13 @@ export function renderSessionWorkspaceRail(
                       <openclaw-tooltip .content=${artifact.title}>
                         <span class="chat-workspace-rail__file-name">${artifact.title}</span>
                       </openclaw-tooltip>
-                      ${size || artifact.mimeType
-                        ? html`<span class="chat-workspace-rail__file-meta"
-                            >${[artifact.mimeType, size].filter(Boolean).join(" / ")}</span
-                          >`
-                        : nothing}
+                      ${
+                        size || artifact.mimeType
+                          ? html`<span class="chat-workspace-rail__file-meta"
+                              >${[artifact.mimeType, size].filter(Boolean).join(" / ")}</span
+                            >`
+                          : nothing
+                      }
                     </span>
                   </button>
                   <span class="chat-workspace-rail__row-actions">
@@ -516,161 +431,187 @@ export function renderSessionWorkspaceRail(
         `;
   return html`
     <aside class="chat-workspace-rail" aria-label=${t("chat.workspaceFiles.label")}>
-      ${options.embedded
-        ? nothing
-        : html`<div class="rail-header chat-workspace-rail__header">
-            <div class="rail-header__copy chat-workspace-rail__title">
-              <span class="rail-header__eyebrow chat-workspace-rail__eyebrow"
-                >${t("chat.workspaceFiles.workspace")}</span
-              >
-              <strong class="rail-header__title">${t("chat.workspaceFiles.files")}</strong>
-            </div>
-            <div class="rail-header__actions chat-workspace-rail__actions">
-              ${diffButton} ${terminalButton} ${browserButton} ${custodianButton}
-              ${sessionWorkspace.narrowLayout
-                ? nothing
-                : html`
-                    <openclaw-tooltip
-                      .content=${dock === "bottom"
-                        ? t("chat.workspaceFiles.dockRight")
-                        : t("chat.workspaceFiles.dockBottom")}
-                    >
-                      <button
-                        class="rail-header__action chat-workspace-rail__dock"
-                        type="button"
-                        aria-label=${dock === "bottom"
-                          ? t("chat.workspaceFiles.dockRight")
-                          : t("chat.workspaceFiles.dockBottom")}
-                        @click=${() =>
-                          sessionWorkspace.onSetDock(dock === "bottom" ? "right" : "bottom")}
-                      >
-                        ${dock === "bottom" ? icons.panelRightOpen : icons.panelBottomOpen}
-                      </button>
-                    </openclaw-tooltip>
-                  `}
-              <openclaw-tooltip .content=${t("chat.workspaceFiles.refresh")}>
-                <button
-                  class="rail-header__action chat-workspace-rail__refresh"
-                  type="button"
-                  aria-label=${t("chat.workspaceFiles.refresh")}
-                  ?disabled=${sessionWorkspace.loading}
-                  @click=${sessionWorkspace.onRefresh}
+      ${
+        options.embedded
+          ? nothing
+          : html`<div class="rail-header chat-workspace-rail__header">
+              <div class="rail-header__copy chat-workspace-rail__title">
+                <span class="rail-header__eyebrow chat-workspace-rail__eyebrow"
+                  >${t("chat.workspaceFiles.workspace")}</span
                 >
-                  ${icons.refresh}
-                </button>
-              </openclaw-tooltip>
-              <openclaw-tooltip
-                .content=${`${t("chat.workspaceFiles.collapse")} (${formatKeyboardShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.workspaceFiles)})`}
-              >
-                <button
-                  type="button"
-                  class="rail-header__action chat-workspace-rail__collapse-toggle"
-                  aria-label=${t("chat.workspaceFiles.collapse")}
-                  aria-keyshortcuts=${isApplePlatform() ? "Meta+Shift+B" : "Control+Shift+B"}
-                  aria-expanded="true"
-                  @click=${sessionWorkspace.onToggleCollapsed}
-                >
-                  <span class="nav-collapse-toggle__icon" aria-hidden="true"
-                    >${dock === "bottom" ? icons.panelBottomClose : icons.panelRightClose}</span
-                  >
-                </button>
-              </openclaw-tooltip>
-            </div>
-          </div>`}
-      ${renderRootSelector(sessionWorkspace)}
-      ${selectedRoot
-        ? html`
-            <div class="chat-workspace-rail__browser-tools chat-workspace-rail__file-main">
-              <div class="row">
-                <strong class="chat-workspace-rail__file-name">${rootLabel(selectedRoot)}</strong>
-                ${selectedRoot.writable
-                  ? nothing
-                  : html`<span class="chat-workspace-rail__root-badge"
-                      >${t("chat.workspaceFiles.readOnly")}</span
-                    >`}
-                ${!selectedRoot.available
-                  ? html`<span class="chat-workspace-rail__root-badge"
-                      >${t("chat.workspaceFiles.unavailable")}</span
-                    >`
-                  : nothing}
-                ${selectedRoot.kind === "outputs"
-                  ? html`
-                      <openclaw-tooltip .content=${t("chat.workspaceFiles.revealOutputs")}>
-                        <button
-                          type="button"
-                          class="chat-workspace-rail__row-action"
-                          aria-label=${t("chat.workspaceFiles.revealOutputs")}
-                          ?disabled=${!selectedRoot.available || !sessionWorkspace.onRevealRoot}
-                          @click=${() => {
-                            if (selectedRoot.available) {
-                              sessionWorkspace.onRevealRoot?.();
-                            }
-                          }}
+                <strong class="rail-header__title">${t("chat.workspaceFiles.files")}</strong>
+              </div>
+              <div class="rail-header__actions chat-workspace-rail__actions">
+                ${diffButton} ${terminalButton} ${browserButton} ${custodianButton}
+                ${
+                  sessionWorkspace.narrowLayout
+                    ? nothing
+                    : html`
+                        <openclaw-tooltip
+                          .content=${
+                            dock === "bottom"
+                              ? t("chat.workspaceFiles.dockRight")
+                              : t("chat.workspaceFiles.dockBottom")
+                          }
                         >
-                          ${icons.externalLink}
-                        </button>
-                      </openclaw-tooltip>
-                    `
-                  : nothing}
+                          <button
+                            class="rail-header__action chat-workspace-rail__dock"
+                            type="button"
+                            aria-label=${
+                              dock === "bottom"
+                                ? t("chat.workspaceFiles.dockRight")
+                                : t("chat.workspaceFiles.dockBottom")
+                            }
+                            @click=${() =>
+                              sessionWorkspace.onSetDock(dock === "bottom" ? "right" : "bottom")}
+                          >
+                            ${dock === "bottom" ? icons.panelRightOpen : icons.panelBottomOpen}
+                          </button>
+                        </openclaw-tooltip>
+                      `
+                }
+                <openclaw-tooltip .content=${t("chat.workspaceFiles.refresh")}>
+                  <button
+                    class="rail-header__action chat-workspace-rail__refresh"
+                    type="button"
+                    aria-label=${t("chat.workspaceFiles.refresh")}
+                    ?disabled=${sessionWorkspace.loading}
+                    @click=${sessionWorkspace.onRefresh}
+                  >
+                    ${icons.refresh}
+                  </button>
+                </openclaw-tooltip>
+                <openclaw-tooltip
+                  .content=${`${t("chat.workspaceFiles.collapse")} (${formatKeyboardShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.workspaceFiles)})`}
+                >
+                  <button
+                    type="button"
+                    class="rail-header__action chat-workspace-rail__collapse-toggle"
+                    aria-label=${t("chat.workspaceFiles.collapse")}
+                    aria-keyshortcuts=${isApplePlatform() ? "Meta+Shift+B" : "Control+Shift+B"}
+                    aria-expanded="true"
+                    @click=${sessionWorkspace.onToggleCollapsed}
+                  >
+                    <span class="nav-collapse-toggle__icon" aria-hidden="true"
+                      >${dock === "bottom" ? icons.panelBottomClose : icons.panelRightClose}</span
+                    >
+                  </button>
+                </openclaw-tooltip>
               </div>
-              ${selectedRoot.runtimePath
-                ? html`<div class="chat-workspace-rail__file-meta mono">
-                    ${t("chat.workspaceFiles.runtimePath", {
-                      path: selectedRoot.runtimePath,
-                    })}
-                  </div>`
-                : nothing}
-            </div>
-          `
-        : nothing}
-      ${sessionWorkspace.list?.root || selectedRoot?.hostPath
-        ? html`
-            <openclaw-tooltip .content=${selectedRoot?.hostPath ?? sessionWorkspace.list?.root}>
-              <div class="chat-workspace-rail__path">
-                ${selectedRoot?.hostPath ?? sessionWorkspace.list?.root}
-              </div>
-            </openclaw-tooltip>
-          `
-        : nothing}
-      ${renderSessionSummary()}
-      ${sessionWorkspace.error
-        ? html`<div class="chat-workspace-rail__state chat-workspace-rail__state--error">
-            ${sessionWorkspace.error}
-          </div>`
-        : rootUnavailable
-          ? renderRootState()
-          : sessionWorkspace.loading && !hasItems
-            ? renderPanelLoadingSkeleton("files", t("chat.workspaceFiles.loading"))
-            : !hasItems && selectedRoot?.kind === "outputs"
-              ? renderRootState()
-              : html`
-                  <div class="chat-workspace-rail__scroll">
-                    ${hasSessionItems
+            </div>`
+      }
+      ${renderWorkspaceRootSelector(sessionWorkspace)}
+      ${
+        selectedRoot
+          ? html`
+              <div class="chat-workspace-rail__browser-tools chat-workspace-rail__file-main">
+                <div class="row">
+                  <strong class="chat-workspace-rail__file-name"
+                    >${workspaceRootLabel(selectedRoot)}</strong
+                  >
+                  ${
+                    selectedRoot.writable
+                      ? nothing
+                      : html`<span class="chat-workspace-rail__root-badge"
+                          >${t("chat.workspaceFiles.readOnly")}</span
+                        >`
+                  }
+                  ${
+                    !selectedRoot.available
+                      ? html`<span class="chat-workspace-rail__root-badge"
+                          >${t("chat.workspaceFiles.unavailable")}</span
+                        >`
+                      : nothing
+                  }
+                  ${
+                    selectedRoot.kind === "outputs"
                       ? html`
-                          ${renderWorkspaceRailSection(
-                            t("chat.workspaceFiles.changed"),
-                            renderFileRows(modifiedFiles),
-                          )}
-                          ${renderWorkspaceRailSection(
-                            t("chat.workspaceFiles.read"),
-                            renderFileRows(readFiles),
-                          )}
-                          ${renderWorkspaceRailSection(
-                            t("chat.workspaceFiles.artifacts"),
-                            renderArtifactRows(),
-                          )}
+                          <openclaw-tooltip .content=${t("chat.workspaceFiles.revealOutputs")}>
+                            <button
+                              type="button"
+                              class="chat-workspace-rail__row-action"
+                              aria-label=${t("chat.workspaceFiles.revealOutputs")}
+                              ?disabled=${!selectedRoot.available || !sessionWorkspace.onRevealRoot}
+                              @click=${() => {
+                                if (selectedRoot.available) {
+                                  sessionWorkspace.onRevealRoot?.();
+                                }
+                              }}
+                            >
+                              ${icons.externalLink}
+                            </button>
+                          </openclaw-tooltip>
                         `
-                      : nothing}
-                    ${renderWorkspaceRailSection(
-                      selectedRoot?.kind === "outputs"
-                        ? t("chat.workspaceFiles.outputsFiles")
-                        : selectedRoot?.kind === "shared"
-                          ? t("chat.workspaceFiles.sharedFiles")
-                          : t("chat.workspaceFiles.browser"),
-                      browser && !rootUnavailable ? renderBrowserRows() : nothing,
-                    )}
-                  </div>
-                `}
+                      : nothing
+                  }
+                </div>
+                ${
+                  selectedRoot.runtimePath
+                    ? html`<div class="chat-workspace-rail__file-meta mono">
+                        ${t("chat.workspaceFiles.runtimePath", {
+                          path: selectedRoot.runtimePath,
+                        })}
+                      </div>`
+                    : nothing
+                }
+              </div>
+            `
+          : nothing
+      }
+      ${
+        sessionWorkspace.list?.root || selectedRoot?.hostPath
+          ? html`
+              <openclaw-tooltip .content=${selectedRoot?.hostPath ?? sessionWorkspace.list?.root}>
+                <div class="chat-workspace-rail__path">
+                  ${selectedRoot?.hostPath ?? sessionWorkspace.list?.root}
+                </div>
+              </openclaw-tooltip>
+            `
+          : nothing
+      }
+      ${renderSessionSummary()}
+      ${
+        sessionWorkspace.error
+          ? html`<div class="chat-workspace-rail__state chat-workspace-rail__state--error">
+              ${sessionWorkspace.error}
+            </div>`
+          : rootUnavailable
+            ? renderRootState()
+            : sessionWorkspace.loading && !hasItems
+              ? renderPanelLoadingSkeleton("files", t("chat.workspaceFiles.loading"))
+              : !hasItems && selectedRoot?.kind === "outputs"
+                ? renderRootState()
+                : html`
+                    <div class="chat-workspace-rail__scroll">
+                      ${
+                        hasSessionItems
+                          ? html`
+                              ${renderWorkspaceRailSection(
+                                t("chat.workspaceFiles.changed"),
+                                renderFileRows(modifiedFiles),
+                              )}
+                              ${renderWorkspaceRailSection(
+                                t("chat.workspaceFiles.read"),
+                                renderFileRows(readFiles),
+                              )}
+                              ${renderWorkspaceRailSection(
+                                t("chat.workspaceFiles.artifacts"),
+                                renderArtifactRows(),
+                              )}
+                            `
+                          : nothing
+                      }
+                      ${renderWorkspaceRailSection(
+                        selectedRoot?.kind === "outputs"
+                          ? t("chat.workspaceFiles.outputsFiles")
+                          : selectedRoot?.kind === "shared"
+                            ? t("chat.workspaceFiles.sharedFiles")
+                            : t("chat.workspaceFiles.browser"),
+                        browser && !rootUnavailable ? renderBrowserRows() : nothing,
+                      )}
+                    </div>
+                  `
+      }
     </aside>
   `;
 }

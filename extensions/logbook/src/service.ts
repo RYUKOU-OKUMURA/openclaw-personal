@@ -15,7 +15,7 @@ import { parseModelRef, resolveLogbookConfig, type LogbookConfig } from "./confi
 import { buildLogbookContext } from "./context.js";
 import { buildAskPrompt, buildStandupPrompt } from "./prompts.js";
 import { dayKeyFor, LogbookStore } from "./store.js";
-import type { LogbookBatch, LogbookCard } from "./types.js";
+import type { LogbookBatch, LogbookStatus } from "./types.js";
 
 const ANALYSIS_TICK_MS = 60 * 1000;
 const PRUNE_TICK_MS = 60 * 60 * 1000;
@@ -59,31 +59,11 @@ function unwrapInvokePayload(raw: unknown): SnapshotPayload | null {
 /** Capture commands in preference order: app nodes first, headless node hosts second. */
 const CAPTURE_COMMANDS = ["screen.snapshot", "logbook.snapshot"] as const;
 
-type LogbookStatus = {
-  captureEnabled: boolean;
-  capturePaused: boolean;
-  screenIndex: number;
-  captureIntervalSeconds: number;
-  analysisIntervalMinutes: number;
-  retentionDays: number;
-  nodeId?: string;
-  nodeName?: string;
-  lastCaptureAtMs?: number;
-  lastCaptureError?: string;
-  pendingFrames: number;
-  analysisRunning: boolean;
-  lastBatch?: Pick<LogbookBatch, "id" | "day" | "status" | "endMs" | "error">;
-  visionModel?: string;
-  visionModelSource: "config" | "media-defaults" | "missing";
-  today: string;
-  todayCards: number;
-  timeZone: string;
-};
-
 export class LogbookService {
   private store: LogbookStore | null = null;
+  private readonly operations = new Set<Promise<unknown>>();
+  private stopping: Promise<void> | undefined;
   private lifetime = new AbortController();
-  private textInFlight = 0;
   private captureTimer: NodeJS.Timeout | null = null;
   private analysisTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
@@ -111,9 +91,8 @@ export class LogbookService {
   ) {}
 
   start(): void {
+    this.stopping = undefined;
     this.lifetime = new AbortController();
-    this.captureInFlight = false;
-    this.analysisInFlight = false;
     this.store = new LogbookStore(this.deps.dataDir);
     // Interrupted stages retain durable progress and their retry budget.
     this.store.resetRunningBatches();
@@ -135,8 +114,10 @@ export class LogbookService {
     );
   }
 
-  stop(): void {
-    this.lifetime.abort();
+  stop(): Promise<void> {
+    if (this.stopping) {
+      return this.stopping;
+    }
     for (const timer of [this.captureTimer, this.analysisTimer, this.pruneTimer]) {
       if (timer) {
         clearInterval(timer);
@@ -145,18 +126,31 @@ export class LogbookService {
     this.captureTimer = null;
     this.analysisTimer = null;
     this.pruneTimer = null;
-    this.store?.close();
-    this.store = null;
+    const store = this.store;
+    // Admitted work retains its connection through its final writes and error recording.
+    this.stopping = Promise.allSettled(this.operations).then(() => {
+      this.lifetime.abort();
+      store?.close();
+      this.store = null;
+    });
+    return this.stopping;
+  }
+
+  private trackOperation<T>(run: () => Promise<T>): Promise<T> {
+    // Register ownership before runtime hooks can reenter shutdown.
+    const operation = Promise.resolve().then(run);
+    this.operations.add(operation);
+    const settled = () => this.operations.delete(operation);
+    void operation.then(settled, settled);
+    return operation;
   }
 
   private requireStore(): LogbookStore {
-    if (!this.store) {
+    if (this.stopping || !this.store) {
       throw new Error("Logbook service is not running");
     }
     return this.store;
   }
-
-  // ── Capture ────────────────────────────────────────────────────────
 
   setCapturePaused(paused: boolean): void {
     this.capturePaused = paused;
@@ -261,7 +255,14 @@ export class LogbookService {
   }
 
   private async captureTick(): Promise<void> {
-    if (!this.config.captureEnabled || this.capturePaused || this.captureInFlight || !this.store) {
+    const store = this.store;
+    if (
+      this.stopping ||
+      !this.config.captureEnabled ||
+      this.capturePaused ||
+      this.captureInFlight ||
+      !store
+    ) {
       return;
     }
     if (this.captureBackoffTicks > 0) {
@@ -269,93 +270,88 @@ export class LogbookService {
       return;
     }
     this.captureInFlight = true;
-    const lifetime = this.lifetime;
-    try {
-      const resolved = await this.resolveNode();
-      lifetime.signal.throwIfAborted();
-      if ("reason" in resolved) {
-        if (this.lastCaptureError !== resolved.reason) {
-          this.deps.logger.warn(`logbook: ${resolved.reason}`);
+    return this.trackOperation(async () => {
+      try {
+        const resolved = await this.resolveNode();
+        if ("reason" in resolved) {
+          if (this.lastCaptureError !== resolved.reason) {
+            this.deps.logger.warn(`logbook: ${resolved.reason}`);
+          }
+          this.lastCaptureError = resolved.reason;
+          return;
         }
-        this.lastCaptureError = resolved.reason;
-        return;
-      }
-      const node = resolved.node;
-      const screenIndex = this.screenIndex();
-      const invoked = await this.deps.runtime.nodes.invoke({
-        nodeId: node.nodeId,
-        command: node.command,
-        params: {
+        const node = resolved.node;
+        const screenIndex = this.screenIndex();
+        const invoked = await this.deps.runtime.nodes.invoke({
+          nodeId: node.nodeId,
+          command: node.command,
+          params: {
+            screenIndex,
+            maxWidth: this.config.maxWidth,
+            quality: JPEG_QUALITY,
+            format: "jpeg",
+          },
+          timeoutMs: 30_000,
+        });
+        const raw = unwrapInvokePayload(invoked);
+        if (raw?.error) {
+          throw new Error(raw.error);
+        }
+        const rawBase64 = raw?.base64;
+        if (rawBase64 === undefined || rawBase64 === "") {
+          throw new Error(`${node.command} returned no image payload`);
+        }
+        if (typeof rawBase64 !== "string") {
+          throw new Error(`${node.command} returned invalid image payload`);
+        }
+        const base64 = canonicalizeBase64(rawBase64);
+        if (!base64) {
+          throw new Error(`${node.command} returned invalid image payload`);
+        }
+        const buffer = Buffer.from(base64, "base64");
+        const capturedAtMs = Date.now();
+        const day = dayKeyFor(capturedAtMs);
+        const contentHash = createHash("sha256").update(buffer).digest("hex");
+        // Unchanged consecutive frames mean the user is idle (or away); they are
+        // stored for the filmstrip but excluded from analysis batches.
+        const idle = store.lastFrame()?.contentHash === contentHash;
+        const filePath = store.frameFilePath(day, capturedAtMs);
+        // Screen captures can contain secrets; keep them owner-only.
+        mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+        writeFileSync(filePath, buffer, { mode: 0o600 });
+        store.insertFrame({
+          capturedAtMs,
+          day,
+          path: filePath,
           screenIndex,
-          maxWidth: this.config.maxWidth,
-          quality: JPEG_QUALITY,
-          format: "jpeg",
-        },
-        timeoutMs: 30_000,
-      });
-      lifetime.signal.throwIfAborted();
-      const raw = unwrapInvokePayload(invoked);
-      if (raw?.error) {
-        throw new Error(raw.error);
-      }
-      const rawBase64 = raw?.base64;
-      if (rawBase64 === undefined || rawBase64 === "") {
-        throw new Error(`${node.command} returned no image payload`);
-      }
-      if (typeof rawBase64 !== "string") {
-        throw new Error(`${node.command} returned invalid image payload`);
-      }
-      const base64 = canonicalizeBase64(rawBase64);
-      if (!base64) {
-        throw new Error(`${node.command} returned invalid image payload`);
-      }
-      const buffer = Buffer.from(base64, "base64");
-      const capturedAtMs = Date.now();
-      const day = dayKeyFor(capturedAtMs);
-      const contentHash = createHash("sha256").update(buffer).digest("hex");
-      // Unchanged consecutive frames mean the user is idle (or away); they are
-      // stored for the filmstrip but excluded from analysis batches.
-      const idle = this.store.lastFrame()?.contentHash === contentHash;
-      const filePath = this.store.frameFilePath(day, capturedAtMs);
-      // Screen captures can contain secrets; keep them owner-only.
-      mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-      writeFileSync(filePath, buffer, { mode: 0o600 });
-      this.store.insertFrame({
-        capturedAtMs,
-        day,
-        path: filePath,
-        screenIndex,
-        width: raw?.width,
-        height: raw?.height,
-        byteSize: buffer.byteLength,
-        contentHash,
-        idle,
-      });
-      this.lastCaptureAtMs = capturedAtMs;
-      this.lastCaptureError = undefined;
-      this.captureFailures = 0;
-      this.failedNodeIds.clear();
-    } catch (err) {
-      this.captureFailures += 1;
-      if (this.cachedNode) {
-        this.failedNodeIds.add(this.cachedNode.nodeId);
-      }
-      this.cachedNode = null;
-      this.lastCaptureError = err instanceof Error ? err.message : String(err);
-      if (this.captureFailures >= CAPTURE_FAILURE_THRESHOLD) {
-        this.captureBackoffTicks = CAPTURE_FAILURE_PAUSE_TICKS;
-        this.deps.logger.warn(
-          `logbook: capture failing (${this.lastCaptureError}); backing off for ${CAPTURE_FAILURE_PAUSE_TICKS} ticks`,
-        );
-      }
-    } finally {
-      if (this.lifetime === lifetime) {
+          width: raw?.width,
+          height: raw?.height,
+          byteSize: buffer.byteLength,
+          contentHash,
+          idle,
+        });
+        this.lastCaptureAtMs = capturedAtMs;
+        this.lastCaptureError = undefined;
+        this.captureFailures = 0;
+        this.failedNodeIds.clear();
+      } catch (err) {
+        this.captureFailures += 1;
+        if (this.cachedNode) {
+          this.failedNodeIds.add(this.cachedNode.nodeId);
+        }
+        this.cachedNode = null;
+        this.lastCaptureError = err instanceof Error ? err.message : String(err);
+        if (this.captureFailures >= CAPTURE_FAILURE_THRESHOLD) {
+          this.captureBackoffTicks = CAPTURE_FAILURE_PAUSE_TICKS;
+          this.deps.logger.warn(
+            `logbook: capture failing (${this.lastCaptureError}); backing off for ${CAPTURE_FAILURE_PAUSE_TICKS} ticks`,
+          );
+        }
+      } finally {
         this.captureInFlight = false;
       }
-    }
+    });
   }
-
-  // ── Analysis ───────────────────────────────────────────────────────
 
   private resolveVisionModel(): {
     ref?: { provider: string; model: string; profile?: string; preferredProfile?: string };
@@ -407,7 +403,7 @@ export class LogbookService {
     store.resetErrorBatches();
     if (!store.nextPendingBatch()) {
       // Force-close the current window so "analyze now" needs no elapsed time.
-      if (!this.enqueueNextBatch(true)) {
+      if (!this.enqueueNextBatch(store, true)) {
         return { started: false, reason: "no unanalyzed activity captured yet" };
       }
     }
@@ -416,7 +412,8 @@ export class LogbookService {
   }
 
   private async analysisTick(): Promise<void> {
-    if (this.analysisInFlight || !this.store) {
+    const store = this.store;
+    if (this.stopping || this.analysisInFlight || !store) {
       return;
     }
     // Without a vision model, leave frames unbatched and batches pending so
@@ -431,31 +428,28 @@ export class LogbookService {
       return;
     }
     this.analysisInFlight = true;
-    const lifetime = this.lifetime;
-    try {
-      this.enqueueElapsedWindow();
-      for (let i = 0; i < 4; i += 1) {
-        const batch = this.store.nextPendingBatch();
-        if (!batch) {
+    return this.trackOperation(async () => {
+      try {
+        if (this.stopping) {
           return;
         }
-        await this.runBatch(batch);
-        lifetime.signal.throwIfAborted();
-      }
-    } catch (err) {
-      if (lifetime.signal.aborted) {
-        return;
-      }
-      this.deps.logger.error(`logbook: analysis tick failed: ${String(err)}`);
-    } finally {
-      if (this.lifetime === lifetime) {
+        this.enqueueElapsedWindow(store);
+        for (let i = 0; i < 4 && !this.stopping; i += 1) {
+          const batch = store.nextPendingBatch();
+          if (!batch) {
+            return;
+          }
+          await this.runBatch(store, batch);
+        }
+      } catch (err) {
+        this.deps.logger.error(`logbook: analysis tick failed: ${String(err)}`);
+      } finally {
         this.analysisInFlight = false;
       }
-    }
+    });
   }
 
-  private enqueueNextBatch(force = false): boolean {
-    const store = this.requireStore();
+  private enqueueNextBatch(store: LogbookStore, force = false): boolean {
     const selection = selectBatchFrames({
       frames: store.unbatchedActiveFrames(2000),
       windowMs: this.config.analysisIntervalMinutes * 60_000,
@@ -474,22 +468,22 @@ export class LogbookService {
     return true;
   }
 
-  private enqueueElapsedWindow(): void {
+  private enqueueElapsedWindow(store: LogbookStore): void {
     // Windows close on elapsed wall-clock or on a capture gap; both cases are
     // resolved by selectBatchFrames against the oldest unbatched frame.
-    while (this.enqueueNextBatch()) {
+    while (this.enqueueNextBatch(store)) {
       // Continue until all elapsed windows are queued.
     }
   }
 
-  private async runBatch(batch: LogbookBatch): Promise<void> {
+  private async runBatch(store: LogbookStore, batch: LogbookBatch): Promise<void> {
     const vision = this.resolveVisionModel();
     if (!vision.ref) {
       return;
     }
     await runLogbookBatch({
       batch,
-      store: this.requireStore(),
+      store,
       runtime: this.deps.runtime,
       fullConfig: this.deps.fullConfig,
       config: this.config,
@@ -499,16 +493,13 @@ export class LogbookService {
     });
   }
 
-  // ── Q&A / standup ──────────────────────────────────────────────────
-
   async standup(
     day: string,
     refresh: boolean,
   ): Promise<{ day: string; text: string; updatedMs: number }> {
-    this.textInFlight += 1;
+    const store = this.requireStore();
     const signal = this.lifetime.signal;
-    try {
-      const store = this.requireStore();
+    return this.trackOperation(async () => {
       if (!refresh) {
         const cached = store.getStandup(day);
         if (cached) {
@@ -549,17 +540,14 @@ export class LogbookService {
         throw new Error("standup save failed");
       }
       return saved;
-    } finally {
-      this.textInFlight -= 1;
-    }
+    });
   }
 
   async ask(day: string, question: string): Promise<string> {
-    this.textInFlight += 1;
+    const store = this.requireStore();
     const signal = this.lifetime.signal;
-    try {
-      const store = this.requireStore();
-      const observations = store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER).slice(-200);
+    return this.trackOperation(async () => {
+      const observations = store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER, 200);
       const result = await this.deps.runtime.llm.complete({
         model: this.config.textModel,
         signal,
@@ -583,9 +571,7 @@ export class LogbookService {
         throw new Error("question answering model returned no text");
       }
       return text;
-    } finally {
-      this.textInFlight -= 1;
-    }
+    });
   }
 
   // ── Introspection ──────────────────────────────────────────────────
@@ -603,22 +589,18 @@ export class LogbookService {
   }
 
   deleteDay(day: string) {
-    if (this.analysisInFlight || this.captureInFlight || this.textInFlight > 0) {
+    if (this.analysisInFlight || this.captureInFlight || this.operations.size > 0) {
       throw new Error("Logbook is busy; wait for active capture or analysis before deleting a day");
     }
     return this.requireStore().deleteDay(day);
   }
 
-  cardsForDay(day: string): LogbookCard[] {
-    return this.requireStore().cardsForDay(day);
+  timelineForDay(day: string): ReturnType<LogbookStore["timelineForDay"]> {
+    return this.requireStore().timelineForDay(day);
   }
 
   listDays(): ReturnType<LogbookStore["listDays"]> {
     return this.requireStore().listDays();
-  }
-
-  dayStats(day: string): ReturnType<LogbookStore["dayStats"]> {
-    return this.requireStore().dayStats(day);
   }
 
   frameById(id: number): ReturnType<LogbookStore["frameById"]> {
@@ -659,7 +641,7 @@ export class LogbookService {
       visionModel: vision.ref ? `${vision.ref.provider}/${vision.ref.model}` : undefined,
       visionModelSource: vision.source,
       today,
-      todayCards: store.cardsForDay(today).length,
+      todayCards: store.countCardsForDay(today),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
   }

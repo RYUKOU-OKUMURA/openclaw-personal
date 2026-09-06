@@ -54,7 +54,8 @@ export async function listHostDirectories(
   options: ListHostDirectoriesOptions = {},
 ): Promise<FsListDirResult> {
   const home = os.homedir();
-  const requested = requestedPath?.trim() || home;
+  // Returned paths are exact: trailing whitespace can name a different entry.
+  const requested = requestedPath || home;
   if (!path.isAbsolute(requested)) {
     throw new Error("fs.listDir path must be absolute");
   }

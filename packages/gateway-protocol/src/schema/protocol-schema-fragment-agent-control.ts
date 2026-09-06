@@ -12,6 +12,8 @@ export const AgentControlProtocolSchemas = {
   WorkerEnvironmentState: environments.WorkerEnvironmentStateSchema,
   WorkerTunnelStatus: environments.WorkerTunnelStatusSchema,
   WorkerDesktopAppId: environments.WorkerDesktopAppIdSchema,
+  RequiredNodeCommandState: environments.RequiredNodeCommandStateSchema,
+  RequiredNodeCommand: environments.RequiredNodeCommandSchema,
   WorkerEnvironmentMetadata: environments.WorkerEnvironmentMetadataSchema,
   WorkerSlotSummary: environments.WorkerSlotSummarySchema,
   EnvironmentSummary: environments.EnvironmentSummarySchema,

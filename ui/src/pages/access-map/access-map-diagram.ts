@@ -53,12 +53,14 @@ export function renderAccessMapDiagram(p: {
         </header>
         <div class="access-map-inventory">
           <h3>
-            ${inbox
-              ? t("accessMap.inboxCount", {
-                  files: String(inbox.counts.files),
-                  folders: String(inbox.counts.folders),
-                })
-              : t("accessMap.inboxUnavailable")}
+            ${
+              inbox
+                ? t("accessMap.inboxCount", {
+                    files: String(inbox.counts.files),
+                    folders: String(inbox.counts.folders),
+                  })
+                : t("accessMap.inboxUnavailable")
+            }
           </h3>
           <div class="access-map-cards">
             ${inbox?.entries.map(
@@ -76,8 +78,9 @@ export function renderAccessMapDiagram(p: {
                 @click=${() => p.onShare(mount)}
               >
                 ${icon("link")}<strong
-                  >${mount.containerRoot.split("/").findLast(Boolean) ??
-                  mount.containerRoot}</strong
+                  >${
+                    mount.containerRoot.split("/").findLast(Boolean) ?? mount.containerRoot
+                  }</strong
                 ><span class="access-map-badge ${mount.writable ? "is-rw" : "is-ro"}"
                   >${t(
                     mount.writable ? "accessMap.badgeReadWrite" : "accessMap.badgeReadOnly",
@@ -88,25 +91,32 @@ export function renderAccessMapDiagram(p: {
             <button type="button" class="access-map-entry is-workdir" @click=${p.onDetails}>
               ${icon("folder")}<strong>${t("accessMap.workspaceLocation")}</strong>
               <small
-                >${report.sandbox.runtimeWorkdir ??
-                report.sandbox.effectiveHostWorkspaceRoot}</small
+                >${
+                  report.sandbox.runtimeWorkdir ?? report.sandbox.effectiveHostWorkspaceRoot
+                }</small
               >
             </button>
-            ${inbox && !inbox.entries.length && !shares.length
-              ? html`<div class="access-map-entry is-placeholder">
-                  ${icon("folder")}<strong>${t("accessMap.inboxEmpty")}</strong
-                  ><small>${t("accessMap.inboxPlaceholder")}</small>
-                </div>`
-              : nothing}
+            ${
+              inbox && !inbox.entries.length && !shares.length
+                ? html`<div class="access-map-entry is-placeholder">
+                    ${icon("folder")}<strong>${t("accessMap.inboxEmpty")}</strong
+                    ><small>${t("accessMap.inboxPlaceholder")}</small>
+                  </div>`
+                : nothing
+            }
           </div>
-          ${inbox?.counts.other
-            ? html`<small
-                >${t("accessMap.inboxOther", { count: String(inbox.counts.other) })}</small
-              >`
-            : nothing}
-          ${inbox?.truncated
-            ? html`<p class="access-map-help">${t("accessMap.inboxTruncated")}</p>`
-            : nothing}
+          ${
+            inbox?.counts.other
+              ? html`<small
+                  >${t("accessMap.inboxOther", { count: String(inbox.counts.other) })}</small
+                >`
+              : nothing
+          }
+          ${
+            inbox?.truncated
+              ? html`<p class="access-map-help">${t("accessMap.inboxTruncated")}</p>`
+              : nothing
+          }
         </div>
       </div>
     </div>
@@ -121,11 +131,13 @@ export function renderAccessMapDiagram(p: {
       <button type="button" class="access-map-connection" @click=${p.onDetails}>
         ${icon("globe")}<span
           >${t("accessMap.networkChip")}<strong
-            >${report.sandbox.network === "none"
-              ? t("accessMap.networkNone")
-              : t("accessMap.networkEnabled", {
-                  network: report.sandbox.network ?? t("common.unknown"),
-                })}</strong
+            >${
+              report.sandbox.network === "none"
+                ? t("accessMap.networkNone")
+                : t("accessMap.networkEnabled", {
+                    network: report.sandbox.network ?? t("common.unknown"),
+                  })
+            }</strong
           ></span
         >
       </button>

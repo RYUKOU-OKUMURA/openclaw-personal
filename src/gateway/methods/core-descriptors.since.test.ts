@@ -80,16 +80,22 @@ const TRAIN_2026_7_METHODS = [
   "tasks.dismiss",
 ] as const;
 
-const CURRENT_TRAIN_METHODS = [
+const TRAIN_2026_8_METHODS = [
+  "canvas.document.view",
   "sandbox.explain",
   "sandbox.entries.add",
   "sandbox.recreate",
   "diagnostics.lanes",
   "plugins.inspect",
+  "plugins.controlUi.list",
+  "plugins.controlUi.reload",
+  "plugins.controlUi.report",
+  "plugins.controlUi.status",
   "device.pair.setupStatus",
   "openclaw.setup.activate.start",
   "exec.approval.grants.list",
   "exec.approval.grants.revoke",
+  "models.authOrderSet",
   "sessions.patchMany",
   "sessions.goal.update",
   "sessions.goal.clear",
@@ -117,11 +123,24 @@ const CURRENT_TRAIN_METHODS = [
   "secrets.store.list",
   "secrets.store.set",
   "secrets.store.delete",
+  "users.authConnect.answer",
+  "users.authConnect.cancel",
+  "users.authConnect.status",
+  "users.authConnect.start",
+  "users.authConnect.catalog",
+  "users.linkAuthProfile",
+  "users.listAuthLinks",
+  "users.listModelAccounts",
+  "users.selectModelAccount",
   "users.prefs.get",
   "users.prefs.set",
+  "users.mentionable",
+  "mentions.list",
+  "mentions.dismiss",
   "push.web.preferences.get",
   "push.web.preferences.set",
   "users.setRole",
+  "users.unlinkAuthProfile",
   "desktop.observe",
   "desktop.launch",
   "device.scopes.requestUpgrade",
@@ -149,6 +168,8 @@ const CURRENT_TRAIN_METHODS = [
   "skills.library.import",
   "skills.library.upload",
   "sessions.title.prepare",
+  "transcripts.list",
+  "transcripts.get",
 ] as const;
 
 describe("core gateway method release trains", () => {
@@ -170,7 +191,10 @@ describe("core gateway method release trains", () => {
         .filter((method) => method.since === "2026.8")
         .map((method) => method.name)
         .toSorted(),
-    ).toEqual(CURRENT_TRAIN_METHODS.toSorted());
+    ).toEqual(TRAIN_2026_8_METHODS.toSorted());
+    for (const method of ["update.runs.get", "update.runs.list"]) {
+      expect(methods.find((candidate) => candidate.name === method)?.since).toBe("2026.9");
+    }
     expect(methods.find((method) => method.name === "fs.pickPath")?.since).toBe("2026.9");
     expect(methods.find((method) => method.name === "update.hold")?.since).toBe("2026.8");
     expect(methods.find((method) => method.name === "sessions.catalog.startTerminal")?.since).toBe(
@@ -189,5 +213,8 @@ describe("core gateway method release trains", () => {
       expect(methods.find((candidate) => candidate.name === method)?.since).toBe("2026.8");
     }
     expect(methods.find((method) => method.name === "worker.desktop.launch")?.since).toBe("2026.8");
+    expect(methods.find((method) => method.name === "gateway.suspend.handoff")?.since).toBe(
+      "2026.9",
+    );
   });
 });
