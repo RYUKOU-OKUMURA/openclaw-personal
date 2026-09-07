@@ -17,6 +17,7 @@ import {
   loadLogbookStandup,
   localDayKey,
   runLogbookAnalysisNow,
+  saveLogbookSchedule,
   setLogbookCapturePaused,
   shiftDay,
 } from "./logbook-controller.ts";
@@ -45,12 +46,18 @@ function categoryHue(category: string): number {
 }
 
 function renderStatusChips(status: LogbookStatusPayload): TemplateResult {
-  const capturing = status.captureEnabled && !status.capturePaused && !status.lastCaptureError;
+  const capturing =
+    status.captureEnabled &&
+    !status.capturePaused &&
+    !status.captureSchedulePaused &&
+    !status.lastCaptureError;
   const captureLabel = status.capturePaused
     ? t("logbook.status.paused")
-    : status.captureEnabled
-      ? t("logbook.status.capturing", { seconds: String(status.captureIntervalSeconds) })
-      : t("logbook.status.disabled");
+    : status.captureSchedulePaused && status.captureEnabled
+      ? t("logbook.status.schedulePaused")
+      : status.captureEnabled
+        ? t("logbook.status.capturing", { seconds: String(status.captureIntervalSeconds) })
+        : t("logbook.status.disabled");
   return html`
     <div class="logbook__chips">
       <span class="logbook__chip ${capturing ? "logbook__chip--ok" : "logbook__chip--warn"}">
@@ -278,6 +285,90 @@ function renderStats(state: LogbookUiState): TemplateResult | typeof nothing {
   `;
 }
 
+function renderSchedule(
+  state: LogbookControllerState,
+  client: GatewayBrowserClient | null,
+): TemplateResult | typeof nothing {
+  if (!state.status) {
+    return nothing;
+  }
+  const saved = state.status.captureSchedule;
+  // Keep unsaved edits across status polling. The preset matches the requested nightly pause.
+  const draft = state.scheduleDraft ?? {
+    enabled: saved !== null,
+    start: saved?.start ?? "23:00",
+    end: saved?.end ?? "08:00",
+  };
+  const update = (value: Partial<typeof draft>) => {
+    state.scheduleDraft = { ...draft, ...value };
+    state.requestUpdate?.();
+  };
+  return html`
+    <section class="card logbook-side__card">
+      <div class="card-title">${t("logbook.schedule.title")}</div>
+      <div class="card-sub">${t("logbook.schedule.help", { timeZone: state.status.timeZone })}</div>
+      <form
+        class="logbook-schedule"
+        @submit=${(event: Event) => {
+          event.preventDefault();
+          void saveLogbookSchedule(state, client);
+        }}
+      >
+        <label>
+          <input
+            type="checkbox"
+            .checked=${draft.enabled}
+            ?disabled=${state.actionPending || !client}
+            @change=${(event: Event) => {
+              if (event.currentTarget instanceof HTMLInputElement) {
+                update({ enabled: event.currentTarget.checked });
+              }
+            }}
+          />
+          ${t("logbook.schedule.enabled")}
+        </label>
+        <div class="logbook-schedule__times">
+          <label class="field">
+            <span>${t("logbook.schedule.start")}</span>
+            <input
+              type="time"
+              .value=${draft.start}
+              required
+              ?disabled=${!draft.enabled || state.actionPending || !client}
+              @input=${(event: Event) => {
+                if (event.currentTarget instanceof HTMLInputElement) {
+                  update({ start: event.currentTarget.value });
+                }
+              }}
+            />
+          </label>
+          <label class="field">
+            <span>${t("logbook.schedule.end")}</span>
+            <input
+              type="time"
+              .value=${draft.end}
+              required
+              ?disabled=${!draft.enabled || state.actionPending || !client}
+              @input=${(event: Event) => {
+                if (event.currentTarget instanceof HTMLInputElement) {
+                  update({ end: event.currentTarget.value });
+                }
+              }}
+            />
+          </label>
+        </div>
+        <button
+          type="submit"
+          class="btn btn--small"
+          ?disabled=${!state.scheduleDraft || state.actionPending || !client}
+        >
+          ${state.actionPending ? t("common.loading") : t("common.save")}
+        </button>
+      </form>
+    </section>
+  `;
+}
+
 function renderStandup(
   state: LogbookControllerState,
   client: GatewayBrowserClient | null,
@@ -457,8 +548,8 @@ export function renderLogbook(props: LogbookProps) {
           }
         </div>
         <aside class="logbook__side">
-          ${renderStats(state)} ${renderStandup(state, props.client)}
-          ${renderAsk(state, props.client)}
+          ${renderSchedule(state, props.connected ? props.client : null)} ${renderStats(state)}
+          ${renderStandup(state, props.client)} ${renderAsk(state, props.client)}
         </aside>
       </div>
     </section>

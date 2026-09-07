@@ -1,5 +1,6 @@
-// Shared Logbook domain shapes used by the store, pipeline, and gateway methods.
 import type { Generated } from "openclaw/plugin-sdk/sqlite-runtime";
+// Shared Logbook domain shapes used by the store, pipeline, and gateway methods.
+import type { LogbookCaptureSchedule } from "./config.js";
 
 export type LogbookFrame = {
   id: number;
@@ -86,6 +87,8 @@ export type LogbookDayStats = {
 export type LogbookStatus = {
   captureEnabled: boolean;
   capturePaused: boolean;
+  captureSchedule: LogbookCaptureSchedule | null;
+  captureSchedulePaused: boolean;
   screenIndex: number;
   captureIntervalSeconds: number;
   analysisIntervalMinutes: number;

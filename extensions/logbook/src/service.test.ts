@@ -18,6 +18,7 @@ const quietLogger = {
 
 function makeService(params: {
   nodes: NodeRecord[];
+  listNodes?: () => Promise<{ nodes: NodeRecord[] }>;
   invoke: (args: {
     nodeId: string;
     command: string;
@@ -46,7 +47,7 @@ function makeService(params: {
   const runtime = {
     config: { current: () => currentConfig, mutateConfigFile },
     nodes: {
-      list: async () => ({ nodes: params.nodes }),
+      list: params.listNodes ?? (async () => ({ nodes: params.nodes })),
       invoke: async (args: {
         nodeId: string;
         command: string;
@@ -345,6 +346,173 @@ describe("LogbookService screen selection", () => {
   });
 });
 
+describe("LogbookService capture schedule", () => {
+  it.each([
+    [
+      { start: "23:00", end: "08:00" },
+      ["22:59", "23:00", "00:00", "07:59", "08:00"],
+      [1, 1, 1, 1, 2],
+    ],
+    [{ start: "12:00", end: "13:00" }, ["11:59", "12:00", "12:59", "13:00"], [1, 1, 1, 2]],
+  ])(
+    "applies daily boundaries, restart, and manual pause for %j",
+    async (schedule, times, counts) => {
+      vi.useFakeTimers();
+      const fixture = makeService({
+        nodes: [{ nodeId: "mac", commands: ["screen.snapshot"] }],
+        config: { captureSchedule: schedule },
+        invoke: async () => framePayload,
+      });
+      try {
+        for (const [index, time] of times.entries()) {
+          vi.setSystemTime(new Date(`2026-09-07T${time}:00`));
+          if (index === 2) {
+            await fixture.service.stop();
+            fixture.service.start();
+          }
+          await fixture.tick();
+          expect(fixture.invoked).toHaveLength(counts[index]!);
+          expect(fixture.service.status().captureSchedulePaused).toBe(
+            index > 0 && index < times.length - 1,
+          );
+        }
+        fixture.service.setCapturePaused(true);
+        await fixture.tick();
+        expect(fixture.invoked).toHaveLength(2);
+        fixture.service.setCapturePaused(false);
+        await fixture.tick();
+        expect(fixture.invoked).toHaveLength(3);
+      } finally {
+        await fixture.service.stop();
+        rmSync(fixture.dataDir, { recursive: true, force: true });
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["00:00", "08:00"])(
+    "treats equal %s endpoints as an all-day capture pause",
+    async (time) => {
+      vi.useFakeTimers();
+      const fixture = makeService({
+        nodes: [{ nodeId: "mac", commands: ["screen.snapshot"] }],
+        config: { captureSchedule: { start: time, end: time } },
+        invoke: async () => framePayload,
+      });
+      try {
+        for (const hour of [0, 7, 8, 23]) {
+          vi.setSystemTime(new Date(2026, 8, 7, hour));
+          await fixture.tick();
+          expect(fixture.service.status().captureSchedulePaused).toBe(true);
+        }
+        expect(fixture.invoked).toHaveLength(0);
+        await fixture.service.setCaptureSchedule(null);
+        await fixture.tick();
+        expect(fixture.invoked).toHaveLength(1);
+      } finally {
+        await fixture.service.stop();
+        rmSync(fixture.dataDir, { recursive: true, force: true });
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("rechecks a pause boundary after asynchronous node discovery", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T22:59:59"));
+    const fixture = makeService({
+      nodes: [],
+      listNodes: async () => {
+        vi.setSystemTime(new Date("2026-09-07T23:00:00"));
+        return { nodes: [{ nodeId: "mac", commands: ["screen.snapshot"] }] };
+      },
+      config: { captureSchedule: { start: "23:00", end: "08:00" } },
+      invoke: async () => framePayload,
+    });
+    try {
+      await fixture.tick();
+      expect(fixture.invoked).toHaveLength(0);
+      expect(fixture.service.status().captureSchedulePaused).toBe(true);
+    } finally {
+      await fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it("persists only the schedule, applies it live, and preserves manual pause when removed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T23:00:00"));
+    const fixture = makeService({
+      nodes: [],
+      config: { screenIndex: 1 },
+      invoke: async () => framePayload,
+    });
+    const previous = structuredClone(fixture.currentConfig);
+    try {
+      await expect(
+        fixture.service.setCaptureSchedule({ start: "23:00", end: "08:00" }),
+      ).resolves.toMatchObject({
+        capturePaused: false,
+        captureSchedulePaused: true,
+        captureSchedule: { start: "23:00", end: "08:00" },
+      });
+      fixture.service.setCapturePaused(false);
+      expect(fixture.service.status().captureSchedulePaused).toBe(true);
+      fixture.service.setCapturePaused(true);
+      await expect(fixture.service.setCaptureSchedule(null)).resolves.toMatchObject({
+        capturePaused: true,
+        captureSchedulePaused: false,
+        captureSchedule: null,
+      });
+      expect(fixture.currentConfig).toEqual(previous);
+    } finally {
+      await fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects invalid schedules and failed writes without removing the saved pause", async () => {
+    const schedule = { start: "23:00", end: "08:00" };
+    const fixture = makeService({
+      nodes: [],
+      config: { captureSchedule: schedule },
+      invoke: async () => framePayload,
+      mutateConfig: async () => {
+        throw new Error("disk unavailable");
+      },
+    });
+    try {
+      for (const invalid of [
+        undefined,
+        {},
+        [],
+        "23:00",
+        { start: "9:00", end: "08:00" },
+        { start: "24:00", end: "08:00" },
+        { start: "23:60", end: "08:00" },
+        { ...schedule, extra: true },
+      ]) {
+        await expect(fixture.service.setCaptureSchedule(invalid)).rejects.toThrow(
+          "captureSchedule",
+        );
+        if (invalid !== undefined) {
+          expect(() => resolveLogbookConfig({ captureSchedule: invalid })).toThrow(
+            "captureSchedule",
+          );
+        }
+      }
+      expect(fixture.mutateConfigFile).not.toHaveBeenCalled();
+      await expect(fixture.service.setCaptureSchedule(null)).rejects.toThrow("disk unavailable");
+      expect(fixture.service.status().captureSchedule).toEqual(schedule);
+    } finally {
+      await fixture.service.stop();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("LogbookService text model routing", () => {
   it.each([
     ["the configured local model", " ollama/local-text-model ", "ollama/local-text-model"],
@@ -384,6 +552,8 @@ describe("LogbookService text model routing", () => {
       });
       try {
         await tick();
+        await service.setCaptureSchedule({ start: "09:00", end: "11:00" });
+        expect(service.status().captureSchedulePaused).toBe(true);
         await expect(service.analyzeNow()).resolves.toEqual({ started: true });
         await vi.waitFor(() => expect(service.status().lastBatch?.status).toBe("done"));
         expect(service.timelineForDay("2026-08-01").cards).toMatchObject([

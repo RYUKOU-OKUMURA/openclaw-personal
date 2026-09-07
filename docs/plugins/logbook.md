@@ -3,6 +3,7 @@ summary: "Optional automatic work journal built from periodic screen snapshots"
 read_when:
   - You want a Dayflow-style timeline of your day in the Control UI
   - You are enabling or configuring the bundled Logbook plugin
+  - You want to pause screen capture automatically during a daily time window
   - You want standup summaries or day recall grounded in screen activity
 title: "Logbook plugin"
 ---
@@ -206,6 +207,7 @@ and clamped to the supported range.
 | Key                       | Default | Range or values         | Behavior                                                                                                                           |
 | ------------------------- | ------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `captureEnabled`          | `true`  | boolean                 | Persistent master switch for new snapshots; the timeline remains available when `false`                                            |
+| `captureSchedule`         | unset   | `{ start, end }`        | Daily capture pause window in Gateway local time; both values use 24-hour `HH:MM`; equal times pause all day                       |
 | `captureIntervalSeconds`  | `30`    | `5`-`600`               | Delay between capture attempts                                                                                                     |
 | `analysisIntervalMinutes` | `15`    | `3`-`120`               | Target observation window; gaps and midnight can close it earlier                                                                  |
 | `nodeId`                  | unset   | node id or display name | Pins capture to one connected node; matching is case-insensitive                                                                   |
@@ -220,6 +222,49 @@ Without `nodeId`, Logbook prefers a connected app node exposing
 `logbook.snapshot`. In an unpinned setup, a failed node rotates behind other
 eligible nodes. The dashboard pause toggle is session-only and resets when the
 Gateway restarts; use `captureEnabled: false` for a persistent stop.
+
+### Schedule a daily capture pause
+
+In the Logbook tab, set the daily pause start and end times and save the
+schedule. For example, `23:00` to `08:00` stops new screen captures overnight
+and allows capture again at 08:00. Equal start and end times pause capture all day. You can choose any two times in
+24-hour `HH:MM` format. Without a saved schedule, no daily pause applies.
+
+The schedule uses the Gateway's local timezone, shown in the dashboard, even
+when the browser is in another timezone. The start time is included and the
+end time is excluded; a start later than the end crosses midnight. The saved
+schedule survives Gateway restarts and is checked before new capture attempts,
+including after the machine wakes from sleep.
+
+Only new screen captures stop. Analysis of existing frames, timeline cards,
+standup generation, and day Q&A remain available. A capture already in progress
+can finish. Manual pause and `captureEnabled: false` take precedence: leaving
+the scheduled window does not clear either setting, and manually resuming
+during the window does not bypass the schedule.
+
+To save the same schedule through the Gateway:
+
+```bash
+openclaw gateway call logbook.schedule.set --params '{"schedule":{"start":"23:00","end":"08:00"}}'
+```
+
+This saves `plugins.entries.logbook.config.captureSchedule`. To remove the
+daily pause:
+
+```bash
+openclaw gateway call logbook.schedule.set --params '{"schedule":null}'
+```
+
+Both calls require `operator.write`, an existing Logbook `config` object, and
+Gateway config reload to be enabled. They return updated status after the
+configuration applies. If the plugin has only `enabled: true`, first add
+`plugins.entries.logbook.config.captureSchedule` to the configuration and
+restart the Gateway. If a saved change cannot be applied within ten seconds,
+the call returns an error; refresh status before trying again.
+
+`logbook.status.captureSchedule` is the saved `{ start, end }` object or `null`
+when unset. `captureSchedulePaused` reports whether the current time is inside
+the window; `capturePaused` continues to report only the manual pause state.
 
 ### Change the captured display
 
@@ -274,20 +319,21 @@ explicit Logbook `visionModel` still applies.
 
 Logbook registers these Gateway RPC methods:
 
-| Method                   | Parameters               | Scope            | Result                                                                        |
-| ------------------------ | ------------------------ | ---------------- | ----------------------------------------------------------------------------- |
-| `logbook.status`         | none                     | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status      |
-| `logbook.days`           | none                     | `operator.read`  | Days with timeline-card counts and card time bounds                           |
-| `logbook.context`        | `{ day?, query? }`       | `operator.read`  | Bounded versioned context with source references and incomplete batches       |
-| `logbook.context.delete` | `{ day: "YYYY-MM-DD" }`  | `operator.write` | Deletes source and derived records for the explicit day                       |
-| `logbook.timeline`       | `{ day?: "YYYY-MM-DD" }` | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day       |
-| `logbook.frames`         | `{ startMs, endMs }`     | `operator.write` | Frame metadata in the requested epoch-millisecond range                       |
-| `logbook.frame`          | `{ frameId }`            | `operator.write` | One raw JPEG frame as base64                                                  |
-| `logbook.standup`        | `{ day?, refresh? }`     | `operator.write` | Cached or regenerated standup text for a day                                  |
-| `logbook.ask`            | `{ day?, question }`     | `operator.write` | Timeline-grounded answer for a day                                            |
-| `logbook.capture.set`    | `{ paused }`             | `operator.write` | Session-only pause state and updated status                                   |
-| `logbook.screen.set`     | `{ screenIndex }`        | `operator.write` | Persistent display selection and updated status, without changing pause state |
-| `logbook.analyze.now`    | none                     | `operator.write` | Starts pending analysis, or returns a reason it could not start               |
+| Method                   | Parameters                             | Scope            | Result                                                                        |
+| ------------------------ | -------------------------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `logbook.status`         | none                                   | `operator.read`  | Capture, analysis, model, node, Gateway day, and Gateway timezone status      |
+| `logbook.days`           | none                                   | `operator.read`  | Days with timeline-card counts and card time bounds                           |
+| `logbook.context`        | `{ day?, query? }`                     | `operator.read`  | Bounded versioned context with source references and incomplete batches       |
+| `logbook.context.delete` | `{ day: "YYYY-MM-DD" }`                | `operator.write` | Deletes source and derived records for the explicit day                       |
+| `logbook.timeline`       | `{ day?: "YYYY-MM-DD" }`               | `operator.read`  | Derived cards and day statistics; defaults to the Gateway's current day       |
+| `logbook.frames`         | `{ startMs, endMs }`                   | `operator.write` | Frame metadata in the requested epoch-millisecond range                       |
+| `logbook.frame`          | `{ frameId }`                          | `operator.write` | One raw JPEG frame as base64                                                  |
+| `logbook.standup`        | `{ day?, refresh? }`                   | `operator.write` | Cached or regenerated standup text for a day                                  |
+| `logbook.ask`            | `{ day?, question }`                   | `operator.write` | Timeline-grounded answer for a day                                            |
+| `logbook.capture.set`    | `{ paused }`                           | `operator.write` | Session-only pause state and updated status                                   |
+| `logbook.schedule.set`   | `{ schedule: { start, end } \| null }` | `operator.write` | Persistent daily capture pause window and updated status; `null` removes it   |
+| `logbook.screen.set`     | `{ screenIndex }`                      | `operator.write` | Persistent display selection and updated status, without changing pause state |
+| `logbook.analyze.now`    | none                                   | `operator.write` | Starts pending analysis, or returns a reason it could not start               |
 
 The read methods return operational state or derived text. Raw screenshot
 pixels, model-spending actions, and runtime mutations require

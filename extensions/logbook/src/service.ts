@@ -11,7 +11,13 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { runLogbookBatch } from "./analysis-runner.js";
 import { selectBatchFrames } from "./analyze.js";
-import { parseModelRef, resolveLogbookConfig, type LogbookConfig } from "./config.js";
+import {
+  parseModelRef,
+  resolveLogbookConfig,
+  parseLogbookCaptureSchedule,
+  isLogbookCaptureScheduledPaused,
+  type LogbookConfig,
+} from "./config.js";
 import { buildLogbookContext } from "./context.js";
 import { buildAskPrompt, buildStandupPrompt } from "./prompts.js";
 import { dayKeyFor, LogbookStore } from "./store.js";
@@ -166,6 +172,48 @@ export class LogbookService {
     ).screenIndex;
   }
 
+  private captureSchedule() {
+    return resolveLogbookConfig(
+      this.deps.runtime.config.current().plugins?.entries?.logbook?.config,
+    ).captureSchedule;
+  }
+
+  async setCaptureSchedule(raw: unknown): Promise<LogbookStatus> {
+    const schedule = raw === null ? undefined : parseLogbookCaptureSchedule(raw);
+    this.requireStore();
+    await this.deps.runtime.config.mutateConfigFile({
+      afterWrite: { mode: "auto" },
+      mutate: (draft) => {
+        const config = draft.plugins?.entries?.logbook?.config;
+        // Parent creation reloads the plugin and would lose the operator's manual pause.
+        if (!config) {
+          throw new Error(
+            "Initialize Logbook config and restart the Gateway before setting a capture schedule",
+          );
+        }
+        if (schedule) {
+          config.captureSchedule = schedule;
+        } else {
+          delete config.captureSchedule;
+        }
+      },
+    });
+    const deadline = Date.now() + 10_000;
+    while (true) {
+      const current = this.captureSchedule();
+      if (current?.start === schedule?.start && current?.end === schedule?.end) {
+        return this.status();
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Capture schedule was saved but not applied; check Gateway config reload and refresh Logbook status",
+        );
+      }
+      await delay(50);
+      this.requireStore();
+    }
+  }
+
   async setScreenIndex(screenIndex: unknown): Promise<LogbookStatus> {
     if (
       typeof screenIndex !== "number" ||
@@ -260,6 +308,7 @@ export class LogbookService {
       this.stopping ||
       !this.config.captureEnabled ||
       this.capturePaused ||
+      isLogbookCaptureScheduledPaused(this.captureSchedule()) ||
       this.captureInFlight ||
       !store
     ) {
@@ -278,6 +327,10 @@ export class LogbookService {
             this.deps.logger.warn(`logbook: ${resolved.reason}`);
           }
           this.lastCaptureError = resolved.reason;
+          return;
+        }
+        // Node discovery can cross a pause boundary or a sleep/resume transition.
+        if (this.capturePaused || isLogbookCaptureScheduledPaused(this.captureSchedule())) {
           return;
         }
         const node = resolved.node;
@@ -616,9 +669,12 @@ export class LogbookService {
     const today = dayKeyFor(Date.now());
     const latestBatch = store.latestBatch();
     const vision = this.resolveVisionModel();
+    const captureSchedule = this.captureSchedule();
     return {
       captureEnabled: this.config.captureEnabled,
       capturePaused: this.capturePaused,
+      captureSchedule: captureSchedule ?? null,
+      captureSchedulePaused: isLogbookCaptureScheduledPaused(captureSchedule),
       screenIndex: this.screenIndex(),
       captureIntervalSeconds: this.config.captureIntervalSeconds,
       analysisIntervalMinutes: this.config.analysisIntervalMinutes,

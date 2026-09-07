@@ -1,7 +1,10 @@
 // Logbook plugin config resolution: clamps operator input into safe runtime bounds.
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
+export type LogbookCaptureSchedule = { start: string; end: string };
+
 export type LogbookConfig = {
+  captureSchedule?: LogbookCaptureSchedule;
   captureEnabled: boolean;
   captureIntervalSeconds: number;
   analysisIntervalMinutes: number;
@@ -31,6 +34,10 @@ export function resolveLogbookConfig(raw: unknown): LogbookConfig {
   const value = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   return {
     captureEnabled: value.captureEnabled !== false,
+    captureSchedule:
+      value.captureSchedule === undefined
+        ? undefined
+        : parseLogbookCaptureSchedule(value.captureSchedule),
     captureIntervalSeconds: clampNumber(
       value.captureIntervalSeconds,
       DEFAULTS.captureIntervalSeconds,
@@ -59,4 +66,42 @@ export function parseModelRef(ref: string): { provider: string; model: string } 
     return null;
   }
   return { provider: ref.slice(0, slash), model: ref.slice(slash + 1) };
+}
+
+/** Daily pause window in the Gateway's local time, matching Logbook day boundaries. */
+export function parseLogbookCaptureSchedule(raw: unknown): LogbookCaptureSchedule {
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    !("start" in raw) ||
+    !("end" in raw)
+  ) {
+    throw new Error("captureSchedule must contain start and end in HH:MM format");
+  }
+  const value = raw;
+  const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+  if (
+    typeof value.start !== "string" ||
+    typeof value.end !== "string" ||
+    !timePattern.test(value.start) ||
+    !timePattern.test(value.end) ||
+    Object.keys(value).some((key) => key !== "start" && key !== "end")
+  ) {
+    throw new Error("captureSchedule must contain only start and end in HH:MM format");
+  }
+  return { start: value.start, end: value.end };
+}
+
+export function isLogbookCaptureScheduledPaused(
+  schedule: LogbookCaptureSchedule | undefined,
+): boolean {
+  if (!schedule) {
+    return false;
+  }
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return schedule.start < schedule.end
+    ? time >= schedule.start && time < schedule.end
+    : time >= schedule.start || time < schedule.end;
 }

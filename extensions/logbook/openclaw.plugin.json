@@ -47,6 +47,10 @@
       "label": "Frame Retention (days)",
       "help": "Completed observation snapshots older than this are deleted. Unfinished snapshots have at least seven days of grace. Text records are kept until explicitly deleted.",
       "advanced": true
+    },
+    "captureSchedule": {
+      "label": "Daily Capture Pause",
+      "help": "Pause screen capture daily between start and end (HH:MM, Gateway local time). Analysis continues. Omit to disable."
     }
   },
   "configSchema": {
@@ -85,6 +89,24 @@
       "retentionDays": {
         "type": "number",
         "default": 14
+      },
+      "captureSchedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "start": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "end": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          }
+        }
       }
     }
   },

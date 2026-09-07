@@ -3746,6 +3746,7 @@ export const en: TranslationMap & {
     status: {
       capturing: "Capturing every {seconds}s",
       paused: "Capture paused",
+      schedulePaused: "Capture paused by schedule",
       disabled: "Capture off",
       nodeHelp: "Device providing screen snapshots.",
       pending: "{count} frames queued",
@@ -3761,6 +3762,13 @@ export const en: TranslationMap & {
       pause: "Pause",
       resume: "Resume",
       analyzeNow: "Analyze now",
+    },
+    schedule: {
+      title: "Capture pause schedule",
+      help: "Daily, in {timeZone}. Only screen capture pauses; analysis continues. Matching times pause all day. Manual pause stays in effect after this window ends.",
+      enabled: "Pause capture during this window",
+      start: "Pause at",
+      end: "Resume at",
     },
     empty: {
       title: "Nothing on the timeline yet.",
