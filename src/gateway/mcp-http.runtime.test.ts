@@ -178,7 +178,23 @@ describe("resolveMcpLoopbackScopedTools", () => {
       "message",
       "cron",
     ]);
+    expect(resolveGatewayScopedTools.mock.calls[0]?.[0]).toMatchObject({
+      mediatedToolNames: new Set(),
+    });
   });
+
+  it.each([undefined, ["*"]])(
+    "materializes all coding tools for an unrestricted runtime policy: %s",
+    async (toolsAllow) => {
+      await resolveMcpLoopbackPolicyTools(scopeParams({ toolsAllow, nodeExecAllowed: true }));
+      expect(resolveGatewayScopedTools.mock.calls[0]?.[0]).toMatchObject({
+        mediatedToolNames: new Set(["read", "write", "edit", "apply_patch", "exec", "process"]),
+        excludeToolNames: new Set(),
+        includeNodeExecTool: false,
+      });
+      expect(listNodes).not.toHaveBeenCalled();
+    },
+  );
 
   it("hard-filters the surface to the grant allowlist", async () => {
     const scoped = await resolveMcpLoopbackScopedTools(
@@ -304,6 +320,41 @@ describe("resolveMcpLoopbackScopedTools", () => {
 });
 
 describe("McpLoopbackToolCache", () => {
+  it.each(["evict", "clear", "abort"])(
+    "does not cache tools when %s overtakes sandbox provisioning",
+    async (action) => {
+      const cache = new McpLoopbackToolCache();
+      const controller = new AbortController();
+      const params = scopeParams({ grantToken: "provisioning-grant", signal: controller.signal });
+      const entered = createDeferred();
+      const provisioned = createDeferred<ReturnType<typeof scopedToolFixture>>();
+      resolveGatewayScopedTools.mockImplementationOnce(() => {
+        entered.resolve();
+        return provisioned.promise;
+      });
+      const pending = cache.resolve(params);
+      const outcome = pending.catch((error: unknown) => error);
+      await entered.promise;
+      const reason = new Error("synthetic provisioning cancelled");
+      if (action === "abort") {
+        controller.abort(reason);
+      } else if (action === "evict") {
+        cache.evictGrant("provisioning-grant");
+      } else {
+        cache.clear();
+      }
+      provisioned.resolve(scopedToolFixture(["read"]));
+      if (action === "abort") {
+        expect(await outcome).toBe(reason);
+      } else {
+        expect((await pending).tools.map((tool) => tool.name)).toEqual(["read"]);
+      }
+      expect(cache.evictGrant("provisioning-grant")).toBe(false);
+      await cache.resolve({ ...params, signal: undefined });
+      expect(resolveGatewayScopedTools).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("rechecks execution availability before reusing cached schemas", async () => {
     const cache = new McpLoopbackToolCache();
     const params = scopeParams({ senderIsOwner: true, nodeExecAllowed: true });
@@ -368,7 +419,7 @@ describe("McpLoopbackToolCache", () => {
     next.abort();
     await cache.resolve({ ...params, signal: new AbortController().signal });
     expect(resolveGatewayScopedTools).toHaveBeenCalledOnce();
-    expect(resolveGatewayScopedTools.mock.calls[0]?.[0]).not.toHaveProperty("signal");
+    expect(resolveGatewayScopedTools.mock.calls[0]?.[0]).toHaveProperty("signal", next.signal);
   });
 
   it("refreshes cached bound tools when node matching preferences change", async () => {

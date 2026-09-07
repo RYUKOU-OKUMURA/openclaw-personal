@@ -64,25 +64,25 @@ function resolveLoopbackTools(delegationCapability?: "full" | "report_only") {
 }
 
 describe("resolveGatewayScopedTools delegationCapability", () => {
-  it("keeps the full loopback surface when the capability is unset or full", () => {
-    const unset = resolveLoopbackTools().tools.map((tool) => tool.name);
-    const full = resolveLoopbackTools("full").tools.map((tool) => tool.name);
+  it("keeps the full loopback surface when the capability is unset or full", async () => {
+    const unset = (await resolveLoopbackTools()).tools.map((tool) => tool.name);
+    const full = (await resolveLoopbackTools("full")).tools.map((tool) => tool.name);
 
     expect(unset).toEqual(["read", "sessions_spawn", "sessions_send", "cron", "gateway", "nodes"]);
     expect(full).toEqual(unset);
   });
 
-  it("removes delegation launchers from a report-only loopback grant", () => {
-    const tools = resolveLoopbackTools("report_only").tools.map((tool) => tool.name);
+  it("removes delegation launchers from a report-only loopback grant", async () => {
+    const tools = (await resolveLoopbackTools("report_only")).tools.map((tool) => tool.name);
 
     expect(tools).toEqual(["read", "cron", "gateway", "nodes"]);
     expect(tools).not.toContain("sessions_spawn");
     expect(tools).not.toContain("sessions_send");
   });
 
-  it("captures report-only derived authority from the gated loopback surface", () => {
+  it("captures report-only derived authority from the gated loopback surface", async () => {
     hoisted.createOpenClawToolsMock.mockClear();
-    resolveGatewayScopedTools({
+    await resolveGatewayScopedTools({
       cfg: {
         tools: {
           allow: ["read", "sessions_spawn", "sessions_send", "cron", "gateway", "nodes"],
@@ -106,7 +106,9 @@ describe("resolveGatewayScopedTools delegationCapability", () => {
 
   it("narrows report-only loopback tools to their status actions", async () => {
     hoisted.cronExecute.mockClear();
-    const cron = resolveLoopbackTools("report_only").tools.find((tool) => tool.name === "cron");
+    const cron = (await resolveLoopbackTools("report_only")).tools.find(
+      (tool) => tool.name === "cron",
+    );
 
     await expect(cron?.execute("cron-status", { action: "status" })).resolves.toEqual({
       content: [],

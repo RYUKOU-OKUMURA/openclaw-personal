@@ -108,6 +108,7 @@ import {
   mergeForcedEmbeddedAttemptToolsAllow,
 } from "../embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { buildCurrentInboundPrompt } from "../embedded-agent-runner/run/runtime-context-prompt.js";
+import { buildEmbeddedSandboxInfo } from "../embedded-agent-runner/sandbox-info.js";
 import {
   mapSandboxSkillEntriesForPrompt,
   mapSandboxSkillUsagePaths,
@@ -687,6 +688,27 @@ export async function prepareCliRunContext(
     config: params.config,
     agentId: sessionOwner,
   });
+  const policySessionKey = params.runtimePolicySessionKey ?? params.sessionKey;
+  const policyAgentId = resolveSessionAgentIds({
+    sessionKey: policySessionKey,
+    config: runConfig,
+    fallbackAgentId: params.runtimePolicySessionKey ? params.agentId : sessionAgentId,
+  }).sessionAgentId;
+  const sandboxStatus = resolveSandboxRuntimeStatus({
+    cfg: runConfig,
+    sessionKey: policySessionKey,
+    agentId: policyAgentId,
+  });
+  // A native CLI runs on the host. Sandboxed turns must select only Gateway
+  // tools, using the same exact-cap transport as restricted scheduled turns.
+  const sandboxedCliTools =
+    sandboxStatus.sandboxed &&
+    canEnforceExactToolAvailability &&
+    backendResolved.bundleMcp &&
+    !nodeClaudePlacement &&
+    !skipsTurnPreparation &&
+    !internalParams.systemAgentTool &&
+    params.disableTools !== true;
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, sessionAgentId);
   const requestedAuthProfileId = params.authProfileId?.trim() || undefined;
   let effectiveAuthProfileId =
@@ -1034,7 +1056,8 @@ export async function prepareCliRunContext(
     resolveAgentWorkspaceDir(params.config ?? {}, workspaceResolution.agentId),
   );
   const selectedNativeToolsProvideFileAccess =
-    params.cliToolAvailability === undefined || params.cliToolAvailability.native.length > 0;
+    !sandboxedCliTools &&
+    (params.cliToolAvailability === undefined || params.cliToolAvailability.native.length > 0);
   const hasBootstrapFileAccess =
     (backendResolved.nativeToolMode === "always-on" ||
       backendResolved.nativeToolMode === "selectable") &&
@@ -1112,20 +1135,13 @@ export async function prepareCliRunContext(
     );
   }
   const mcpDeliveryCaptureEnabled = bundleMcpEnabled && Boolean(mcpLoopbackRuntime);
-  const policySessionKey = params.runtimePolicySessionKey ?? params.sessionKey;
-  // The policy key owns scoped identity; direct CLI requesters fill unscoped keys only.
-  const policyAgentId = resolveSessionAgentIds({
-    sessionKey: policySessionKey,
-    config: runConfig,
-    fallbackAgentId: params.runtimePolicySessionKey ? params.agentId : sessionAgentId,
-  }).sessionAgentId;
   const nodeWorkshopEnabled =
     nodeClaudePlacement &&
     !skipsTurnPreparation &&
     params.disableTools !== true &&
     params.skillLibraryAuthoring !== undefined;
   const shouldMaterializeRuntimePolicy =
-    runtimeToolsAllowPolicy !== undefined &&
+    (runtimeToolsAllowPolicy !== undefined || sandboxedCliTools) &&
     !nodeClaudePlacement &&
     !skipsTurnPreparation &&
     !systemAgentMcpConfig &&
@@ -1167,23 +1183,24 @@ export async function prepareCliRunContext(
       ? { ...mcpContextBase, toolsAllow: [...requestedLoopbackToolsAllow] }
       : mcpContextBase;
   const resolveProjectedTools =
-    runtimeToolsAllowPolicy !== undefined
+    runtimeToolsAllowPolicy !== undefined ||
+    (sandboxedCliTools && params.cliToolAvailability === undefined)
       ? prepareDeps.resolveMcpLoopbackPolicyTools
       : prepareDeps.resolveMcpLoopbackScopedTools;
-  const projectedToolsBeforePromptBuild =
+  const projectedToolScope =
     (bundleMcpEnabled || shouldMaterializeRuntimePolicy || nodeWorkshopEnabled) &&
     mcpProjectionContext
-      ? (
-          await resolveProjectedTools({
-            cfg: runConfig,
-            signal: params.abortSignal,
-            ...mcpProjectionContext,
-            ...(skillWorkshop ? { skillWorkshop } : {}),
-            ...(mcpToolAuth ? { authProfileStore: mcpToolAuth.store } : {}),
-            ...(mcpToolAuth?.agentDir ? { authProfileStoreAgentDir: mcpToolAuth.agentDir } : {}),
-          })
-        ).tools
-      : [];
+      ? await resolveProjectedTools({
+          cfg: runConfig,
+          signal: params.abortSignal,
+          ...mcpProjectionContext,
+          ...(skillWorkshop ? { skillWorkshop } : {}),
+          ...(mcpToolAuth ? { authProfileStore: mcpToolAuth.store } : {}),
+          ...(mcpToolAuth?.agentDir ? { authProfileStoreAgentDir: mcpToolAuth.agentDir } : {}),
+        })
+      : undefined;
+  const projectedToolsBeforePromptBuild = projectedToolScope?.tools ?? [];
+  const sandboxInfo = buildEmbeddedSandboxInfo(projectedToolScope?.sandbox);
   const hookFilteredProjectedTools = applyEmbeddedAttemptToolsAllow(
     projectedToolsBeforePromptBuild,
     promptBuildToolsAllow,
@@ -1208,7 +1225,7 @@ export async function prepareCliRunContext(
       };
     }
   }
-  if (runtimeToolsAllowPolicy !== undefined && shouldMaterializeRuntimePolicy) {
+  if (shouldMaterializeRuntimePolicy) {
     params = {
       ...params,
       cliToolAvailability: {
@@ -1456,11 +1473,6 @@ export async function prepareCliRunContext(
     const loopbackServerConfig = mcpLoopbackRuntime
       ? prepareDeps.createMcpLoopbackServerConfig(mcpLoopbackRuntime.port)
       : undefined;
-    const sandboxStatus = resolveSandboxRuntimeStatus({
-      cfg: runConfig,
-      sessionKey: policySessionKey,
-      agentId: policyAgentId,
-    });
     const nativeMcpCapabilityProfile = resolveConversationCapabilityProfile({
       config: runConfig,
       sessionKey: policySessionKey,
@@ -1662,7 +1674,7 @@ export async function prepareCliRunContext(
           }
         : undefined;
     const claudeSkillsPlugin =
-      skipsTurnPreparation || nodeClaudePlacement
+      skipsTurnPreparation || nodeClaudePlacement || params.cliToolAvailability?.native.length === 0
         ? { args: [], cleanup: async () => {} }
         : await prepareDeps.prepareClaudeCliSkillsPlugin({
             backendId: backendResolved.id,
@@ -1873,6 +1885,7 @@ export async function prepareCliRunContext(
             docsPath: openClawReferences.docsPath ?? undefined,
             sourcePath: openClawReferences.sourcePath ?? undefined,
             skillsPrompt: systemPromptSkillsPrompt,
+            sandboxInfo,
             tools: promptTools,
             contextFiles,
             bootstrapMode,
@@ -2038,7 +2051,10 @@ export async function prepareCliRunContext(
         warningMode: bootstrapPromptWarningMode,
         warning: bootstrapPromptWarning,
       }),
-      sandbox: { mode: "off", sandboxed: false },
+      sandbox: {
+        mode: sandboxInfo?.enabled ? sandboxStatus.mode : "off",
+        sandboxed: sandboxInfo?.enabled === true,
+      },
       systemPrompt,
       injectedWorkspaceFiles: bootstrapInjectionStats,
       skillsPrompt: systemPromptSkillsPrompt,

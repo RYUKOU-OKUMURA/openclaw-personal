@@ -5,12 +5,76 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import * as sandboxRuntime from "../agents/sandbox.js";
+import type { SandboxBackendHandle } from "../agents/sandbox/backend-handle.types.js";
+import { createAgentToolsSandboxContext } from "../agents/test-helpers/agent-tools-sandbox-context.js";
+import { createHostSandboxFsBridge } from "../agents/test-helpers/host-sandbox-fs-bridge.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getProcessSupervisor } from "../process/supervisor/index.js";
 import { resolveGatewayScopedTools } from "./tool-resolution.js";
 
+async function createMediatedExecFixture() {
+  const workspaceDir = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-mediated-exec-")),
+  );
+  const containerWorkdir = "/sandbox/workspace";
+  const buildExecSpec = vi.fn<SandboxBackendHandle["buildExecSpec"]>(async (input) => ({
+    argv: ["sandbox-runtime", "exec", "--workdir", input.workdir!, "fixture", input.command],
+    env: {},
+    stdinMode: "pipe-closed",
+  }));
+  const sandbox = createAgentToolsSandboxContext({
+    workspaceDir,
+    containerWorkdir,
+    sessionKey: "agent:main:mediated-exec",
+    fsBridge: createHostSandboxFsBridge(workspaceDir),
+  });
+  sandbox.backend = {
+    id: "docker",
+    runtimeId: sandbox.containerName,
+    runtimeLabel: sandbox.containerName,
+    workdir: containerWorkdir,
+    buildExecSpec,
+    runShellCommand: async () => {
+      throw new Error("unexpected sandbox command outside the exec supervisor");
+    },
+  };
+  const provision = vi.spyOn(sandboxRuntime, "resolveSandboxContext").mockResolvedValue(sandbox);
+  const spawn = vi.spyOn(getProcessSupervisor(), "spawn").mockImplementation(async (input) => {
+    input.onStdout?.("sandbox exec ok\n");
+    return {
+      runId: input.runId ?? "mediated-exec",
+      pid: 1234,
+      startedAtMs: Date.now(),
+      wait: async () => ({
+        reason: "exit" as const,
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 1,
+        stdout: "sandbox exec ok\n",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      }),
+      cancel: vi.fn(),
+    };
+  });
+  return {
+    workspaceDir,
+    sandbox,
+    buildExecSpec,
+    spawn,
+    cleanup: async () => {
+      spawn.mockRestore();
+      provision.mockRestore();
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    },
+  };
+}
+
 describe("resolveGatewayScopedTools", () => {
-  beforeAll(() => {
-    resolveGatewayScopedTools({
+  beforeAll(async () => {
+    await resolveGatewayScopedTools({
       cfg: { tools: { profile: "minimal" } } as OpenClawConfig,
       sessionKey: "agent:main:telegram:group:-100123",
       messageProvider: "telegram",
@@ -19,8 +83,8 @@ describe("resolveGatewayScopedTools", () => {
     });
   });
 
-  it("force-allows the message tool for room-event loopback turns", () => {
-    const result = resolveGatewayScopedTools({
+  it("force-allows the message tool for room-event loopback turns", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: { tools: { profile: "minimal" } } as OpenClawConfig,
       sessionKey: "agent:main:telegram:group:-100123",
       messageProvider: "telegram",
@@ -32,8 +96,8 @@ describe("resolveGatewayScopedTools", () => {
     expect(messageTool?.description).toContain("This turn visible reply");
   });
 
-  it("keeps webchat room-event turns on automatic source delivery", () => {
-    const result = resolveGatewayScopedTools({
+  it("keeps webchat room-event turns on automatic source delivery", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: { tools: { profile: "minimal" } } as OpenClawConfig,
       sessionKey: "agent:main:webchat:forge-main",
       messageProvider: "webchat",
@@ -44,8 +108,8 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "message")).toBe(false);
   });
 
-  it("force-allows the message tool for routed webchat room-event turns", () => {
-    const result = resolveGatewayScopedTools({
+  it("force-allows the message tool for routed webchat room-event turns", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: { tools: { profile: "minimal" } } as OpenClawConfig,
       sessionKey: "agent:main:telegram:group:-100123",
       messageProvider: "webchat",
@@ -61,7 +125,7 @@ describe("resolveGatewayScopedTools", () => {
   it.each(["profile", "gateway-deny", "surface-exclusion"] as const)(
     "rejects collector mode after %s removes its reader",
     async (restriction) => {
-      const result = resolveGatewayScopedTools({
+      const result = await resolveGatewayScopedTools({
         cfg: {
           agents: { entries: { main: { default: true } } },
           tools: { profile: restriction === "profile" ? "messaging" : "coding" },
@@ -83,8 +147,8 @@ describe("resolveGatewayScopedTools", () => {
     },
   );
 
-  it("keeps ordinary loopback turns under the configured profile", () => {
-    const result = resolveGatewayScopedTools({
+  it("keeps ordinary loopback turns under the configured profile", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: { tools: { profile: "minimal" } } as OpenClawConfig,
       sessionKey: "agent:main:telegram:group:-100123",
       messageProvider: "telegram",
@@ -95,16 +159,16 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "message")).toBe(false);
   });
 
-  it("keeps default-agent credentials out of unbound gateway calls", () => {
+  it("keeps default-agent credentials out of unbound gateway calls", async () => {
     const cfg = {
       agents: { defaults: { imageModel: { primary: "openai/gpt-5.4-mini" } } },
     } as OpenClawConfig;
-    const unbound = resolveGatewayScopedTools({
+    const unbound = await resolveGatewayScopedTools({
       cfg,
       sessionKey: "agent:main:main",
       surface: "loopback",
     });
-    const grantBound = resolveGatewayScopedTools({
+    const grantBound = await resolveGatewayScopedTools({
       cfg,
       agentDir: "/agents/cli",
       sessionKey: "agent:main:main",
@@ -115,8 +179,8 @@ describe("resolveGatewayScopedTools", () => {
     expect(grantBound.tools.some((tool) => tool.name === "view_image")).toBe(true);
   });
 
-  it("uses the prepared vision fact for the loopback image loader", () => {
-    const result = resolveGatewayScopedTools({
+  it("uses the prepared vision fact for the loopback image loader", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: {} as OpenClawConfig,
       agentDir: "/agents/cli",
       sessionKey: "agent:main:main",
@@ -132,7 +196,7 @@ describe("resolveGatewayScopedTools", () => {
     expect(imageTool?.description).toContain("private model context");
   });
 
-  it("applies a borrowed runtime policy without reassigning session tools", () => {
+  it("applies a borrowed runtime policy without reassigning session tools", async () => {
     const cfg = {
       agents: {
         ownership: "explicit",
@@ -143,7 +207,7 @@ describe("resolveGatewayScopedTools", () => {
       },
     } satisfies OpenClawConfig;
 
-    const result = resolveGatewayScopedTools({
+    const result = await resolveGatewayScopedTools({
       cfg,
       sessionKey: "agent:main:main",
       agentId: "main",
@@ -157,7 +221,7 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "sessions_history")).toBe(true);
   });
 
-  it("rejects a runtime policy agent that conflicts with its session key", () => {
+  it("rejects a runtime policy agent that conflicts with its session key", async () => {
     const cfg = {
       agents: {
         ownership: "explicit",
@@ -165,7 +229,7 @@ describe("resolveGatewayScopedTools", () => {
       },
     } satisfies OpenClawConfig;
 
-    expect(() =>
+    await expect(
       resolveGatewayScopedTools({
         cfg,
         sessionKey: "agent:main:main",
@@ -174,13 +238,13 @@ describe("resolveGatewayScopedTools", () => {
         runtimePolicyAgentId: "main",
         surface: "loopback",
       }),
-    ).toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
+    ).rejects.toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
   });
 
   it("materializes an executable write tool on the mediated CLI surface", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-mediated-write-"));
     try {
-      const result = resolveGatewayScopedTools({
+      const result = await resolveGatewayScopedTools({
         cfg: {} as OpenClawConfig,
         sessionKey: "agent:main:cron:mediated-write",
         surface: "loopback",
@@ -203,8 +267,183 @@ describe("resolveGatewayScopedTools", () => {
     }
   });
 
-  it("applies sandbox tool denies to sandboxed loopback turns", () => {
-    const result = resolveGatewayScopedTools({
+  it.each(["rw", "ro"] as const)(
+    "keeps mediated filesystem tools inside the provisioned %s sandbox",
+    async (workspaceAccess) => {
+      const root = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-mediated-sandbox-")),
+      );
+      const workspaceDir = path.join(root, "host");
+      const sandboxDir = path.join(root, "sandbox");
+      const outsideDir = path.join(root, "outside");
+      await fs.mkdir(workspaceDir);
+      await fs.mkdir(sandboxDir);
+      await fs.mkdir(outsideDir);
+      await fs.writeFile(path.join(workspaceDir, "proof.txt"), "host contents");
+      await fs.writeFile(path.join(sandboxDir, "proof.txt"), "sandbox contents");
+      await fs.writeFile(path.join(outsideDir, "proof.txt"), "outside contents");
+      await fs.symlink(outsideDir, path.join(sandboxDir, "escape"));
+      const sandbox = createAgentToolsSandboxContext({
+        workspaceDir: sandboxDir,
+        agentWorkspaceDir: workspaceDir,
+        workspaceAccess,
+        sessionKey: "agent:main:mediated-sandbox",
+        // Use the portable bridge fixture for real I/O; the canonical tool
+        // factory still enforces workspace containment and read-only access.
+        fsBridge: createHostSandboxFsBridge(sandboxDir),
+      });
+      const provision = vi
+        .spyOn(sandboxRuntime, "resolveSandboxContext")
+        .mockResolvedValue(sandbox);
+      try {
+        const result = await resolveGatewayScopedTools({
+          cfg: {
+            agents: { defaults: { sandbox: { mode: "all", workspaceAccess } } },
+            tools: { allow: ["read", "write", "edit"], fs: { workspaceOnly: true } },
+          },
+          sessionKey: sandbox.sessionKey,
+          surface: "loopback",
+          workspaceDir,
+          mediatedToolNames: ["read", "write", "edit"],
+        });
+        const read = result.tools.find((tool) => tool.name === "read");
+        expect(result.sandbox).toBe(sandbox);
+        expect(read).toBeDefined();
+        const readResult = await read!.execute("sandbox-read", { path: "proof.txt" });
+        expect(readResult.content).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("sandbox contents"),
+            }),
+          ]),
+        );
+        await expect(read!.execute("escape-read", { path: "escape/proof.txt" })).rejects.toThrow();
+        const write = result.tools.find((tool) => tool.name === "write");
+        if (workspaceAccess === "ro") {
+          expect(write).toBeUndefined();
+          expect(result.tools.some((tool) => tool.name === "edit")).toBe(false);
+        } else {
+          expect(write).toBeDefined();
+          await write!.execute("sandbox-write", { path: "proof.txt", content: "sandbox changed" });
+          await expect(fs.readFile(path.join(sandboxDir, "proof.txt"), "utf8")).resolves.toBe(
+            "sandbox changed",
+          );
+          await expect(
+            write!.execute("escape-write", { path: "escape/proof.txt", content: "escaped" }),
+          ).rejects.toThrow();
+        }
+        await expect(fs.readFile(path.join(workspaceDir, "proof.txt"), "utf8")).resolves.toBe(
+          "host contents",
+        );
+        await expect(fs.readFile(path.join(outsideDir, "proof.txt"), "utf8")).resolves.toBe(
+          "outside contents",
+        );
+        expect(provision).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionKey: sandbox.sessionKey,
+            workspaceDir,
+          }),
+        );
+      } finally {
+        provision.mockRestore();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("fails closed when required mediation cannot provision its sandbox", async () => {
+    const provision = vi.spyOn(sandboxRuntime, "resolveSandboxContext").mockResolvedValue(null);
+    try {
+      await expect(
+        resolveGatewayScopedTools({
+          cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+          sessionKey: "agent:main:mediated-missing",
+          surface: "loopback",
+          mediatedToolNames: ["read"],
+        }),
+      ).rejects.toThrow("sandbox");
+    } finally {
+      provision.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: "unset exec policy", exec: undefined, denied: false },
+    { name: "explicit security deny", exec: { security: "deny" as const }, denied: true },
+    { name: "explicit mode deny", exec: { mode: "deny" as const }, denied: true },
+  ])("honors $name for mediated sandbox exec", async ({ exec, denied }) => {
+    const fixture = await createMediatedExecFixture();
+    try {
+      const result = await resolveGatewayScopedTools({
+        cfg: {
+          agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "rw" } } },
+          tools: { allow: ["exec"], exec },
+        },
+        sessionKey: fixture.sandbox.sessionKey,
+        surface: "loopback",
+        workspaceDir: fixture.workspaceDir,
+        mediatedToolNames: ["exec"],
+      });
+      const execTool = result.tools.find((tool) => tool.name === "exec");
+      expect(execTool).toBeDefined();
+      const execution = execTool!.execute("mediated-exec", { command: "pwd" });
+      if (denied) {
+        await expect(execution).rejects.toThrow("exec denied");
+        expect(fixture.buildExecSpec).not.toHaveBeenCalled();
+        expect(fixture.spawn).not.toHaveBeenCalled();
+      } else {
+        const output = await execution;
+        expect(output.details).toMatchObject({ status: "completed", exitCode: 0 });
+        expect(fixture.buildExecSpec).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ command: "pwd", workdir: "/sandbox/workspace" }),
+        );
+        expect(fixture.spawn).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            mode: "child",
+            argv: ["sandbox-runtime", "exec", "--workdir", "/sandbox/workspace", "fixture", "pwd"],
+            cwd: fixture.workspaceDir,
+          }),
+        );
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("enforces a read-only session inside a writable mediated sandbox", async () => {
+    const fixture = await createMediatedExecFixture();
+    try {
+      const result = await resolveGatewayScopedTools({
+        cfg: {
+          agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "rw" } } },
+          tools: { allow: ["read", "write", "edit", "apply_patch", "exec"] },
+        },
+        sessionKey: fixture.sandbox.sessionKey,
+        execSession: { permissionMode: "read-only" },
+        surface: "loopback",
+        workspaceDir: fixture.workspaceDir,
+        mediatedToolNames: ["read", "write", "edit", "apply_patch", "exec"],
+      });
+      const names = result.tools.map((tool) => tool.name);
+      expect(names).toContain("read");
+      expect(names).not.toContain("write");
+      expect(names).not.toContain("edit");
+      expect(names).not.toContain("apply_patch");
+      const execTool = result.tools.find((tool) => tool.name === "exec");
+      expect(execTool).toBeDefined();
+      await expect(execTool!.execute("readonly-exec", { command: "pwd" })).rejects.toThrow(
+        "exec denied",
+      );
+      expect(fixture.buildExecSpec).not.toHaveBeenCalled();
+      expect(fixture.spawn).not.toHaveBeenCalled();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("applies sandbox tool denies to sandboxed loopback turns", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: {
         agents: { defaults: { sandbox: { mode: "all" } } },
         tools: { sandbox: { tools: { deny: ["sessions_list"] } } },
@@ -218,8 +457,8 @@ describe("resolveGatewayScopedTools", () => {
     expect(toolNames).toContain("sessions_history");
   });
 
-  it("does not apply sandbox tool policy to the main session in non-main mode", () => {
-    const result = resolveGatewayScopedTools({
+  it("does not apply sandbox tool policy to the main session in non-main mode", async () => {
+    const result = await resolveGatewayScopedTools({
       cfg: {
         agents: { defaults: { sandbox: { mode: "non-main" } } },
         tools: { sandbox: { tools: { deny: ["sessions_list"] } } },
@@ -231,13 +470,13 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "sessions_list")).toBe(true);
   });
 
-  it("exposes task suggestion tools only for actionable loopback turns", () => {
-    const withoutActions = resolveGatewayScopedTools({
+  it("exposes task suggestion tools only for actionable loopback turns", async () => {
+    const withoutActions = await resolveGatewayScopedTools({
       cfg: {} as OpenClawConfig,
       sessionKey: "agent:main:main",
       surface: "loopback",
     });
-    const withActions = resolveGatewayScopedTools({
+    const withActions = await resolveGatewayScopedTools({
       cfg: {} as OpenClawConfig,
       sessionKey: "agent:main:main",
       taskSuggestionDeliveryMode: "gateway",
@@ -257,7 +496,7 @@ describe("resolveGatewayScopedTools", () => {
       .mockReturnValue(1);
     const onYield = vi.fn();
     try {
-      const result = resolveGatewayScopedTools({
+      const result = await resolveGatewayScopedTools({
         cfg: { tools: { profile: "minimal", alsoAllow: ["sessions_yield"] } } as OpenClawConfig,
         sessionKey: "agent:main:telegram:group:-100123",
         sessionId: "session-123",

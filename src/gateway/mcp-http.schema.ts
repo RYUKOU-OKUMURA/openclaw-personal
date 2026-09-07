@@ -10,7 +10,9 @@ const MCP_LOOPBACK_LOG_PREFIX = "mcp-loopback";
 // MCP loopback schema projection adapts gateway tool definitions into MCP
 // tools/list entries. It flattens provider-hostile union schemas into object
 // schemas because some MCP clients cannot render anyOf/oneOf controls.
-export type McpLoopbackTool = ReturnType<typeof resolveGatewayScopedTools>["tools"][number];
+export type McpLoopbackTool = Awaited<
+  ReturnType<typeof resolveGatewayScopedTools>
+>["tools"][number];
 
 /** MCP tools/list schema entry derived from a gateway loopback tool. */
 export type McpToolSchemaEntry = {

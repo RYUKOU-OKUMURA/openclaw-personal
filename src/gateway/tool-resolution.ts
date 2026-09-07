@@ -1,4 +1,5 @@
 // Gateway-scoped tool resolution for HTTP and loopback tool surfaces.
+import fs from "node:fs/promises";
 import { resolveAgentWorkspaceDir, resolveSessionAgentIds } from "../agents/agent-scope.js";
 import { applyToolAvailabilityDescriptions } from "../agents/agent-tools.deferred-followup.js";
 import { createOpenClawCodingTools } from "../agents/agent-tools.js";
@@ -19,6 +20,7 @@ import {
 import { createLazyExecTool, resolveExecToolConfig } from "../agents/lazy-exec-tool.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import { resolveRequesterToolPolicies } from "../agents/requester-tool-policy.js";
+import { resolveSandboxContext } from "../agents/sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
 import {
   resolveScheduledToolCallerContext,
@@ -66,7 +68,7 @@ import { normalizeMessageChannel } from "../utils/message-channel-core.js";
 type GatewayScopedToolSurface = "http" | "loopback";
 
 /** Resolve the tools visible to a gateway caller after agent, channel, and surface policy. */
-export function resolveGatewayScopedTools(params: {
+export async function resolveGatewayScopedTools(params: {
   cfg: OpenClawConfig;
   authProfileStore?: AuthProfileStore;
   agentDir?: string;
@@ -134,7 +136,9 @@ export function resolveGatewayScopedTools(params: {
   spawnedBy?: string;
   skillWorkshop?: SkillWorkshopRunOptions;
   scheduledToolPolicy?: ScheduledToolPolicyContext;
+  signal?: AbortSignal;
 }) {
+  params.signal?.throwIfAborted();
   const runtimePolicySessionKey = params.runtimePolicySessionKey?.trim() || params.sessionKey;
   const sessionAgentId = resolveSessionAgentIds({
     config: params.cfg,
@@ -389,68 +393,91 @@ export function resolveGatewayScopedTools(params: {
   const includeMediatedShellTools = ["apply_patch", "exec", "process"].some((name) =>
     mediatedToolNames.has(name),
   );
-  const mediatedCodingTools =
-    surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools)
-      ? createOpenClawCodingTools({
+  const needsMediatedCodingTools =
+    surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools);
+  const sandbox =
+    needsMediatedCodingTools && sandboxRuntime.sandboxed
+      ? await resolveSandboxContext({
           config: params.cfg,
-          sessionConfigSource: "runtime",
           agentId: policyAgentId,
           sessionKey: runtimePolicySessionKey,
-          runSessionKey: params.sessionKey,
-          sessionId: params.sessionId,
-          runId: params.runId,
           workspaceDir,
-          cwd: params.cwd?.trim() || workspaceDir,
-          modelProvider: params.modelProvider,
-          modelId: params.modelId,
-          modelHasVision: params.modelHasVision,
-          messageProvider: params.messageProvider,
-          messageChannel: params.messageProvider,
-          clientCaps: params.clientCaps,
-          agentAccountId: params.accountId,
-          currentChannelId: params.currentChannelId,
-          currentThreadTs: params.currentThreadTs,
-          currentMessageId: params.currentMessageId,
-          currentInboundAudio: params.currentInboundAudio,
-          channelContext: params.channelContext,
-          groupId: params.groupId,
-          groupChannel: params.groupChannel,
-          groupSpace: params.groupSpace,
-          spawnedBy: params.spawnedBy,
-          senderId: params.channelContext?.sender?.id,
-          senderName: params.senderName,
-          senderUsername: params.senderUsername,
-          senderE164: params.senderE164,
-          senderIsOwner: params.senderIsOwner,
-          trigger: params.trigger,
-          approvalReviewerDeviceId: params.approvalReviewerDeviceId,
-          sourceReplyDeliveryMode,
-          taskSuggestionDeliveryMode: params.taskSuggestionDeliveryMode,
-          inboundEventKind: params.inboundEventKind,
-          requireExplicitMessageTarget: params.requireExplicitMessageTarget,
-          runtimeToolAllowlist: [...mediatedToolNames],
-          exec: execDefaults
-            ? {
-                host: execDefaults.host,
-                mode: execDefaults.mode,
-                security: execDefaults.security,
-                ask: execDefaults.ask,
-                node: execDefaults.node,
-                elevated: params.bashElevated,
-              }
-            : undefined,
-          scheduledToolPolicy: params.scheduledToolPolicy,
-          toolConstructionPlan: {
-            includeBaseCodingTools: includeMediatedBaseCodingTools,
-            includeShellTools: includeMediatedShellTools,
-            includeChannelTools: false,
-            includeOpenClawTools: false,
-            includePluginTools: false,
-          },
-          // The MCP dispatcher is the shared hook and abort boundary for these tools.
-          wrapBeforeToolCallHook: false,
+          execOverrides: params.execOverrides,
         })
-      : [];
+      : undefined;
+  params.signal?.throwIfAborted();
+  if (needsMediatedCodingTools && sandboxRuntime.sandboxed && !sandbox?.enabled) {
+    throw new Error("Mediated coding tools require an available sandbox.");
+  }
+  const sessionPermissionPolicy =
+    needsMediatedCodingTools && params.execSession?.permissionMode
+      ? {
+          mode: params.execSession.permissionMode,
+          root: sandbox?.workspaceDir ?? (await fs.realpath(workspaceDir)),
+        }
+      : undefined;
+  params.signal?.throwIfAborted();
+  const mediatedCodingTools = needsMediatedCodingTools
+    ? createOpenClawCodingTools({
+        sandbox,
+        sessionPermissionPolicy,
+        config: params.cfg,
+        sessionConfigSource: "runtime",
+        agentId: policyAgentId,
+        sessionKey: runtimePolicySessionKey,
+        runSessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        runId: params.runId,
+        workspaceDir,
+        cwd: params.cwd?.trim() || workspaceDir,
+        modelProvider: params.modelProvider,
+        modelId: params.modelId,
+        modelHasVision: params.modelHasVision,
+        messageProvider: params.messageProvider,
+        messageChannel: params.messageProvider,
+        clientCaps: params.clientCaps,
+        agentAccountId: params.accountId,
+        currentChannelId: params.currentChannelId,
+        currentThreadTs: params.currentThreadTs,
+        currentMessageId: params.currentMessageId,
+        currentInboundAudio: params.currentInboundAudio,
+        channelContext: params.channelContext,
+        groupId: params.groupId,
+        groupChannel: params.groupChannel,
+        groupSpace: params.groupSpace,
+        spawnedBy: params.spawnedBy,
+        senderId: params.channelContext?.sender?.id,
+        senderName: params.senderName,
+        senderUsername: params.senderUsername,
+        senderE164: params.senderE164,
+        senderIsOwner: params.senderIsOwner,
+        trigger: params.trigger,
+        approvalReviewerDeviceId: params.approvalReviewerDeviceId,
+        sourceReplyDeliveryMode,
+        taskSuggestionDeliveryMode: params.taskSuggestionDeliveryMode,
+        inboundEventKind: params.inboundEventKind,
+        requireExplicitMessageTarget: params.requireExplicitMessageTarget,
+        runtimeToolAllowlist: [...mediatedToolNames],
+        // Preserve explicit policy; resolving sandbox's implicit deny into an
+        // explicit deny here would disable its otherwise permitted commands.
+        exec: {
+          ...params.execOverrides,
+          host: execDefaults?.host,
+          node: execDefaults?.node,
+          elevated: params.bashElevated,
+        },
+        scheduledToolPolicy: params.scheduledToolPolicy,
+        toolConstructionPlan: {
+          includeBaseCodingTools: includeMediatedBaseCodingTools,
+          includeShellTools: includeMediatedShellTools,
+          includeChannelTools: false,
+          includeOpenClawTools: false,
+          includePluginTools: false,
+        },
+        // The MCP dispatcher is the shared hook and abort boundary for these tools.
+        wrapBeforeToolCallHook: false,
+      })
+    : [];
   // CLI backends already own their local shell. This extra surface is deliberately
   // fixed to node so it cannot become a second path to Gateway-local execution.
   const baseTools = nodeExecSurface
@@ -588,5 +615,6 @@ export function resolveGatewayScopedTools(params: {
     agentId: sessionAgentId,
     tools,
     workspaceDir,
+    sandbox: sandbox ?? undefined,
   };
 }

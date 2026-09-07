@@ -36,6 +36,7 @@ import {
   detectImageReferences,
 } from "../embedded-agent-runner/run/images.js";
 import type { MediaImageLayout } from "../embedded-agent-runner/run/prompt-image-metadata.js";
+import type { EmbeddedSandboxInfo } from "../embedded-agent-runner/types.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import type { AgentTool } from "../runtime/index.js";
 import { detectRuntimeShell } from "../shell-utils.js";
@@ -114,6 +115,7 @@ export function buildCliAgentSystemPrompt(params: {
   docsPath?: string;
   sourcePath?: string;
   tools: AgentTool[];
+  sandboxInfo?: EmbeddedSandboxInfo;
   contextFiles?: EmbeddedContextFile[];
   bootstrapMode?: BootstrapMode;
   bootstrapTruncationNotice?: string;
@@ -169,6 +171,7 @@ export function buildCliAgentSystemPrompt(params: {
     }),
     runtimeInfo,
     toolNames: params.tools.map((tool) => tool.name),
+    sandboxInfo: params.sandboxInfo,
     skillsPrompt: params.skillsPrompt,
     userTimezone,
     userDate,

@@ -3,6 +3,7 @@ import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 // Resolves Gateway-visible tools for MCP clients with short-lived schema caching.
 import { applyEmbeddedAttemptToolsAllow } from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { loadNodeExecAvailability } from "../agents/node-exec-availability.js";
+import type { SandboxContext } from "../agents/sandbox.js";
 import { normalizeToolPolicyName } from "../agents/tool-policy.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DirectoryCache } from "../infra/outbound/directory-cache.js";
@@ -26,6 +27,7 @@ const NATIVE_TOOL_EXCLUDE = new Set(["read", "write", "edit", "apply_patch", "ex
 
 type CachedScopedTools = {
   agentId: string | undefined;
+  sandbox?: SandboxContext;
   // Tool policy resolves the workspace root (grant value, else the agent's
   // configured workspace). Hook context must carry the same one the tools were
   // built with, or before-tool-call policy resolves state against a different root.
@@ -64,7 +66,7 @@ function resolveMediatedNativeTools(
     toolsAllow === undefined ||
     toolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*")
   ) {
-    return new Set();
+    return new Set(NATIVE_TOOL_EXCLUDE);
   }
   return new Set(
     applyEmbeddedAttemptToolsAllow(
@@ -87,14 +89,15 @@ async function resolveNodeExecScope(
   return { ...params, nodeExecAvailability: await loadNodeExecAvailability(params.signal) };
 }
 
-function resolveMcpLoopbackTools(
+async function resolveMcpLoopbackTools(
   params: McpLoopbackScopeParams,
   mode: LoopbackToolsAllowMode,
-): {
+): Promise<{
   agentId: string | undefined;
   workspaceDir?: string;
+  sandbox?: SandboxContext;
   tools: McpLoopbackTool[];
-} {
+}> {
   params.signal?.throwIfAborted();
   const excludeToolNames = new Set(NATIVE_TOOL_EXCLUDE);
   // Restricted CLI grants use OpenClaw's implementations for coding tools;
@@ -115,7 +118,7 @@ function resolveMcpLoopbackTools(
     signal: _signal,
     ...scopeParams
   } = params;
-  const scoped = resolveGatewayScopedTools({
+  const scoped = await resolveGatewayScopedTools({
     ...scopeParams,
     nativeCronCreatorToolAllowlist: params.nativeCronCreatorToolAllowlist ?? undefined,
     agentDir: authProfileStoreAgentDir,
@@ -125,10 +128,13 @@ function resolveMcpLoopbackTools(
     mediatedToolNames: mediatedNativeTools,
     includeNodeExecTool,
     nodeExecAvailable: nodeExecAvailability?.isAvailable,
+    signal: params.signal,
   });
+  params.signal?.throwIfAborted();
   return {
     agentId: scoped.agentId,
     workspaceDir: scoped.workspaceDir,
+    sandbox: scoped.sandbox,
     tools:
       mode === "exact"
         ? applyGrantToolsAllow(scoped.tools, params.toolsAllow)
@@ -140,6 +146,7 @@ function resolveMcpLoopbackTools(
 export async function resolveMcpLoopbackScopedTools(params: McpLoopbackScopeParams): Promise<{
   agentId: string | undefined;
   workspaceDir?: string;
+  sandbox?: SandboxContext;
   tools: McpLoopbackTool[];
 }> {
   return resolveMcpLoopbackTools(await resolveNodeExecScope(params, "exact"), "exact");
@@ -148,6 +155,8 @@ export async function resolveMcpLoopbackScopedTools(params: McpLoopbackScopePara
 /** Materializes runtime policy expressions against the concrete loopback catalog. */
 export async function resolveMcpLoopbackPolicyTools(params: McpLoopbackScopeParams): Promise<{
   agentId: string | undefined;
+  workspaceDir?: string;
+  sandbox?: SandboxContext;
   tools: McpLoopbackTool[];
 }> {
   return resolveMcpLoopbackTools(await resolveNodeExecScope(params, "policy"), "policy");
@@ -282,10 +291,12 @@ export class McpLoopbackToolCache {
       return cached;
     }
 
-    const next = resolveMcpLoopbackTools(params, "exact");
+    const next = await resolveMcpLoopbackTools(params, "exact");
+    input.signal?.throwIfAborted();
     const nextEntry: CachedScopedTools = {
       agentId: next.agentId,
       workspaceDir: next.workspaceDir,
+      sandbox: next.sandbox,
       tools: next.tools,
       toolSchema: buildMcpToolSchema(next.tools),
     };

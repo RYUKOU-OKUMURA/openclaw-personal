@@ -141,7 +141,17 @@ claude update
 # Restart the OpenClaw gateway after updating.
 ```
 
-The bundled `claude-cli` backend prefers Claude Code's native skill resolver. When the current skills snapshot has at least one selected skill with a materialized path, OpenClaw passes a temporary Claude Code plugin via `--plugin-dir` and omits the duplicate OpenClaw skills catalog from the appended system prompt. Without a materialized plugin skill, OpenClaw keeps the prompt catalog as a fallback. Skill env/API key overrides still apply to the child process environment for the run.
+When native tools are enabled, the bundled `claude-cli` backend prefers Claude Code's native skill resolver. When the current skills snapshot has at least one selected skill with a materialized path, OpenClaw passes a temporary Claude Code plugin via `--plugin-dir` and omits the duplicate OpenClaw skills catalog from the appended system prompt. Without a materialized plugin skill, OpenClaw keeps the prompt catalog as a fallback. Skill env/API key overrides still apply to the child process environment for the run.
+
+When the local CLI turn uses an OpenClaw sandbox, the bundled backend disables
+Claude's native tools and exposes the allowed OpenClaw tools through MCP, including
+for ordinary chat turns. File operations and commands use the session's sandbox
+filesystem and execution backend, subject to OpenClaw's tool and approval policy.
+The Claude Code process and its authentication remain on the Gateway host;
+enabling an OpenClaw sandbox does not move that process into the sandbox. This
+uses the bundled plugin's existing tool-selection support and requires no new
+configuration option. With sandboxing off, native local tools retain the
+permission behavior described below.
 
 OpenClaw always launches Claude Code with its default permission mode.
 OpenClaw's permission responses and `PreToolUse` hook keep native tools under
@@ -171,7 +181,7 @@ every request, and ask `off` with less than full security denies without asking.
 
 ### Claude browser tools and 1Password sign-in
 
-Claude Code can drive a Chrome browser through the [Claude in Chrome extension](https://code.claude.com/docs/en/chrome), including [1Password for Claude](/gateway/1password#browser-sign-in-with-1password-for-claude) credential autofill. The bundled backend does not enable it; register a [CLI backend plugin](/plugins/cli-backend-plugins) that appends `--chrome` to the launch args of a `claude-stream-json`-dialect backend. OpenClaw preserves a configured `--chrome` on normal runs and always forces `--no-chrome` on runs with a restricted tool policy, such as side questions. The Chrome window, the extension, and any 1Password approval prompts live on the gateway host, so someone must be at that machine to approve credential use.
+Claude Code can drive a Chrome browser through the [Claude in Chrome extension](https://code.claude.com/docs/en/chrome), including [1Password for Claude](/gateway/1password#browser-sign-in-with-1password-for-claude) credential autofill. The bundled backend does not enable it; register a [CLI backend plugin](/plugins/cli-backend-plugins) that appends `--chrome` to the launch args of a `claude-stream-json`-dialect backend. OpenClaw preserves a configured `--chrome` on unrestricted, unsandboxed runs and forces `--no-chrome` when sandboxing or a restricted tool policy disables native tools, including side questions. The Chrome window, the extension, and any 1Password approval prompts live on the gateway host, so someone must be at that machine to approve credential use.
 
 The backend maps OpenClaw `/think` levels to Claude Code's native `--effort` flag: `minimal`/`low` -> `low`, `medium` -> `medium`, and `high`/`xhigh`/`max` pass through directly. For models that allow fixed thinking budgets, it also launches Claude Code with `MAX_THINKING_TOKENS`: `off=0`, `minimal=1024`, `low=2048`, `medium=8192`, `high`/`xhigh=16384`, and `max=32768`; positive fixed budgets disable adaptive thinking. Models that require adaptive thinking omit the fixed budget and continue to use `--effort`. `adaptive` removes configured effort flags and fixed-budget environment overrides, so Claude Code resolves effective thinking from its own environment, settings, and model defaults. Other CLI backends need their owning plugin to map the selected level before `/think` affects the spawned CLI.
 
@@ -352,7 +362,8 @@ When bundle MCP is enabled, OpenClaw:
 - loads enabled bundle-MCP servers for the current workspace and merges them with any existing backend MCP config/settings shape;
 - rewrites the launch config using the backend-owned integration mode from the owning plugin.
 
-The node-only `exec` tool is offered only when policy permits it and a connected
+For runs that retain native local tools, the additional node-only `exec` tool is
+offered only when policy permits it and a connected
 node advertises `system.run`. Offline paired devices and approval-only phones do
 not make remote execution available. A configured node binding must identify an
 eligible node; it never redirects to another device. When several eligible nodes
@@ -378,8 +389,15 @@ omits the affected MCP server. A server whose restrictive catalog cannot be
 established is also omitted and reported instead of being passed through
 unfiltered.
 
-Restricted runs such as cron jobs with `toolsAllow` require an exact
-backend-owned translation. The bundled `claude-cli` backend disables Claude's
+Local sandboxed turns use the same exact tool-selection path as restricted runs
+such as cron jobs with `toolsAllow`. This requires a backend with bundle MCP and
+exact native-tool selection support, as provided by the bundled `claude-cli`
+backend. OpenClaw applies the complete layered tool policy before selecting the
+MCP tools. Sandboxed filesystem and command tools receive the actual session
+sandbox context; if that sandbox is unavailable, the run fails instead of using
+host filesystem or shell access.
+
+For these runs, the bundled `claude-cli` backend disables Claude's
 native tools and user, project, and local customizations, including hooks,
 plugins, agents, skills, and `CLAUDE.md`. It then exposes every allowed
 OpenClaw tool through the grant-scoped MCP server. This keeps filesystem,

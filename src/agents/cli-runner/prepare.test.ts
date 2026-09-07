@@ -95,6 +95,7 @@ import {
 } from "../media-generation-task-status.js";
 import type { SandboxWorkspaceInfo } from "../sandbox/types.js";
 import { SessionManager } from "../sessions/session-manager.js";
+import { createAgentToolsSandboxContext } from "../test-helpers/agent-tools-sandbox-context.js";
 import {
   captureRoutingDecisionWork,
   createModelRoutingTestAdmission,
@@ -4628,104 +4629,155 @@ describe("prepareCliRunContext", () => {
     );
   });
 
-  it("keeps runtime toolsAllow canonical and bounds the backend-independent MCP grant", async () => {
-    const resolveExecutionArgs = vi.fn((context: { baseArgs: readonly string[] }) => [
-      ...context.baseArgs,
-    ]);
-    const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
-    const resolveMcpLoopbackPolicyTools = vi.fn((_scope: Record<string, unknown>) => ({
-      agentId: "main",
-      tools: ["write", "apply_patch"].map((name) => ({ name })),
-    }));
-    setRawCliBackendForPrepareTest({
-      id: "claude-cli",
-      pluginId: "anthropic",
-      bundleMcp: true,
-      bundleMcpMode: "claude-config-file",
-      nativeToolMode: "selectable",
-      toolAvailabilityEnforcement: "execution-args",
-      resolveExecutionArgs,
-      config: {
-        command: "claude",
-        args: ["--print"],
-        output: "jsonl",
-        jsonlDialect: "claude-stream-json",
-        input: "stdin",
-        sessionMode: "existing",
-      },
-    });
-    setCliRunnerPrepareTestDeps({
-      getActiveMcpLoopbackRuntime: vi.fn(() => ({
-        port: 31783,
-        ownerToken: "loopback-owner-token",
-        nonOwnerToken: "loopback-non-owner-token",
-      })),
-      ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
-      createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
-      mintMcpLoopbackClientGrant,
-      resolveMcpLoopbackPolicyTools,
-    });
-
-    let cleanup: (() => Promise<void>) | undefined;
-    try {
-      const context = await fixture.prepare({
-        sessionKey: "agent:main:main",
-        provider: "claude-cli",
-        toolsAllow: ["write"],
-        scheduledToolPolicy: {
-          version: 1,
-          mode: "account",
-          ownerSessionKey: "agent:main:discord:group:ops",
-          ownerAccountId: "default",
+  it.each([
+    { sandbox: "off", toolsAllow: ["write"], expectedTools: ["write", "apply_patch"] },
+    {
+      sandbox: "all",
+      toolsAllow: undefined,
+      expectedTools: ["read", "write", "exec", "session_status"],
+    },
+    { sandbox: "all", toolsAllow: ["write"], expectedTools: ["write", "apply_patch"] },
+    { sandbox: "all", toolsAllow: [], expectedTools: [] },
+    {
+      sandbox: "all",
+      toolsAllow: undefined,
+      exactTools: ["write"],
+      expectedTools: ["write"],
+    },
+  ] as const)(
+    "bounds CLI tools to the mediated catalog with sandbox=$sandbox, policy=$toolsAllow, exact=$exactTools",
+    async (testCase) => {
+      const exactTools = "exactTools" in testCase ? testCase.exactTools : undefined;
+      const resolveExecutionArgs = vi.fn((context: { baseArgs: readonly string[] }) => [
+        ...context.baseArgs,
+      ]);
+      const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
+      const sandbox =
+        testCase.sandbox === "all"
+          ? createAgentToolsSandboxContext({
+              workspaceDir: path.join(os.tmpdir(), "cli-sandbox-fixture"),
+            })
+          : undefined;
+      if (sandbox) {
+        sandbox.fileLocationsPrompt = "Shared reference: /mnt/shared/reference (read-only).";
+      }
+      const resolveMcpLoopbackPolicyTools = vi.fn((_scope: Record<string, unknown>) => ({
+        agentId: "main",
+        sandbox,
+        // Policy "write" implies apply_patch; an exact cap must never enter
+        // that resolver or broaden the eventual CLI cap and loopback grant.
+        tools: (exactTools ? ["write", "apply_patch"] : testCase.expectedTools).map((name) => ({
+          name,
+        })),
+      }));
+      const resolveMcpLoopbackScopedTools = vi.fn((_scope: Record<string, unknown>) => ({
+        agentId: "main",
+        sandbox,
+        tools: testCase.expectedTools.map((name) => ({ name })),
+      }));
+      setRawCliBackendForPrepareTest({
+        id: "claude-cli",
+        pluginId: "anthropic",
+        bundleMcp: true,
+        bundleMcpMode: "claude-config-file",
+        nativeToolMode: "selectable",
+        toolAvailabilityEnforcement: "execution-args",
+        resolveExecutionArgs,
+        config: {
+          command: "claude",
+          args: ["--print"],
+          output: "jsonl",
+          jsonlDialect: "claude-stream-json",
+          input: "stdin",
+          sessionMode: "existing",
         },
       });
-      cleanup = context.preparedBackend.cleanup;
+      setCliRunnerPrepareTestDeps({
+        getActiveMcpLoopbackRuntime: vi.fn(() => ({
+          port: 31783,
+          ownerToken: "loopback-owner-token",
+          nonOwnerToken: "loopback-non-owner-token",
+        })),
+        ensureMcpLoopbackServer: vi.fn(createTestMcpLoopbackServer),
+        createMcpLoopbackServerConfig: vi.fn(createTestMcpLoopbackServerConfig),
+        mintMcpLoopbackClientGrant,
+        resolveMcpLoopbackPolicyTools,
+        resolveMcpLoopbackScopedTools,
+      });
 
-      expect(context.params.toolsAllow).toBeUndefined();
-      expect(context.params.cliToolAvailability).toEqual({
-        native: [],
-        openClaw: ["write", "apply_patch"],
-      });
-      expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.toolsAllow).toEqual([
-        "write",
-        "apply_patch",
-      ]);
-      expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.scheduledToolPolicy).toEqual({
-        version: 1,
-        mode: "account",
-        ownerSessionKey: "agent:main:discord:group:ops",
-        ownerAccountId: "default",
-      });
-      expect(resolveMcpLoopbackPolicyTools).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolsAllow: ["write"],
+      let cleanup: (() => Promise<void>) | undefined;
+      try {
+        const context = await fixture.prepare({
+          sessionKey: "agent:main:main",
+          provider: "claude-cli",
+          config: { agents: { defaults: { sandbox: { mode: testCase.sandbox } } } },
+          toolsAllow: testCase.toolsAllow ? [...testCase.toolsAllow] : undefined,
+          ...(exactTools ? { cliToolAvailability: { native: [], openClaw: [...exactTools] } } : {}),
           scheduledToolPolicy: {
             version: 1,
             mode: "account",
             ownerSessionKey: "agent:main:discord:group:ops",
             ownerAccountId: "default",
           },
-        }),
-      );
-      const projected = resolveMcpLoopbackPolicyTools.mock.calls[0]?.[0];
-      const grantContext = mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context;
-      const {
-        cfg: _projectedConfig,
-        toolsAllow: projectedPolicy,
-        authProfileStore,
-        authProfileStoreAgentDir,
-        ...projectedTrustedContext
-      } = projected ?? {};
-      const { toolsAllow: grantedTools, ...grantTrustedContext } = grantContext ?? {};
-      expect(projectedPolicy).toEqual(["write"]);
-      expect(authProfileStore).toMatchObject({ version: 1, profiles: {} });
-      expect(authProfileStoreAgentDir).toEqual(expect.any(String));
-      expect(grantedTools).toEqual(["write", "apply_patch"]);
-      expect(projectedTrustedContext).toEqual(grantTrustedContext);
-    } finally {
-      await cleanup?.();
-    }
-  });
+        });
+        cleanup = context.preparedBackend.cleanup;
+
+        expect(context.systemPromptReport.sandbox?.sandboxed).toBe(testCase.sandbox === "all");
+        if (sandbox) {
+          expect(context.systemPrompt).toContain(sandbox.fileLocationsPrompt);
+          expect(context.systemPrompt).toContain("Sandbox container workdir: /workspace");
+        }
+        expect(context.params.toolsAllow).toBeUndefined();
+        expect(context.params.cliToolAvailability).toEqual({
+          native: [],
+          openClaw: [...testCase.expectedTools],
+        });
+        expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.toolsAllow).toEqual(
+          testCase.expectedTools,
+        );
+        expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.scheduledToolPolicy).toEqual({
+          version: 1,
+          mode: "account",
+          ownerSessionKey: "agent:main:discord:group:ops",
+          ownerAccountId: "default",
+        });
+        const selectedResolver = exactTools
+          ? resolveMcpLoopbackScopedTools
+          : resolveMcpLoopbackPolicyTools;
+        const unusedResolver = exactTools
+          ? resolveMcpLoopbackPolicyTools
+          : resolveMcpLoopbackScopedTools;
+        expect(unusedResolver).not.toHaveBeenCalled();
+        expect(selectedResolver).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scheduledToolPolicy: {
+              version: 1,
+              mode: "account",
+              ownerSessionKey: "agent:main:discord:group:ops",
+              ownerAccountId: "default",
+            },
+          }),
+        );
+        const projected = selectedResolver.mock.calls[0]?.[0];
+        const grantContext = mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context;
+        const {
+          cfg: _projectedConfig,
+          toolsAllow: projectedPolicy,
+          authProfileStore,
+          authProfileStoreAgentDir,
+          ...projectedTrustedContext
+        } = projected ?? {};
+        const { toolsAllow: grantedTools, ...grantTrustedContext } = grantContext ?? {};
+        expect(projectedPolicy).toEqual(exactTools ?? testCase.toolsAllow);
+        expect(authProfileStore).toMatchObject({ version: 1, profiles: {} });
+        expect(authProfileStoreAgentDir).toEqual(expect.any(String));
+        expect(grantedTools).toEqual(testCase.expectedTools);
+        expect(projectedTrustedContext).toEqual(grantTrustedContext);
+      } finally {
+        await cleanup?.();
+      }
+    },
+  );
 
   it("bounds the loopback grant to the selectable MCP tool allowlist", async () => {
     const resolveExecutionArgs = vi.fn((context: { baseArgs: readonly string[] }) => [
@@ -5462,18 +5514,40 @@ describe("prepareCliRunContext", () => {
       pluginResult: "empty",
       expectsPromptSkills: true,
     },
+    {
+      name: "keeps prompt skills when the exact cap disables native tools",
+      materialized: true,
+      pluginResult: "args",
+      expectsPromptSkills: true,
+      restricted: true,
+    },
   ])("handles Claude CLI skills: $name", async (testCase) => {
     const { dir } = fixture.session;
     const skill = createWeatherSkillFixture(dir, testCase.materialized);
-    setCliBackendForPrepareTest({ id: "claude-cli", pluginId: "anthropic" });
+    setRawCliBackendForPrepareTest({
+      id: "claude-cli",
+      pluginId: "anthropic",
+      bundleMcp: false,
+      nativeToolMode: "selectable",
+      toolAvailabilityEnforcement: "prepare-execution",
+      prepareExecution: async () => ({ toolAvailabilityEnforced: true }),
+      config: {
+        command: "claude",
+        args: ["--print"],
+        output: "jsonl",
+        input: "stdin",
+        sessionMode: "existing",
+      },
+    });
+    const pluginDir = path.join(dir, "openclaw-skills");
+    const prepareSkillsPlugin = vi.fn(async () => ({
+      args: testCase.pluginResult === "args" ? ["--plugin-dir", pluginDir] : [],
+      cleanup: vi.fn(async () => undefined),
+      ...(testCase.pluginResult === "args" ? { pluginDir } : {}),
+    }));
     if (testCase.pluginResult !== "default") {
-      const pluginDir = path.join(dir, "openclaw-skills");
       setCliRunnerPrepareTestDeps({
-        prepareClaudeCliSkillsPlugin: vi.fn(async () => ({
-          args: testCase.pluginResult === "args" ? ["--plugin-dir", pluginDir] : [],
-          cleanup: vi.fn(async () => undefined),
-          ...(testCase.pluginResult === "args" ? { pluginDir } : {}),
-        })),
+        prepareClaudeCliSkillsPlugin: prepareSkillsPlugin,
       });
     }
 
@@ -5481,8 +5555,12 @@ describe("prepareCliRunContext", () => {
       provider: "claude-cli",
       model: "opus",
       skillsSnapshot: skill.snapshot,
+      ...(testCase.restricted ? { cliToolAvailability: { native: [], openClaw: [] } } : {}),
     });
 
+    if (testCase.restricted) {
+      expect(prepareSkillsPlugin).not.toHaveBeenCalled();
+    }
     if (testCase.expectsPromptSkills) {
       expect(context.systemPrompt).toContain("<available_skills>");
       expect(context.systemPrompt).toContain("<name>weather</name>");
