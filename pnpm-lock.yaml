@@ -2258,6 +2258,9 @@ importers:
       '@openclaw/gateway-protocol':
         specifier: workspace:*
         version: link:../../packages/gateway-protocol
+      '@openclaw/session-url-contract':
+        specifier: workspace:*
+        version: link:../../packages/session-url-contract
       '@openclaw/workboard-contract':
         specifier: workspace:*
         version: link:../../packages/workboard-contract

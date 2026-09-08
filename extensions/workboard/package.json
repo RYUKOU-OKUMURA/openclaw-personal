@@ -9,7 +9,8 @@
     "@openclaw/gateway-protocol": "workspace:*",
     "@openclaw/workboard-contract": "workspace:*",
     "lit": "3.3.3",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@openclaw/session-url-contract": "workspace:*"
   },
   "devDependencies": {
     "@openclaw/gateway-client": "workspace:*",

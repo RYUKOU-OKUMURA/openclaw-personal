@@ -22,6 +22,7 @@ import {
   renderStartExecutionControls,
   renderStopCardAction,
 } from "./view-card-actions.ts";
+import { renderWorkboardDiscussion } from "./view-card-discussion.ts";
 import {
   formatEventLabel,
   formatLifecycle,
@@ -345,6 +346,7 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
           }
           ${renderDependencyDetailList(dependencies)}
           ${detailSections.map(([title, values]) => renderDetailList(title, values))}
+          ${renderWorkboardDiscussion(props, card)}
 
           <section class="workboard-detail__section">
             <h3>${t("workboard.detailOperatorNotes")}</h3>
