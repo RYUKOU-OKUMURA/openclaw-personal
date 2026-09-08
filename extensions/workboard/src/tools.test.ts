@@ -177,7 +177,7 @@ describe("workboard tools", () => {
         title: "Closed work",
         status: "done",
         priority: "normal",
-        labels: [],
+        labels: ["rejected"],
         position: 2000,
         createdAt: 1,
         updatedAt: 1,
@@ -223,7 +223,9 @@ describe("workboard tools", () => {
       await byName.get("workboard_list")?.execute("call-6", { includeArchived: true }),
     );
     expect(archivedList.cards).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "archived-1", archivedAt: 2 })]),
+      expect.arrayContaining([
+        expect.objectContaining({ id: "archived-1", archivedAt: 2, labels: ["rejected"] }),
+      ]),
     );
   });
 

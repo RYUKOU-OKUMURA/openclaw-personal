@@ -1431,7 +1431,22 @@
       "eventProtocolViolation": "プロトコル違反",
       "eventArchived": "アーカイブ済み",
       "eventUnarchived": "アーカイブ解除済み",
-      "eventStale": "古いセッション"
+      "eventStale": "古いセッション",
+      "rejectionHeading": "アイデアへのフィードバック",
+      "rejectIdea": "このアイデアを却下",
+      "rejectionSaved": "却下済み。理由はカードのコメントに保存されています。",
+      "rejectionReason": "却下の理由",
+      "rejectionChoose": "理由を選択",
+      "rejectionUninteresting": "面白くない",
+      "rejectionUnprofitable": "お金になりそうにない",
+      "rejectionOther": "その他",
+      "rejectionDetail": "補足（任意）",
+      "rejectionDetailRequired": "理由（必須）",
+      "rejectionConfirm": "理由を保存して却下",
+      "rejectionDescription": "理由をコメントに保存してアーカイブします。AIが次回の提案時に読むことで、判断の参考にできます。",
+      "rejectionFailed": "却下を保存できませんでした。",
+      "rejectionArchivePending": "却下理由は記録されています。アーカイブはまだ完了していません。",
+      "rejectionRetryArchive": "却下済みアイデアをアーカイブ"
     }
   },
   "ko": {

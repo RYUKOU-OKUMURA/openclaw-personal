@@ -23,6 +23,7 @@ import {
   renderStopCardAction,
 } from "./view-card-actions.ts";
 import { renderWorkboardDiscussion } from "./view-card-discussion.ts";
+import { renderWorkboardRejection } from "./view-card-rejection.ts";
 import {
   formatEventLabel,
   formatLifecycle,
@@ -261,13 +262,14 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
   ];
   return renderDialog(
     {
-      className: "drawer",
+      className: "workboard-card-detail-modal",
       label: card.title,
       description:
         task && taskIsAuthoritative
           ? taskDetail(task)
           : (lifecycle.session?.displayName ?? formatted.detail),
-      style: "--openclaw-modal-width: min(460px, 100vw); --openclaw-modal-max-height: 100dvh;",
+      style:
+        "--openclaw-modal-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-height: min(calc(100dvh - 32px), 90dvh);",
       onCancel: () => {
         closeCardDetails(state);
         props.onRequestUpdate?.();
@@ -346,7 +348,7 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
           }
           ${renderDependencyDetailList(dependencies)}
           ${detailSections.map(([title, values]) => renderDetailList(title, values))}
-          ${renderWorkboardDiscussion(props, card)}
+          ${renderWorkboardDiscussion(props, card)} ${renderWorkboardRejection(props, card)}
 
           <section class="workboard-detail__section">
             <h3>${t("workboard.detailOperatorNotes")}</h3>
