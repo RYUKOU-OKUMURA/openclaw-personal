@@ -120,13 +120,19 @@
     "chat.workspaceFiles.sharedFiles",
     "chat.workspaceFiles.sharedRoot",
     "chat.workspaceFiles.workspaceRoot",
+    "logbook.schedule.enabled",
+    "logbook.schedule.end",
+    "logbook.schedule.help",
+    "logbook.schedule.start",
+    "logbook.schedule.title",
+    "logbook.status.schedulePaused",
     "subtitles.accessMap",
     "tabs.accessMap"
   ],
-  "generatedAt": "2026-09-06T07:32:10.818Z",
+  "generatedAt": "2026-09-08T22:08:56.708Z",
   "locale": "vi",
-  "sourceHash": "3b19c8c1a60e201abe705a394ba79cc8c4d581d826d9944a6e88b96e7bf4efaa",
-  "totalKeys": 6495,
-  "translatedKeys": 6373,
+  "sourceHash": "22debfdca155014ce13335fac3d66f607b5581f7e1ca4823a97c2dda631985c2",
+  "totalKeys": 6771,
+  "translatedKeys": 6643,
   "workflow": 1
 }

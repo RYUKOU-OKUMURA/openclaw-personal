@@ -177,7 +177,6 @@ const CORE_GATEWAY_METHOD_SPECS = [
   // Params-aware: Gateway paths start at write scope and are containment-checked
   // by the handler; node browsing remains admin-only.
   ["fs.listDir", "fs", "dynamic", "<=2026.7"],
-  ["fs.pickPath", "fs", "operator.admin", "2026.9"],
   ["worktrees.create", "worktrees", "operator.write", "2026.7", CONTROL_PLANE_WRITE],
   ["worktrees.remove", "worktrees", "operator.admin", "2026.7", CONTROL_PLANE_WRITE],
   ["worktrees.restore", "worktrees", "operator.admin", "2026.7", CONTROL_PLANE_WRITE],
@@ -649,6 +648,14 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["update.runs.get", "update", "operator.admin", "2026.9"],
   ["update.runs.list", "update", "operator.admin", "2026.9"],
   ["gateway.suspend.handoff", "suspend", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
+  ["transcripts.export", "transcripts", "operator.read", "2026.9"],
+  ["transcripts.status", "transcripts", "operator.read", "2026.9"],
+  ["update.report", "update", "operator.admin", "2026.9", { controlPlaneWrite: true }],
+  ["skills.workshop.read", "skills", "operator.read", "2026.9"],
+  // Public sharing appends so every previously advertised method index remains stable.
+  ["session.publicShare.set", "sessions-sharing", "operator.write", "2026.9"],
+  ["claws.monitors", "claws-monitors", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
+  ["fs.pickPath", "fs", "operator.admin", "2026.9"],
   ["sandbox.explain", "sandbox", "operator.read", "2026.8"],
   ["sandbox.entries.add", "sandbox", "operator.admin", "2026.8", CONTROL_PLANE_WRITE],
   ["sandbox.recreate", "sandbox", "operator.admin", "2026.8", CONTROL_PLANE_WRITE],

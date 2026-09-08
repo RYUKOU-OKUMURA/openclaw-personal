@@ -2,13 +2,16 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type {
-  SessionFileRoot,
-  SessionFileBrowserResult,
+import {
+  ErrorCodes,
+  errorShape,
+  type SessionFileRoot,
+  type SessionFileBrowserResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { buildSandboxExplainReport } from "../../agents/sandbox/explain-report.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildWorkspaceBrowser } from "./session-file-browser.js";
+import type { RespondFn } from "./types.js";
 import {
   openWorkspaceRoot,
   statWorkspacePath,
@@ -205,4 +208,22 @@ export async function listSessionBrowserRoot(
     parentPath:
       browserPath && browser.parentPath !== undefined ? relative(browser.parentPath) : undefined,
   };
+}
+
+export function rejectUnknownBrowserRoot(
+  rootId: string | undefined,
+  roots: SessionBrowserRoot[] | undefined,
+  respond: RespondFn,
+): boolean {
+  if (!rootId || rootId === "workspace" || roots?.some((root) => root.info.id === rootId)) {
+    return false;
+  }
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.INVALID_REQUEST, "File location is not available for this session.", {
+      details: { type: "session_file_root_not_found" },
+    }),
+  );
+  return true;
 }

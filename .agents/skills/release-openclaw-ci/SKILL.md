@@ -45,9 +45,9 @@ Use this with `$release-openclaw-maintainer` and `$openclaw-testing` when a rele
   npm publication, or `pnpm release:candidate`. Keep normal CI, npm
   qualification, Docker, Package Acceptance, performance, and soak gates intact.
 - macOS app signing/notarization/appcast and Windows Hub asset promotion run
-  in parallel with or after npm publication and never delay npm. Their own
-  qualification and artifact gates still apply; Windows Hub assets remain a
-  GitHub release finalization requirement.
+  in parallel with or after npm publication and never delay npm or GitHub
+  finalization. Their own qualification and artifact gates still apply; track
+  selected platforms through verified assets and updater evidence separately.
 - Do not set GitHub secrets from unvalidated 1Password candidates. If a candidate returns 401/403, leave the existing secret alone and report the exact missing provider.
 - Use `$one-password` for secret reads/writes: one persistent tmux session, targeted items only, no secret output.
 - Watch one parent run plus compact child summaries. Avoid broad `gh run view` polling loops; REST quota is easy to burn.
@@ -114,8 +114,8 @@ Use this with `$release-openclaw-maintainer` and `$openclaw-testing` when a rele
 - Use one release operator, one transition-only watcher, and at most one
   investigator for the current failed surface. Do not build audit-review-plan
   trees around a single workflow transition.
-- For regular beta/stable releases, treat the product-complete pre-changelog
-  commit as the Code SHA. Full product validation and performance evidence bind
+- For regular beta/stable releases, treat the product-complete commit with
+  substantive version-matched draft notes as the Code SHA. Full product validation and performance evidence bind
   to that SHA. The later Release SHA may reuse those results only when it is a
   descendant whose complete changed path set is exactly `CHANGELOG.md`.
 - Extended-stable validates one exact branch tip; it does not reuse the regular
@@ -236,6 +236,20 @@ build, precompressed-asset verification, and startup/largest-asset budget result
 any failure blocks fanout. Do not substitute a dev server or raise budgets to admit
 the target.
 
+For local full E2E proof, prepare the frozen, dependency-ready proof checkout
+with private QA entries in the initial build:
+
+```bash
+OPENCLAW_BUILD_PRIVATE_QA=1 pnpm build
+```
+
+Then run the selected E2E command with its normal readiness checks enabled.
+`scripts/lib/vitest-build-prerequisites.mts` requests private QA entries;
+`scripts/run-node.mts` triggers another full build when they are absent. This
+preflight avoids rebuilding solely for `missing_private_qa_dist`. Keep the flag
+scoped to this task-owned proof checkout and command. Publication package and
+image bytes remain owned by the release workflows and their sealed artifacts.
+
 Before full release validation:
 
 ```bash
@@ -326,7 +340,7 @@ enabled after proving the workflow commit is still on trusted `main` lineage.
 Pass `-f reuse_evidence=false` only when the operator intentionally needs a
 fresh full run.
 
-After the Code SHA is green, commit only `CHANGELOG.md` and run the same helper
+After the Code SHA is green, finalize the draft in a `CHANGELOG.md`-only commit and run the same helper
 against the Release SHA. The parent must report
 `policy=changelog-only-release-v1`, `evidenceSha=<code-sha>`, and
 `changedPaths=["CHANGELOG.md"]`; it should reuse the product matrix instead of

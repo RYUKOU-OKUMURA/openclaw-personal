@@ -8,7 +8,11 @@
     }
   ],
   "doctorContract": {
-    "stateMigrations": true
+    "stateMigrations": [
+      {
+        "id": "workboard-28-kv-to-sqlite"
+      }
+    ]
   },
   "enabledByDefault": false,
   "activation": {
@@ -216,9 +220,9 @@
     "properties": {}
   },
   "controlUi": {
-    "entry": "dist/control-ui/f513a7dadef21e4f4af187e2184646f49eadba23c90c1bf9e617366d9cf84ab6/index.js",
+    "entry": "dist/control-ui/efc77b06c53432d3e2d0d1e0f3055b32ae793ed5e36d60c31ca9688552c996d4/index.js",
     "styles": [
-      "dist/control-ui/f513a7dadef21e4f4af187e2184646f49eadba23c90c1bf9e617366d9cf84ab6/index.css"
+      "dist/control-ui/efc77b06c53432d3e2d0d1e0f3055b32ae793ed5e36d60c31ca9688552c996d4/index.css"
     ]
   }
 }

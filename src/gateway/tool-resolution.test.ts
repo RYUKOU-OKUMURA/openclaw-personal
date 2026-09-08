@@ -11,6 +11,11 @@ import { createAgentToolsSandboxContext } from "../agents/test-helpers/agent-too
 import { createHostSandboxFsBridge } from "../agents/test-helpers/host-sandbox-fs-bridge.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
+import {
+  McpLoopbackToolCache,
+  resolveMcpLoopbackPolicyTools,
+  resolveMcpLoopbackScopedTools,
+} from "./mcp-http.runtime.js";
 import { resolveGatewayScopedTools } from "./tool-resolution.js";
 
 async function createMediatedExecFixture() {
@@ -93,7 +98,7 @@ describe("resolveGatewayScopedTools", () => {
     });
 
     const messageTool = result.tools.find((tool) => tool.name === "message");
-    expect(messageTool?.description).toContain("This turn visible reply");
+    expect(messageTool).toBeDefined();
   });
 
   it("keeps webchat room-event turns on automatic source delivery", async () => {
@@ -119,7 +124,7 @@ describe("resolveGatewayScopedTools", () => {
     });
 
     const messageTool = result.tools.find((tool) => tool.name === "message");
-    expect(messageTool?.description).toContain("This turn visible reply");
+    expect(messageTool).toBeDefined();
   });
 
   it.each(["profile", "gateway-deny", "surface-exclusion"] as const)(
@@ -196,6 +201,30 @@ describe("resolveGatewayScopedTools", () => {
     expect(imageTool?.description).toContain("private model context");
   });
 
+  it.each([
+    { first: undefined, second: false },
+    { first: false, second: undefined },
+  ])(
+    "keeps unknown and disabled model vision distinct in cached tools: $first then $second",
+    async ({ first, second }) => {
+      const cache = new McpLoopbackToolCache();
+      const cfg: OpenClawConfig = { tools: { allow: ["computer"] } };
+      for (const modelHasVision of [first, second]) {
+        const result = await cache.resolve({
+          cfg,
+          context: {
+            sessionKey: "agent:main:vision-context",
+            senderIsOwner: true,
+            modelHasVision,
+          },
+        });
+        expect(result.tools.some((tool) => tool.name === "computer")).toBe(
+          modelHasVision !== false,
+        );
+      }
+    },
+  );
+
   it("applies a borrowed runtime policy without reassigning session tools", async () => {
     const cfg = {
       agents: {
@@ -240,6 +269,50 @@ describe("resolveGatewayScopedTools", () => {
       }),
     ).rejects.toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
   });
+
+  it.each(
+    [
+      { mode: "policy", resolve: resolveMcpLoopbackPolicyTools },
+      { mode: "exact grant", resolve: resolveMcpLoopbackScopedTools },
+    ].flatMap(({ mode, resolve }) =>
+      [
+        { label: "ls-only", toolsAllow: ["ls"], expected: ["ls"] },
+        { label: "read-only", toolsAllow: ["read"], expected: ["read"] },
+        { label: "mixed", toolsAllow: ["ls", "read"], expected: ["ls", "read"] },
+        {
+          label: "filesystem group",
+          toolsAllow: ["group:fs"],
+          expected: mode === "policy" ? ["ls", "read"] : [],
+        },
+      ].map((testCase) => Object.assign(testCase, { mode, resolve })),
+    ),
+  )(
+    "materializes $label loopback $mode without widening its cap",
+    async ({ resolve, toolsAllow, expected }) => {
+      const scope = {
+        cfg: {
+          plugins: { enabled: false },
+          tools: { profile: "minimal", alsoAllow: ["ls", "read"] },
+        } satisfies OpenClawConfig,
+        context: {
+          sessionKey: "agent:main:cron:listing-surface",
+          workspaceDir: path.join(os.tmpdir(), "openclaw-listing-surface"),
+          senderIsOwner: true,
+          toolsAllow,
+        },
+      };
+      const allowed = await resolve(scope);
+      expect(allowed.tools.map((tool) => tool.name)).toEqual(expected);
+
+      const denied = await resolve({
+        ...scope,
+        cfg: { ...scope.cfg, tools: { ...scope.cfg.tools, deny: ["ls"] } },
+      });
+      expect(denied.tools.map((tool) => tool.name)).toEqual(
+        expected.filter((name) => name !== "ls"),
+      );
+    },
+  );
 
   it("materializes an executable write tool on the mediated CLI surface", async () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-mediated-write-"));
@@ -522,7 +595,6 @@ describe("resolveGatewayScopedTools", () => {
       expect(onYield).toHaveBeenCalledWith("waiting on subagents", "I’m waiting on the subagents.");
       expect(toolResult.details).toEqual({
         status: "yielded",
-        message: "waiting on subagents",
         acknowledgment: "I’m waiting on the subagents.",
       });
     } finally {

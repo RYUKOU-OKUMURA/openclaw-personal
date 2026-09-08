@@ -1,7 +1,7 @@
 import {
   buildCredentialSafetyPrompt,
   buildDelegationGuidanceSection,
-  buildHarnessVisibleReplyGuidance,
+  buildUiPresentationPrompt,
   buildSkillWorkshopPromptSection,
   resolveMainSessionDelegationMode,
   SKILL_WORKSHOP_TOOL_NAME,
@@ -52,7 +52,6 @@ export function buildDeveloperInstructions(
   let hasSubagentsList = false;
   let hasSessionsSend = false;
   let hasSeenDirectNamespace = false;
-  let messageToolAvailable = options.dynamicTools ? false : params.disableMessageTool !== true;
   for (const spec of options.dynamicTools ?? []) {
     const isDirectNamespace =
       spec.type === "namespace" &&
@@ -84,7 +83,6 @@ export function buildDeveloperInstructions(
       hasSessionsYield ||= isDirectNamespace && name === "sessions_yield";
       hasSubagentsList ||= name === "subagents";
       hasSessionsSend ||= name === "sessions_send";
-      messageToolAvailable ||= name === "message";
     }
   }
   const nativeCommandGuidance = listRegisteredPluginAgentPromptGuidance({
@@ -142,16 +140,9 @@ export function buildDeveloperInstructions(
           hasSessionsSend,
         }).join("\n")
       : undefined,
-    buildHarnessVisibleReplyGuidance({
-      sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
-      messageToolAvailable,
-      uiPresentation:
-        params.disableTools !== true &&
-        params.promptMode !== "minimal" &&
-        params.promptMode !== "none"
-          ? { showWidgetToolName, dashboardToolName, portalToolName }
-          : undefined,
-    }),
+    params.disableTools !== true && params.promptMode !== "minimal" && params.promptMode !== "none"
+      ? buildUiPresentationPrompt({ showWidgetToolName, dashboardToolName, portalToolName })
+      : undefined,
     buildCredentialSafetyPrompt(secretsToolName),
     nativeCommandGuidance,
     params.extraSystemPrompt,

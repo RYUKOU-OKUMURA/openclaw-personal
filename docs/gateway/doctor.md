@@ -60,6 +60,11 @@ openclaw doctor
     Run without prompts, applying only safe migrations (config normalization +
     on-disk state moves). Skips restart/service/sandbox actions that need human
     confirmation. Legacy state migrations still run automatically when detected.
+    Add `--fix` for all supported startup-blocking repairs without prompts,
+    including workspace setup, session stores, exec approvals, and audit schema
+    migrations. Explicit repair checks ownership before database snapshots;
+    another live owner must stop before repair can proceed. Malformed or
+    conflicting retained files require the manual recovery named in the error.
 
   </Tab>
   <Tab title="--deep">
@@ -77,6 +82,29 @@ To review changes before writing, open the config file first:
 ```bash
 cat ~/.openclaw/openclaw.json
 ```
+
+## Schema publication during a 2026.9.2 update
+
+When OpenClaw 2026.9.2 drives an update that needs a newer shared-state schema,
+Doctor applies the migration content and reports
+`schema content applied; version publication deferred until update run <id> finishes`.
+The old updater can finish its ledger access, while the new Gateway uses the
+migrated content. Publication waits until all affected terminal runs are at least
+five minutes old; a running row unchanged for more than 30 minutes counts as
+abandoned. Every writable database open follows this rule, and the Gateway
+watcher schedules publication after the deadline.
+
+Ordinary CLI commands, including Doctor, remain usable while that Gateway runs.
+Applied content counts as ready; only the owning Gateway, or a writable opener
+when no Gateway owns the state directory, publishes the version after the grace.
+
+Deferral does not cover agent-database migrations. Doctor reports
+`update-schema-bump-unfenced` if one is pending, if the required shared-state
+metadata table is missing, or if the content migration fails. Follow the
+[manual update sequence](/install/updating#updating-from-2026.9.2-across-a-schema-bump)
+from the refusal. See [Database schemas](/reference/database-schemas#schema-bumps-and-older-updaters)
+for the publication contract and the remaining risk for an old CLI stalled
+beyond the grace period.
 
 ## Read-only lint mode
 
@@ -160,7 +188,7 @@ Flags:
     - Removal of retired `gateway.controlUi.toolTitles` config. Tool activity descriptions appear automatically without utility-model requests.
     - Inspection of legacy default HTTPS Tailscale Serve routes from a LAN-bound Gateway. Doctor does not change these routes because status shape cannot prove ownership; after confirming a stale route, clear only its root handler and configure managed loopback ingress manually. Retired named-Service config is removed with managed ingress disabled until the operator chooses a device route; custom external routes receive manual guidance.
     - Talk config migration from legacy flat `talk.*` fields into `talk.provider` + `talk.providers.<provider>`.
-    - Browser migration checks for legacy Chrome extension configs, owned native-bootstrap registration drift, and Chrome MCP readiness.
+    - Browser migration checks for legacy Chrome extension configs and Chrome MCP readiness, with explicit commands for native-bootstrap inspection and repair.
     - OpenCode provider override warnings (`models.providers.opencode` / `opencode-zen` / `opencode-go`).
     - Legacy OpenAI Codex provider/profile migration (`openai-codex` → `openai`) and shadowing warnings for stale `models.providers.openai-codex`.
     - OAuth TLS prerequisites check for OpenAI Codex OAuth profiles.
@@ -192,7 +220,7 @@ Flags:
     - Gateway runtime checks (service installed but not running; cached launchd label).
     - Channel status warnings (probed from the running gateway).
     - Channel-specific permission checks live under `openclaw channels capabilities`; for example, Discord voice channel permissions are audited with `openclaw channels capabilities --channel discord --target channel:<channel-id>`.
-    - WhatsApp responsiveness checks for degraded Gateway event-loop health with local TUI clients still running; `--fix` stops only verified local TUI clients.
+    - WhatsApp responsiveness reports Gateway pressure and detected local TUI clients without attributing the pressure to those clients. Inspect [Gateway diagnostics](/gateway/diagnostics) before deciding whether to close clients; Doctor does not stop them.
     - Codex route repair for legacy `openai-codex/*` model refs in primary models, fallbacks, image/video generation models, heartbeat/subagent/compaction overrides, hooks, channel model overrides, and session route pins; `--fix` rewrites them to `openai/*`, migrates `openai-codex:*` auth profiles/order to `openai:*`, removes stale session/whole-agent runtime pins, and lets the repaired effective route determine whether Codex is compatible.
     - Supervisor config audit (launchd/systemd/schtasks) with optional repair.
     - Embedded proxy environment cleanup for gateway services that captured shell `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` values during install or update.
@@ -260,6 +288,8 @@ That stages grounded durable candidates into the short-term dreaming store while
     When a readable active config can be fully migrated, Doctor preserves it before considering last-known-good recovery. This includes legacy multi-agent rosters with a `default: true` owner: unrelated settings and the original agent ownership survive the migration.
 
     Per-agent migrations apply to both keyed `agents.entries` and legacy `agents.list` rosters, including rosters that already set `agents.ownership: "explicit"`. For example, Doctor preserves an agent's legacy `memorySearch` settings under `memory.search` and converts `sandbox.perSession` to `sandbox.scope`. Existing values at the current config paths take precedence.
+
+    For legacy rosters with multiple agents and no resolvable ambient owner, Doctor seeds `agents.defaults.systemAgent.agentId` from a uniquely marked `default: true` agent, or `main` when present. Sole-agent rosters and legacy default markers already honored by the runtime need no owner repair and produce no missing-owner advice. Explicit fleet ownership disables the legacy default-marker fallback, so those rosters may still need repair. Doctor also pins `agents.defaults.heartbeat.agentId` only when heartbeat enrollment would otherwise be unresolved; existing heartbeat owners, shared defaults, and per-agent enrollment are preserved. These changes are reported and saved by `doctor --fix`, including the update-time doctor pass. If no default can be identified, configure the system-agent owner explicitly.
 
     <Note>
       Doctor only carries automatic migrations for roughly two months after a
@@ -387,13 +417,27 @@ That stages grounded durable candidates into the short-term dreaming store while
 
     Doctor warns while `browser.extensionRelay.allowLegacyAuth` is enabled. Upgrade paired Chrome extensions and external CDP clients to Browser Relay Authentication v2, then set the flag to `false`. V2 clients do not downgrade to legacy authentication.
 
-    When a stable Chrome extension copy and owned native-host registration already
-    exist, doctor reports registration drift. `openclaw doctor --fix` may repair
-    that owned registration, but it never installs the host for every OpenClaw
-    user and never overwrites a foreign same-name manifest or launcher. For
-    initial setup, run `openclaw browser extension install` first, then add the
-    official Chrome Web Store extension. The unpacked stable path is a
-    development fallback.
+    Doctor does not inspect personal browser profiles for optional extension
+    readiness or cookie-import availability. It reports the importable cookie
+    database count as unavailable, not zero. When a stable Chrome extension copy
+    exists, Doctor reports its native-bootstrap status as not inspected;
+    `openclaw doctor --fix` skips native-host registration repair.
+
+    On the machine hosting Chrome, run `openclaw browser extension status --json`
+    to inspect registration explicitly; this may request browser-profile access.
+    If an upgrade leaves stale native-host targets, run
+    `openclaw browser extension install --no-store` to repair through the explicit
+    installer without requesting Store installation. The installer refuses to
+    overwrite a foreign same-name manifest or launcher. Status distinguishes a
+    requested installation, Chrome approval, and native-host registration health;
+    it does not prove a live relay connection.
+
+    For initial setup, run `openclaw browser extension install`. On macOS, this
+    also requests the official Store installation in Google Chrome; reopen Chrome
+    and approve or enable OpenClaw when prompted. Other browsers and platforms
+    need a manual Store install. The unpacked stable path remains a development
+    fallback with `openclaw browser extension install --no-store`. Explicit cookie
+    import still requires its separate consent.
 
     Doctor also audits the host-local Chrome MCP path when you use `defaultProfile: "user"` or a configured `existing-session` profile:
 
@@ -590,7 +634,10 @@ That stages grounded durable candidates into the short-term dreaming store while
 
   </Accordion>
   <Accordion title="11b. Bootstrap file size">
-    Doctor checks whether workspace bootstrap files (for example `AGENTS.md`, `CLAUDE.md`, or other injected context files) are near or over the configured character budget. It reports per-file raw vs. injected character counts, truncation percentage, truncation cause (`max/file` or `max/total`), and total injected characters as a fraction of the total budget. When files are truncated or near the limit, doctor prints tips for tuning `agents.defaults.bootstrapMaxChars` and `agents.defaults.bootstrapTotalMaxChars`.
+    Doctor checks workspace bootstrap candidates (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`, and `MEMORY.md`) against the configured character budget after runtime filtering. Root `BOOTSTRAP.md` is excluded after workspace setup completes. It reports per-file raw vs. injected character counts, truncation percentage, truncation cause (`max/file` or `max/total`), and total injected characters as a fraction of the total budget. When files are truncated or near the limit, doctor prints tips for tuning `agents.defaults.bootstrapMaxChars` and `agents.defaults.bootstrapTotalMaxChars`.
+
+    This includes files declared by the bundled `bootstrap-extra-files` hook when a fresh Gateway startup would select it, provided each matched basename is one of those six (for example, `packages/core/AGENTS.md`). Other basenames are ignored. Doctor uses each agent's workspace and limits without importing or running custom hook handlers. It predicts fresh-start selection, not the previous handler generation that a running Gateway can retain after a failed hook reload.
+
   </Accordion>
   <Accordion title="11c. Shell completion">
     Doctor checks whether tab completion is installed for the current shell (zsh, bash, fish, or PowerShell):

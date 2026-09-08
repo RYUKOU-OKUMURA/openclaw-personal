@@ -1,7 +1,5 @@
 // Gateway methods expose session files and workspace browsing.
-import { createHash } from "node:crypto";
 import path from "node:path";
-import { detectMime } from "@openclaw/media-core/mime";
 import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -9,20 +7,13 @@ import {
   errorShape,
   isCloudWorkerPlacementState,
   type SessionFileEntry,
-  type SessionFileRelevance,
-  type SessionsFilesGetParams,
-  type SessionsFilesListResult,
   validateSessionsFilesRevealParams,
   validateSessionsFilesGetParams,
   validateSessionsFilesListParams,
   validateSessionsFilesSetParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { resolveToCwd as resolveSessionToolPathToCwd } from "../../agents/sessions/tools/path-utils.js";
-import { insideGitCheckout } from "../../agents/worktrees/git.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { FsSafeError } from "../../infra/fs-safe.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
-import { isPathInside } from "../../infra/path-guards.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
@@ -42,13 +33,15 @@ import {
   resolveOpenPathCommand,
   sanitizePathForLog,
 } from "./open-path.js";
-import { buildWorkspaceBrowser } from "./session-file-browser.js";
 import {
   listSessionBrowserRoot,
+  rejectUnknownBrowserRoot,
   resolveSessionBrowserRoots,
   sessionBrowserRootPath,
   type SessionBrowserRoot,
 } from "./session-file-roots.js";
+import { getRepositoryArtifact, listRepositoryArtifacts } from "./session-repository-artifacts.js";
+import { resolveRepositoryWorkspaceAccess } from "./session-repository-workspace-access.js";
 import type {
   GatewayClient,
   GatewayRequestContext,
@@ -57,34 +50,17 @@ import type {
 } from "./types.js";
 import { assertValidParams } from "./validation.js";
 import {
-  decodeUtf8Strict,
-  normalizeRelativePath,
-  openWorkspaceRoot,
-  readWorkspaceFile,
-  readWorkspaceFilePrefix,
-  resolveWorkspacePath,
-  statWorkspacePath,
-  toUpdatedAtMs,
-  updateWorkspaceFile,
-  WORKSPACE_PREVIEW_MAX_BYTES,
-  workspaceStatKind,
-  type WorkspaceFileUpdateResult,
-  type WorkspaceRoot,
-} from "./workspace-fs.js";
+  getSessionWorkspaceFile,
+  toSessionFileEntry,
+  listSessionWorkspaceFiles,
+  setSessionWorkspaceFile,
+  resolveFileRoot,
+  type LoadedSessionFiles,
+  type TouchedFile,
+} from "./workspace-files.js";
+import { WORKSPACE_PREVIEW_MAX_BYTES } from "./workspace-fs.js";
 
-type FileKind = "modified" | "read";
-
-type TouchedFile = {
-  path: string;
-  kind: FileKind;
-};
-
-type LoadedSessionFiles = {
-  root?: string;
-  fileRoot?: string;
-  diffCwd?: string;
-  files: TouchedFile[];
-};
+type FileKind = TouchedFile["kind"];
 
 type TouchedFilesCacheEntry = {
   cursor: string;
@@ -97,25 +73,6 @@ const MAX_PREVIEW_BYTES = WORKSPACE_PREVIEW_MAX_BYTES;
 const TOUCHED_FILES_CACHE_LIMIT = 256;
 const TOUCHED_FILES_DELTA_MAX_MESSAGES = 1_000;
 const TOUCHED_FILES_DELTA_MAX_BYTES = 1_000_000;
-// Matches file-type's documented default buffer sample while keeping metadata
-// classification independent from the 256 KiB inline-content cap.
-const MIME_SNIFF_PREFIX_BYTES = 4_100;
-// Inline previews stay limited to formats supported by modern Control UI browsers.
-// Native workspace clients intentionally own a broader, separate image policy.
-const BROWSER_PREVIEW_IMAGE_MIME_TYPES = new Set([
-  "image/avif",
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-const DETECTED_TEXT_MIME_TYPES = new Set([
-  "application/rtf",
-  "application/xml",
-  "application/x-ms-regedit",
-  "model/stl",
-]);
-
 // Request latency must not scale with transcript size: delta resets rebuild the
 // fold, while this process-local LRU cap bounds retained session state.
 const touchedFilesCache = new Map<string, TouchedFilesCacheEntry>();
@@ -305,185 +262,6 @@ async function loadSqliteTouchedFiles(
   }
 }
 
-function toDisplayPath(root: string, resolved: string): string {
-  const relative = path.relative(root, resolved);
-  if (!relative) {
-    return "";
-  }
-  return relative.split(path.sep).join("/");
-}
-
-function resolveTouchedFilePath(params: {
-  root: string | undefined;
-  fileRoot: string | undefined;
-  filePath: string;
-}): string | undefined {
-  if (!params.root) {
-    return undefined;
-  }
-  const base = params.fileRoot ?? params.root;
-  const resolved = resolveSessionToolPathToCwd(params.filePath, base);
-  if (!isPathInside(params.root, resolved)) {
-    return undefined;
-  }
-  return resolved;
-}
-
-function resolveFileRoot(params: {
-  root: string | undefined;
-  spawnedCwd: string | undefined;
-}): string | undefined {
-  if (!params.root) {
-    return undefined;
-  }
-  if (!params.spawnedCwd) {
-    return params.root;
-  }
-  const resolvedCwd = path.resolve(params.spawnedCwd);
-  const resolvedRoot = path.resolve(params.root);
-  return isPathInside(resolvedRoot, resolvedCwd) ? params.spawnedCwd : params.root;
-}
-
-function relevanceForKind(kind: FileKind): SessionFileRelevance {
-  return kind;
-}
-
-function buildSessionRelevanceMap(
-  files: readonly TouchedFile[],
-  root: string | undefined,
-  fileRoot: string | undefined,
-): Map<string, SessionFileRelevance> {
-  const relevance = new Map<string, SessionFileRelevance>();
-  if (!root) {
-    for (const file of files) {
-      relevance.set(normalizeRelativePath(file.path), relevanceForKind(file.kind));
-    }
-    return relevance;
-  }
-  for (const file of files) {
-    const resolved = resolveTouchedFilePath({ root, fileRoot, filePath: file.path });
-    if (!resolved) {
-      continue;
-    }
-    relevance.set(toDisplayPath(root, resolved), relevanceForKind(file.kind));
-  }
-  return relevance;
-}
-
-function displayNameForPath(filePath: string): string {
-  const base = path.basename(filePath);
-  return base || filePath;
-}
-
-function isDetectedTextMime(mimeType: string): boolean {
-  return (
-    mimeType.startsWith("text/") ||
-    mimeType.endsWith("+xml") ||
-    DETECTED_TEXT_MIME_TYPES.has(mimeType)
-  );
-}
-
-function applyInlineFilePreview(entry: SessionFileEntry, buffer: Buffer, mimeType?: string): void {
-  if (mimeType && BROWSER_PREVIEW_IMAGE_MIME_TYPES.has(mimeType)) {
-    entry.mimeType = mimeType;
-    entry.contentEncoding = "base64";
-    entry.previewKind = "image";
-    entry.content = buffer.toString("base64");
-    return;
-  }
-  const text = decodeUtf8Strict(buffer);
-  if ((!mimeType || isDetectedTextMime(mimeType)) && text !== undefined) {
-    entry.mimeType = mimeType ?? "text/plain";
-    entry.contentEncoding = "utf8";
-    entry.previewKind = "text";
-    entry.content = text;
-    // The hash doubles as the sessions.files.set CAS token. Binary files
-    // never receive one, so replacement characters cannot be saved back.
-    entry.hash = createHash("sha256").update(buffer).digest("hex");
-    return;
-  }
-  entry.previewKind = "unsupported";
-  if (mimeType) {
-    entry.mimeType = mimeType;
-  }
-}
-
-function applyOversizedFileMetadata(
-  entry: SessionFileEntry,
-  buffer: Buffer,
-  mimeType?: string,
-): void {
-  const prefixIsText = decodeUtf8Strict(buffer) !== undefined;
-  if ((!mimeType && prefixIsText) || (mimeType && isDetectedTextMime(mimeType) && prefixIsText)) {
-    return;
-  }
-  entry.previewKind = "unsupported";
-  if (mimeType) {
-    entry.mimeType = mimeType;
-  }
-}
-
-async function toSessionFileEntry(
-  touched: TouchedFile,
-  root: string | undefined,
-  fileRoot: string | undefined,
-  opts: { includeContent?: boolean; workspaceRoot?: WorkspaceRoot } = {},
-): Promise<SessionFileEntry> {
-  const resolved = resolveTouchedFilePath({ root, fileRoot, filePath: touched.path });
-  const base = {
-    path: touched.path,
-    name: displayNameForPath(touched.path),
-    kind: touched.kind,
-  } satisfies Pick<SessionFileEntry, "path" | "name" | "kind">;
-  if (!resolved) {
-    return { ...base, missing: true };
-  }
-  const browserPath = toDisplayPath(root!, resolved);
-  const stat = await statWorkspacePath(opts.workspaceRoot ?? root!, browserPath);
-  if (!stat || workspaceStatKind(stat) !== "file") {
-    return { ...base, missing: true };
-  }
-  const entry: SessionFileEntry = {
-    ...base,
-    workspacePath: browserPath,
-    missing: false,
-    size: stat.size,
-    updatedAtMs: toUpdatedAtMs(stat.mtimeMs),
-  };
-  if (!opts.includeContent) {
-    return entry;
-  }
-  if (stat.size <= MAX_PREVIEW_BYTES) {
-    const read = await readWorkspaceFile(opts.workspaceRoot ?? root!, browserPath);
-    if (!read) {
-      return { ...base, missing: true };
-    }
-    if (read === "too-large") {
-      return entry;
-    }
-    entry.workspacePath = read.canonicalPath;
-    entry.size = read.stat.size;
-    entry.updatedAtMs = toUpdatedAtMs(read.stat.mtimeMs);
-    const mimeType = await detectMime({ buffer: read.buffer });
-    applyInlineFilePreview(entry, read.buffer, mimeType);
-    return entry;
-  }
-  const prefix = await readWorkspaceFilePrefix(
-    opts.workspaceRoot ?? root!,
-    browserPath,
-    MIME_SNIFF_PREFIX_BYTES,
-  );
-  if (!prefix) {
-    return { ...base, missing: true };
-  }
-  entry.workspacePath = prefix.canonicalPath;
-  entry.size = prefix.stat.size;
-  entry.updatedAtMs = toUpdatedAtMs(prefix.stat.mtimeMs);
-  const mimeType = await detectMime({ buffer: prefix.buffer });
-  applyOversizedFileMetadata(entry, prefix.buffer, mimeType);
-  return entry;
-}
-
 function loadSessionFileRoot(params: { sessionKey: string; agentId?: string }) {
   const loaded = loadGatewaySessionEntryReadOnly(params.sessionKey, { agentId: params.agentId });
   if (!loaded.entry?.sessionId) {
@@ -495,6 +273,9 @@ function loadSessionFileRoot(params: { sessionKey: string; agentId?: string }) {
       params.agentId ??
       parseAgentSessionKey(params.sessionKey)?.agentId,
   );
+  if (loaded.entry.repositoryWorkspaceId) {
+    return { ...loaded, agentId, root: undefined, fileRoot: undefined, diffCwd: undefined };
+  }
   const { spawnedCwd, root, diffCwd } = resolveSessionWorkspaceRoots(
     loaded.cfg,
     agentId,
@@ -510,14 +291,8 @@ function loadSessionFileRoot(params: { sessionKey: string; agentId?: string }) {
 }
 
 /**
- * Canonical workspace root of a session that lives on this Gateway's own disk.
- * Workspace identity surfaces must name the same directory the file routes
- * open, so they read it from here instead of re-deriving the precedence.
- *
- * An exec-node session's directory only exists on the remote host, while the
- * precedence below falls back to the local agent workspace — returning that
- * would describe the wrong machine. `sessions.files.reveal` refuses the same
- * case; callers here get "no local root" and their own absent-workspace path.
+ * Uses the file routes' canonical local root for workspace identity surfaces.
+ * Exec-node directories live remotely; never label the local fallback as theirs.
  */
 export function resolveLocalSessionWorkspaceRoot(params: {
   sessionKey: string;
@@ -527,30 +302,22 @@ export function resolveLocalSessionWorkspaceRoot(params: {
   return loaded.entry?.execNode ? undefined : loaded.root;
 }
 
-function resolveSessionFileCandidates(params: {
-  root: string;
-  fileRoot: string | undefined;
-  filePath: string;
-}): string[] {
-  return [
-    resolveTouchedFilePath(params),
-    resolveWorkspacePath(params.root, params.filePath),
-  ].filter((candidate, index, all): candidate is string => {
-    return candidate !== undefined && all.indexOf(candidate) === index;
-  });
-}
-
-async function loadSessionFiles(
-  params: {
-    sessionKey: string;
-    agentId?: string;
-  },
-  loaded = loadSessionFileRoot(params),
-): Promise<LoadedSessionFiles> {
+async function loadSessionFiles(params: {
+  sessionKey: string;
+  agentId?: string;
+  context: GatewayRequestContext;
+}): Promise<
+  LoadedSessionFiles &
+    ReturnType<typeof loadSessionFileRoot> & {
+      repository?: ReturnType<typeof resolveRepositoryWorkspaceAccess>;
+    }
+> {
+  const loaded = loadSessionFileRoot(params);
   const { storePath, entry, canonicalKey, agentId } = loaded;
   if (!entry?.sessionId || !storePath || !agentId) {
-    return { files: [] };
+    return { ...loaded, files: [] };
   }
+  const repository = resolveRepositoryWorkspaceAccess(loaded, params.context);
   const scope = {
     agentId,
     sessionEntry: entry,
@@ -566,9 +333,8 @@ async function loadSessionFiles(
     `${agentId}\0${entry.sessionId}\0${target.storePath ?? ""}`,
   );
   return {
-    root: loaded.root,
-    fileRoot: loaded.fileRoot,
-    diffCwd: loaded.diffCwd,
+    ...loaded,
+    repository,
     files: [...files.values()].toSorted((a, b) => {
       if (a.kind !== b.kind) {
         return a.kind === "modified" ? -1 : 1;
@@ -576,89 +342,6 @@ async function loadSessionFiles(
       return a.path.localeCompare(b.path);
     }),
   };
-}
-
-async function buildListResult(
-  params: {
-    sessionKey: string;
-    agentId?: string;
-    path?: string;
-    search?: string;
-  },
-  loadedRoot = loadSessionFileRoot(params),
-): Promise<Omit<SessionsFilesListResult, "sessionKey">> {
-  const loaded = await loadSessionFiles(params, loadedRoot);
-  const root = loaded.root;
-  const gitCheckout = loaded.diffCwd ? insideGitCheckout(loaded.diffCwd) : undefined;
-  const workspaceRoot = root ? await openWorkspaceRoot(root) : undefined;
-  const workspaceFiles = root
-    ? loaded.files.filter((file) =>
-        Boolean(resolveTouchedFilePath({ root, fileRoot: loaded.fileRoot, filePath: file.path })),
-      )
-    : loaded.files;
-  const files = await Promise.all(
-    workspaceFiles.map((file) =>
-      toSessionFileEntry(file, loaded.root, loaded.fileRoot, { workspaceRoot }),
-    ),
-  );
-  const browser = await buildWorkspaceBrowser({
-    root,
-    workspaceRoot,
-    path: params.path,
-    search: params.search,
-    relevance: buildSessionRelevanceMap(workspaceFiles, root, loaded.fileRoot),
-  });
-  return {
-    ...(root ? { root } : {}),
-    ...(gitCheckout === undefined ? {} : { gitCheckout }),
-    files,
-    ...(browser ? { browser } : {}),
-  };
-}
-
-async function findSessionFile(
-  params: SessionsFilesGetParams,
-  loadedRoot = loadSessionFileRoot(params),
-): Promise<{ root?: string; file?: SessionFileEntry }> {
-  const loaded = await loadSessionFiles(params, loadedRoot);
-  const exactTouched = loaded.files.find((file) => file.path === params.path);
-  if (exactTouched) {
-    return {
-      ...(loaded.root ? { root: loaded.root } : {}),
-      file: await toSessionFileEntry(exactTouched, loaded.root, loaded.fileRoot, {
-        includeContent: true,
-      }),
-    };
-  }
-  if (!loaded.root) {
-    return {};
-  }
-  // Any in-root file is previewable; fs-safe root enforces containment, symlink/hardlink
-  // rejection, and the 256 KB cap.
-  const candidates = resolveSessionFileCandidates({
-    root: loaded.root,
-    fileRoot: loaded.fileRoot,
-    filePath: params.path,
-  });
-  if (candidates.length === 0) {
-    return { root: loaded.root };
-  }
-  const relevance = buildSessionRelevanceMap(loaded.files, loaded.root, loaded.fileRoot);
-  for (const candidate of candidates) {
-    const browserPath = toDisplayPath(loaded.root, candidate);
-    const sessionKind = relevance.get(browserPath);
-    const touched: TouchedFile = {
-      path: browserPath,
-      kind: sessionKind === "modified" ? "modified" : "read",
-    };
-    const file = await toSessionFileEntry(touched, loaded.root, loaded.root, {
-      includeContent: true,
-    });
-    if (!file.missing) {
-      return { root: loaded.root, file };
-    }
-  }
-  return { root: loaded.root };
 }
 
 function respondSessionFileNotFound(respond: RespondFn, filePath: string) {
@@ -739,25 +422,6 @@ async function loadBrowserRoots(
   return roots.length ? roots : undefined;
 }
 
-function rejectUnknownBrowserRoot(
-  rootId: string | undefined,
-  roots: SessionBrowserRoot[] | undefined,
-  respond: RespondFn,
-): boolean {
-  if (!rootId || rootId === "workspace" || roots?.some((root) => root.info.id === rootId)) {
-    return false;
-  }
-  respond(
-    false,
-    undefined,
-    sessionFilesError(
-      "session_file_root_not_found",
-      "File location is not available for this session.",
-    ),
-  );
-  return true;
-}
-
 /** Gateway handlers for session files and workspace browsing. */
 export const sessionsFilesHandlers: GatewayRequestHandlers = {
   "sessions.files.list": async ({ params, respond, context, client }) => {
@@ -775,7 +439,20 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const loaded = loadSessionFileRoot({ ...params, agentId });
+    const loaded = await loadSessionFiles({ ...params, agentId, context });
+    if (loaded.repository) {
+      const request = { files: loaded.files, path: params.path, search: params.search };
+      const result =
+        loaded.repository.kind === "stored"
+          ? await listRepositoryArtifacts(loaded.repository, request)
+          : await loaded.repository.inspect("list", request);
+      respond(true, {
+        sessionKey: params.sessionKey,
+        ...result,
+        root: undefined,
+      });
+      return;
+    }
     const roots = await loadBrowserRoots(loaded, client, context);
     if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
       return;
@@ -789,7 +466,7 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
           files: [],
           browser: await listSessionBrowserRoot(selected, params),
         }
-      : await buildListResult({ ...params, agentId }, loaded);
+      : await listSessionWorkspaceFiles({ ...loaded, path: params.path, search: params.search });
     respond(true, {
       sessionKey: params.sessionKey,
       ...result,
@@ -811,7 +488,28 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const loaded = loadSessionFileRoot({ ...params, agentId });
+    const loaded = await loadSessionFiles({ ...params, agentId, context });
+    if (loaded.repository) {
+      const request = { files: loaded.files, path: params.path };
+      const result =
+        loaded.repository.kind === "stored"
+          ? await getRepositoryArtifact(loaded.repository, params.path)
+          : await loaded.repository.inspect("get", request);
+      if (!result.file || result.file.missing) {
+        respondSessionFileNotFound(respond, params.path);
+        return;
+      }
+      if (typeof result.file.content !== "string" && result.file.previewKind !== "unsupported") {
+        respondSessionFileTooLarge(respond, result.file, params.path);
+        return;
+      }
+      respond(true, {
+        sessionKey: params.sessionKey,
+        ...result,
+        root: undefined,
+      });
+      return;
+    }
     const roots =
       params.rootId && params.rootId !== "workspace"
         ? await loadBrowserRoots(loaded, client, context)
@@ -836,12 +534,15 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
               )
             : undefined,
         }
-      : await findSessionFile({ ...params, agentId }, loaded);
+      : await getSessionWorkspaceFile({ ...loaded, path: params.path });
     if (selected && result.file) {
-      const relativePath = toDisplayPath(
-        selected.displayRoot,
-        path.join(selected.fsRoot, result.file.workspacePath ?? selectedPath!),
-      );
+      const relativePath = path
+        .relative(
+          selected.displayRoot,
+          path.join(selected.fsRoot, result.file.workspacePath ?? selectedPath!),
+        )
+        .split(path.sep)
+        .join("/");
       result.file.path = relativePath;
       result.file.workspacePath = relativePath;
     }
@@ -871,72 +572,42 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    // NUL bytes would make the written file fail decodeUtf8Strict on the next
-    // read, stranding it without a CAS hash; reject them up front so the API
-    // never writes content its own editability checks classify as binary.
-    if (params.content.includes("\0")) {
-      respondSessionFileUnsafe(respond, params.path);
+    const loaded = loadSessionFileRoot({ ...params, agentId });
+    if (!loaded.agentId || !loaded.entry?.sessionId) {
+      respondSessionFileNotFound(respond, params.path);
       return;
     }
-    const contentSize = Buffer.byteLength(params.content, "utf8");
-    if (contentSize > MAX_PREVIEW_BYTES) {
+    const repository = resolveRepositoryWorkspaceAccess(loaded, context);
+    if (repository?.kind === "stored") {
+      throw new Error("Start this cloud session before editing its repository files.");
+    }
+    const authorize = () => sessionMutationAuthorization?.assertCurrent();
+    const update = repository
+      ? await repository.inspect(
+          "set",
+          { path: params.path, content: params.content, expectedHash: params.expectedHash },
+          authorize,
+        )
+      : await setSessionWorkspaceFile({
+          ...params,
+          root: loaded.root,
+          fileRoot: loaded.fileRoot,
+          assertCurrent: authorize,
+        });
+    if (update.status === "missing") {
+      respondSessionFileNotFound(respond, params.path);
+      return;
+    }
+    if (update.status === "too-large") {
       respond(
         false,
         undefined,
         sessionFilesError("session_file_too_large", "session file content is too large", {
           maxPreviewBytes: MAX_PREVIEW_BYTES,
           path: params.path,
-          size: contentSize,
+          size: update.size,
         }),
       );
-      return;
-    }
-    const contentBuffer = Buffer.from(params.content, "utf8");
-    // Node replaces lone UTF-16 surrogates while encoding. Reject them instead
-    // of reporting a hash for bytes that no longer match the submitted text.
-    if (contentBuffer.toString("utf8") !== params.content) {
-      respondSessionFileUnsafe(respond, params.path);
-      return;
-    }
-    const loaded = loadSessionFileRoot({ ...params, agentId });
-    if (!loaded.root) {
-      respondSessionFileNotFound(respond, params.path);
-      return;
-    }
-    const candidates = resolveSessionFileCandidates({
-      root: loaded.root,
-      fileRoot: loaded.fileRoot,
-      filePath: params.path,
-    });
-    let browserPath: string | undefined;
-    for (const candidate of candidates) {
-      const candidatePath = toDisplayPath(loaded.root, candidate);
-      const stat = await statWorkspacePath(loaded.root, candidatePath);
-      if (stat && workspaceStatKind(stat) === "file") {
-        browserPath = candidatePath;
-        break;
-      }
-    }
-    if (!browserPath) {
-      respondSessionFileNotFound(respond, params.path);
-      return;
-    }
-    let update: WorkspaceFileUpdateResult;
-    // The resolved root belongs to the authorized instance. Recheck after all async path
-    // discovery so a replacement cannot redirect this write to its workspace.
-    sessionMutationAuthorization?.assertCurrent();
-    try {
-      update = await updateWorkspaceFile(
-        loaded.root,
-        browserPath,
-        params.content,
-        params.expectedHash,
-      );
-    } catch (err) {
-      if (!(err instanceof FsSafeError)) {
-        throw err;
-      }
-      respondSessionFileUnsafe(respond, params.path);
       return;
     }
     if (update.status === "conflict") {
@@ -956,17 +627,8 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     }
     respond(true, {
       sessionKey: params.sessionKey,
-      root: loaded.root,
-      file: {
-        path: params.path,
-        workspacePath: update.canonicalPath,
-        name: displayNameForPath(update.canonicalPath),
-        kind: "modified",
-        missing: false,
-        size: update.stat.size,
-        updatedAtMs: toUpdatedAtMs(update.stat.mtimeMs),
-        hash: update.hash,
-      },
+      ...(repository ? {} : { root: update.root }),
+      file: update.file,
     });
   },
   "sessions.files.reveal": async ({ params, respond, context, client }) => {
@@ -991,6 +653,14 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     }
     const loaded = loadSessionFileRoot({ sessionKey: params.key, agentId });
     let workspaceRoot = loaded.root;
+    if (loaded.entry?.repositoryWorkspaceId) {
+      respond(true, {
+        ok: false,
+        error:
+          "This repository exists only on the cloud session runner. Use the Files panel to browse it; there is no Gateway checkout to reveal.",
+      });
+      return;
+    }
     if (!workspaceRoot) {
       respond(true, {
         ok: false,
@@ -1040,12 +710,13 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       }
       workspaceRoot = selected.info.hostPath;
     }
+    const command = resolveOpenPathCommand(workspaceRoot);
     try {
-      await execOpenPath(resolveOpenPathCommand(workspaceRoot));
+      await execOpenPath(command);
       respond(true, { ok: true, path: workspaceRoot });
     } catch (error) {
       const errorMessage = formatOpenPathError(error);
-      const detailedError = isHeadlessOpenPathError(errorMessage)
+      const detailedError = isHeadlessOpenPathError(error, command)
         ? `Cannot open path in headless environment. Path: ${workspaceRoot}. This environment appears to lack a graphical or terminal browser handler.`
         : `Failed to reveal session workspace: ${errorMessage}`;
       context.logGateway.warn(
@@ -1055,4 +726,3 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     }
   },
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
