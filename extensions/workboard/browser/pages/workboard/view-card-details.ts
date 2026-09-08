@@ -269,7 +269,7 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
           ? taskDetail(task)
           : (lifecycle.session?.displayName ?? formatted.detail),
       style:
-        "--openclaw-modal-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-height: min(calc(100dvh - 32px), 90dvh);",
+        "--openclaw-modal-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-height: min(calc(100dvh - 32px), 90dvh); --wa-transition-normal: 0ms;",
       onCancel: () => {
         closeCardDetails(state);
         props.onRequestUpdate?.();
