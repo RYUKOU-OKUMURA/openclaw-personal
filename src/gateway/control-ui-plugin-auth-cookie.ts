@@ -8,6 +8,7 @@ import {
   CONTROL_UI_PLUGIN_AUTH_PROBE_ORIGIN_QUERY,
   CONTROL_UI_PLUGIN_AUTH_PROBE_QUERY,
 } from "./control-ui-contract.js";
+import { controlUiPluginAssetPrefix } from "./control-ui-plugin-assets-contract.js";
 import type { ControlUiPluginTabAuthGrant } from "./control-ui-plugin-tabs.js";
 import { isOperatorScope, type OperatorScope } from "./operator-scopes.js";
 import { resolvePluginRoutePathContext } from "./server/plugins-http/path-context.js";
@@ -95,6 +96,7 @@ function createControlUiPluginAuthCookie(
     generation: string | undefined;
     profileId?: string;
     nowMs?: number;
+    localHttpAssetBasePath?: string;
   },
 ) {
   const path = normalizeCookiePath(grant.path);
@@ -125,7 +127,15 @@ function createControlUiPluginAuthCookie(
   // cross-site for cookie purposes even when the panel URL is same-host.
   // CHIPS cannot be used here: its cross-site-ancestor key prevents nested
   // opaque frames from receiving the grant. HTTP auth limits it to safe reads.
-  return `${cookieNameForPlugin(grant.pluginId)}=v1.${encodedPayload}.${sig}; Path=${path}; HttpOnly; Secure; SameSite=None; Max-Age=${Math.ceil(CONTROL_UI_PLUGIN_AUTH_GRANT_TTL_MS / 1000)}`;
+  // Native assets load in the same-origin document. WebKit rejects Secure
+  // cookies on loopback HTTP; only these exact, read-scoped asset roots may
+  // use a same-site cookie on an authenticated direct-loopback connection.
+  const localAsset =
+    params.localHttpAssetBasePath !== undefined &&
+    grant.match === "prefix" &&
+    path === controlUiPluginAssetPrefix(grant.pluginId, params.localHttpAssetBasePath);
+  const attributes = localAsset ? "SameSite=Strict" : "Secure; SameSite=None";
+  return `${cookieNameForPlugin(grant.pluginId)}=v1.${encodedPayload}.${sig}; Path=${path}; HttpOnly; ${attributes}; Max-Age=${Math.ceil(CONTROL_UI_PLUGIN_AUTH_GRANT_TTL_MS / 1000)}`;
 }
 
 export function setControlUiPluginAuthCookie(
@@ -135,15 +145,12 @@ export function setControlUiPluginAuthCookie(
     generation: string | undefined;
     profileId?: string;
     nowMs?: number;
+    localHttpAssetBasePath?: string;
   },
 ) {
   const issuedGrants: ControlUiPluginTabAuthGrant[] = [];
   const cookiesToAdd = grants.flatMap((grant) => {
-    const cookie = createControlUiPluginAuthCookie(grant, {
-      generation: params.generation,
-      profileId: params.profileId,
-      nowMs: params.nowMs,
-    });
+    const cookie = createControlUiPluginAuthCookie(grant, params);
     if (!cookie) {
       return [];
     }

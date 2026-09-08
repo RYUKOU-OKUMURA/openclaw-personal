@@ -18,11 +18,13 @@ import {
   listControlUiPluginTabAuthGrants,
   listControlUiPluginWidgetKinds,
 } from "./control-ui-plugin-tabs.js";
+import { setControlUiPluginAuthCookieForRequest } from "./http-auth-utils.js";
 import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import {
   AUTH_NONE,
   AUTH_TOKEN,
   createResponse,
+  createRequest,
   createTestGatewayServer,
   sendRequest,
   withGatewayServer,
@@ -221,6 +223,9 @@ describe("native Control UI browser assets", () => {
           expect(cookieHeaders).toHaveLength(requiresAuth ? 1 : 0);
           for (const header of cookieHeaders) {
             expect(header).toContain(`Path=${assetPath};`);
+            // WebKit does not send Secure cookies on loopback HTTP.
+            expect(header).toContain("HttpOnly; SameSite=Strict;");
+            expect(header).not.toContain("; Secure;");
           }
           const cookie = cookieHeaders.map((value) => String(value).split(";")[0]).join("; ");
           for (const { assetUrl, source } of [
@@ -246,6 +251,79 @@ describe("native Control UI browser assets", () => {
           }
         },
       });
+    },
+  );
+
+  it.each<{
+    host: string;
+    remoteAddress: string;
+    headers: Record<string, string>;
+    encrypted: boolean;
+    local: boolean;
+  }>([
+    {
+      host: "localhost:18789",
+      remoteAddress: "127.0.0.1",
+      headers: {},
+      encrypted: false,
+      local: true,
+    },
+    {
+      host: "127.0.0.1:18789",
+      remoteAddress: "127.0.0.1",
+      headers: {},
+      encrypted: false,
+      local: true,
+    },
+    { host: "[::1]:18789", remoteAddress: "::1", headers: {}, encrypted: false, local: true },
+    {
+      host: "gateway.example",
+      remoteAddress: "127.0.0.1",
+      headers: {},
+      encrypted: false,
+      local: false,
+    },
+    {
+      host: "localhost:18789",
+      remoteAddress: "192.0.2.1",
+      headers: {},
+      encrypted: false,
+      local: false,
+    },
+    {
+      host: "localhost:18789",
+      remoteAddress: "127.0.0.1",
+      headers: { "x-forwarded-proto": "https" },
+      encrypted: false,
+      local: false,
+    },
+    {
+      host: "localhost:18789",
+      remoteAddress: "127.0.0.1",
+      headers: {},
+      encrypted: true,
+      local: false,
+    },
+  ])(
+    "limits HTTP native-asset cookies to direct loopback: $host / $remoteAddress / $headers",
+    ({ host, remoteAddress, headers, encrypted, local }) => {
+      activateFixture();
+      const response = createResponse();
+      const request = createRequest({
+        path: "/control-ui-config.json",
+        host,
+        remoteAddress,
+        headers,
+      });
+      Object.defineProperty(request.socket, "encrypted", { value: encrypted });
+      setControlUiPluginAuthCookieForRequest(request, response.res, "token", false, "generation", [
+        "operator.read",
+      ]);
+      const cookies = response.setHeader.mock.calls.find(([name]) => name === "Set-Cookie")?.[1];
+      expect(cookies).toHaveLength(1);
+      expect(cookies[0]).toContain(
+        local ? "HttpOnly; SameSite=Strict;" : "HttpOnly; Secure; SameSite=None;",
+      );
     },
   );
 
