@@ -5,6 +5,17 @@
 
 /** Parsed OpenClaw operation before approval/execution. */
 export type SystemAgentOperation =
+  | {
+      /** Host-prepared specialist capability; never parsed from management-model output. */
+      kind: "create-specialist";
+      agentId: string;
+      name: string;
+      role: string;
+      requesterAgentId: string;
+      model: string;
+      configHash: string | null;
+      peerAgentIds: string[];
+    }
   | { kind: "none"; message: string }
   | { kind: "overview" }
   | { kind: "doctor" }

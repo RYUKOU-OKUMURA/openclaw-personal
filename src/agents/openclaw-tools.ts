@@ -81,6 +81,7 @@ import { createSessionsSpawnTool } from "./tools/sessions-spawn-tool.js";
 import { createSessionsTool } from "./tools/sessions-tool.js";
 import { createSessionsYieldTool } from "./tools/sessions-yield-tool.js";
 import { createConfiguredSkillWorkshopTool } from "./tools/skill-workshop-tool-factory.js";
+import { createSpecialistToolsForRun } from "./tools/specialists-tool.js";
 import { createSubagentsTool } from "./tools/subagents-tool.js";
 import { createTaskSuggestionTools } from "./tools/task-suggestion-tools.js";
 import { createTerminalTool } from "./tools/terminal-tool.js";
@@ -457,6 +458,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
             requesterSenderId: options?.requesterSenderId,
           }),
           ...createOpenClawDelegateToolsForRun({ ...options, sessionAgentId }),
+          ...createSpecialistToolsForRun({ ...options, config: resolvedConfig, sessionAgentId }),
         ]),
     createAgentsListTool({
       agentSessionKey: options?.agentSessionKey,
