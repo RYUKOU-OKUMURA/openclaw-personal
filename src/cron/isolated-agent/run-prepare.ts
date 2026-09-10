@@ -562,6 +562,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir: executionWorkspaceDir,
         config: cfgWithAgentDefaults,
         agentId,
+        sessionKey: agentSessionKey,
         existingSnapshot: cronSession.sessionEntry.skillsSnapshot,
         librarySelections: cronSession.sessionEntry.skillLibrarySelections,
         isFastTestEnv: params.isFastTestEnv,
