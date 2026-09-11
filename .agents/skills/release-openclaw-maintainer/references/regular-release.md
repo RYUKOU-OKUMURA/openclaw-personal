@@ -3,25 +3,16 @@
 ## Freeze and validate code
 
 Read [preparation](preparation.md) before branch or version changes. Record the
-approved version, cut SHA, release branch and product-complete Code SHA. Draft
-substantive version-matched release notes during preparation, before freezing
-Code SHA; package source preflight requires a matching changelog section. Use
+approved version, cut SHA, release branch and product-complete Code SHA,
+including final notes when ready. Code SHA may also be the Release SHA. Use
 [validation](validation.md) to select phase-specific gates and
 `$release-openclaw-ci` for dispatch/recovery.
 
 Run deterministic source preflight, then validate the exact Code SHA:
 
 ```bash
-node scripts/package-source-preflight.mjs --ref <code-sha>
 node scripts/full-release-validation-at-sha.mjs --sha <code-sha> --target-ref release/YYYY.M.PATCH --workflow-sha <tooling-sha>
 ```
-
-Run the source preflight from the recorded trusted tooling checkout, where the
-Code SHA is available as a Git object. It reads the selected source without
-executing it and catches missing notes and package-version/dependency drift
-before expensive fanout. Complete the locale, production UI build and provider
-preflights in `$release-openclaw-ci` as well; source metadata alone is not product
-qualification.
 
 Record and reuse the full trusted Tooling SHA. Beta-publish uses
 `release_profile=beta`, `run_release_soak=false`; require `npm-beta-v1` for a
@@ -40,14 +31,21 @@ proven infrastructure noise.
 
 ## Qualify publication bytes
 
-After Code SHA is green, finalize the draft with `$openclaw-changelog-update`,
-using current main for canonical PR provenance without adding unselected code.
-Commit only `CHANGELOG.md` as Release SHA;
-verify the complete Code-to-Release delta is exactly that file.
+If Code SHA already contains fully final notes, use the same successful fresh
+Full Release Validation parent and attempt for Code and Release qualification.
+Its exact npm/OCI descriptors must belong to that SHA and satisfy the selected
+release profile's required gates. No second commit or validation run is needed
+solely to name a Release SHA.
 
-Dispatch Full Release Validation for Release SHA with evidence reuse. Require
-`changelog-only-release-v1`, green Code SHA product evidence, and fresh exact
-Release SHA npm qualification/Docker preparation. Final SDK reports cover both
+If notes change after Code qualification, use `$openclaw-changelog-update`
+with current main for canonical PR provenance and commit only `CHANGELOG.md`.
+The complete Code-to-Release delta must be exactly that file to optionally use
+`changelog-only-release-v1`. That path requires green Code product evidence
+and fresh Release SHA npm qualification/Docker preparation; it does not reuse
+the earlier package bytes. Any other source change requires fresh product
+qualification.
+
+For either path, final SDK reports cover both
 beta and latest; publication selects the appropriate one. Run release-note,
 package/install/update acceptance against these exact prepared bytes.
 

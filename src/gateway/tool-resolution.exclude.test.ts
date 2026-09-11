@@ -390,6 +390,7 @@ describe("resolveGatewayScopedTools excludeToolNames", () => {
       "computer",
       "mobile_ui",
       "openclaw",
+      "specialists",
     ]);
     expect(args.inheritedToolDenylist).toEqual([
       "automations",
@@ -405,6 +406,7 @@ describe("resolveGatewayScopedTools excludeToolNames", () => {
       "computer",
       "mobile_ui",
       "openclaw",
+      "specialists",
     ]);
   });
 

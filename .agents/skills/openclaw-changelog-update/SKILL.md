@@ -6,8 +6,10 @@ description: Regenerate OpenClaw release changelog sections from git history bef
 # OpenClaw Changelog Update
 
 Use this for changelog rewrites and GitHub release-note source text. For regular
-beta/stable, draft substantive version-matched notes during preparation, then
-finalize them after the Code SHA passes Full Release Validation. For
+beta/stable, prepare complete notes before final-source qualification when
+possible; Code SHA may then also be Release SHA. Editorial work may overlap
+Code validation. If notes change afterward, a genuine CHANGELOG-only descendant
+may use the existing product-evidence reuse policy. For
 extended-stable, run it before final exact-head validation and tagging. Do not
 rerun it for tooling retries, resumed publication, or promotion.
 Use it with `release-openclaw-maintainer`; this skill owns changelog content,
@@ -28,9 +30,11 @@ every human `Thanks @...` attribution.
   the target; a newer but divergent tag is not a valid history boundary. Use
   an explicit shipped/main-closeout SHA only when it is also reachable from the
   target.
-- Target ref: the exact selected preparation SHA for draft notes, or the green
-  Code SHA for final notes. Only the latter's changelog-only commit becomes the
-  Release SHA.
+- Target ref: the exact product-complete history being documented. Its
+  contribution-record target must be an ancestor of the final release target;
+  it need not name a not-yet-created changelog commit. Include any later fixes
+  before finalizing notes. Final notes may be committed before qualification,
+  or afterward as a CHANGELOG-only descendant of a green Code SHA.
 - Canonical main ref: current `origin/main`, fetched before verification. Release
   notes cite the original merged main PR when the same work is carried by a
   backport. A release-branch PR is used only while no forward-port exists on
@@ -38,15 +42,12 @@ every human `Thanks @...` attribution.
 
 ## Workflow
 
-1. Record whether this is preparation or finalization:
+1. Confirm the release branch and exact history target:
    - `git fetch --tags origin`
    - confirm clean `git status -sb`
-   - record `git rev-parse HEAD` as the exact target for history collection
-   - for preparation, generate real notes for this selected tree; refresh them
-     after an operator-approved rebase or additional selected changes
-   - for finalization, require the fully validated Code SHA, record its
-     successful Full Release Validation run id and attempt, and stop if any
-     product/version/backport change is still pending
+   - record `git rev-parse HEAD` as the history target
+   - record the Full Release Validation run id and attempt when qualification already exists
+   - finish pending product/version/backport changes before freezing final source; refresh the inventory for actual changes
 2. Audit history, including direct commits:
    - `git log --topo-order --date=iso-strict --pretty=format:'%h%x09%ad%x09%s' <base-tag>..<target-ref>`
    - `git log --topo-order --grep='(#' --date=short --pretty=format:'%h%x09%ad%x09%s' <base-tag>..<target-ref>`
@@ -117,14 +118,13 @@ every human `Thanks @...` attribution.
      cherry-pick, and provenance contracts remain authoritative.
    - explicit multi-commit reverts require a revert subject and one standalone
      `Reverts <full SHA> and <full SHA>.` declaration (comma-separated lists
-     with final `and` also work). The exact ending ` to restore the previous
-behavior.` is accepted. Duplicate, abbreviated, embedded, or repeated
-     declarations do not establish reversal. Each named commit must be a
-     single-parent ancestor, and reverse-applying all named patches must
-     reproduce the complete revert tree. Recognized declarations that fail
-     this proof stop verification. Proof uses private Git index/object storage
-     without hooks or external diffs; canonical single-revert and
-     revert-of-revert accounting stays intact.
+     with final `and` also work). The exact ending ` to restore the previous behavior.`
+     is accepted. Duplicate, abbreviated, embedded, or repeated declarations do
+     not establish reversal. Each named commit must be a single-parent ancestor,
+     and reverse-applying all named patches must reproduce the complete revert
+     tree. Recognized declarations that fail this proof stop verification. Proof
+     uses private Git index/object storage without hooks or external diffs;
+     canonical single-revert and revert-of-revert accounting stays intact.
    - canonicalize backports to the original merged PR on `main`: explicit
      cherry-pick origins win, then a unique normalized-subject match requires
      the same author and an overlapping changed path. Suppress release/backport
@@ -183,11 +183,12 @@ behavior.` is accepted. Duplicate, abbreviated, embedded, or repeated
      infer a PR relationship from a generic cross-reference event, invent an
      unrelated PR link for a standalone report, or recreate the retired
      inventory
-   - the complete contribution record lists every merged source PR exactly once
-     as `**PR #NNN**`; source PRs include GitHub commit associations and merged
-     PR references explicitly present in active commit subjects/bodies. It
-     preserves author/co-author credit and any issue references in the original
-     title
+   - the complete contribution record lists every verified in-range PR and
+     explicitly retained seed-only PR exactly once as `**PR #NNN**`. Discovery
+     preserves canonical/cherry-pick provenance and requires frozen-history
+     membership for contextual references; inline context alone cannot create a
+     contribution row. It preserves author/co-author credit and any issue
+     references in the original title
    - the provenance arithmetic and unique total must match the rendered PR
      rows exactly; candidate validation rejects malformed or forged counts
    - direct commits remain in the manifest with GitHub-resolved author,
@@ -286,21 +287,20 @@ behavior.` is accepted. Duplicate, abbreviated, embedded, or repeated
   the immutable attached release evidence; never compact a fitting full
   contribution record just to preserve the optional tail
 - `pnpm release:candidate` performs this deterministic render check from the
-  exact tag before it dispatches Full Release Validation, including when local
+  exact target before it dispatches Full Release Validation, including when local
   generated checks are explicitly skipped
 - `git diff --check`
 - for docs/changelog-only changes, no broad tests are required
 - stage `CHANGELOG.md` and commit with `git commit -m "docs(changelog): refresh YYYY.M.PATCH notes"`
-- preparation stops here: these are draft notes for the selected tree, not
-  publication evidence. Continue version/source preparation and Code SHA proof
-  through the release-maintainer workflow
-- for finalization, record the new commit as the Release SHA and require
-  `git diff --name-only <code-sha>..<release-sha>` to print only
-  `CHANGELOG.md`
 - push the release branch without rebasing it onto moving `main`
-- dispatch SHA-pinned Full Release Validation for the Release SHA with evidence
-  reuse enabled. It must select `changelog-only-release-v1`; any other changed
-  path returns the release to the Code SHA validation loop
+- when all fixes and final notes are committed before fresh full qualification,
+  record that commit as both Code SHA and Release SHA; use the same successful
+  full parent/attempt and its exact publication bytes for both roles
+- only when notes change after Code qualification, require
+  `git diff --name-only <code-sha>..<release-sha>` to print exactly
+  `CHANGELOG.md` before optionally using `changelog-only-release-v1`. That path
+  retains green Code proof and qualifies new Release SHA package bytes. Any
+  other changed path requires fresh product qualification
 
 ## Extended-Stable Variant
 

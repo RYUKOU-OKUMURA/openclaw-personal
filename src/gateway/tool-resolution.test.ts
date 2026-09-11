@@ -48,6 +48,7 @@ async function createMediatedExecFixture() {
   const spawn = vi.spyOn(getProcessSupervisor(), "spawn").mockImplementation(async (input) => {
     input.onStdout?.("sandbox exec ok\n");
     return {
+      activity: { resultSettled: true, lastOutputAtMs: Date.now() },
       runId: input.runId ?? "mediated-exec",
       pid: 1234,
       startedAtMs: Date.now(),

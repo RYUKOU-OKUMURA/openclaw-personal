@@ -130,28 +130,39 @@ describe("managed specialist creation", () => {
     delete mocks.config.agents!.defaults!.subagents;
     expect(proposal).toThrow("verified subagent model");
   });
-  it("passes confinement and peer registration through one existing CAS with role-file rollback", async () => {
-    const op = proposal(),
-      guard = vi.fn();
-    mocks.createAgent.mockImplementation(async (params) => {
-      expect(params.stagedConfig.writeSnapshot.snapshot.hash).toBe("hash");
-      expect(params.stagedConfig.config.tools.agentToAgent.allow).toEqual(op.peerAgentIds);
-      expect(params.entry).toEqual(specialistEntry(op));
-      expect(params.provenance).toEqual({ createdVia: "agent", creatorAgentId: "main" });
-      expect(params.beforePersistentApply).toBe(guard);
-      await mkdir(params.entry.workspace);
-      const rollback = await params.prepareConfigCommit();
-      expect(await readFile(join(params.entry.workspace, "AGENTS.md"), "utf8")).toContain(op.role);
-      await rollback();
-      await expect(readFile(join(params.entry.workspace, "AGENTS.md"))).rejects.toMatchObject({
-        code: "ENOENT",
+  it.each(["commit", "rollback"] as const)(
+    "preserves confinement and role-file ownership on config %s",
+    async (outcome) => {
+      const op = proposal(),
+        guard = vi.fn();
+      mocks.createAgent.mockImplementation(async (params) => {
+        expect(params.stagedConfig.writeSnapshot.snapshot.hash).toBe("hash");
+        expect(params.stagedConfig.config.tools.agentToAgent.allow).toEqual(op.peerAgentIds);
+        expect(params.entry).toEqual(specialistEntry(op));
+        expect(params.provenance).toEqual({ createdVia: "agent", creatorAgentId: "main" });
+        expect(params.beforePersistentApply).toBe(guard);
+        await mkdir(params.entry.workspace);
+        const receipt = await params.prepareConfigCommit();
+        expect(await readFile(join(params.entry.workspace, "AGENTS.md"), "utf8")).toContain(
+          op.role,
+        );
+        await receipt[outcome]();
+        if (outcome === "rollback") {
+          await expect(readFile(join(params.entry.workspace, "AGENTS.md"))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } else {
+          expect(await readFile(join(params.entry.workspace, "AGENTS.md"), "utf8")).toContain(
+            op.role,
+          );
+        }
+        return { status: "created", agentId: op.agentId };
       });
-      return { status: "created", agentId: op.agentId };
-    });
-    await createSpecialist(op, guard);
-    expect(guard).toHaveBeenCalled();
-    expect(mocks.createAgent).toHaveBeenCalledTimes(1);
-  });
+      await createSpecialist(op, guard);
+      expect(guard).toHaveBeenCalled();
+      expect(mocks.createAgent).toHaveBeenCalledTimes(1);
+    },
+  );
   it("does not enter creation after a changed snapshot, altered proposal, or pre-existing workspace", async () => {
     const op = proposal();
     mocks.hash = "changed";

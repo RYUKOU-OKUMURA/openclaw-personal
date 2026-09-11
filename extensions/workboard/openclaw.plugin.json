@@ -1,5 +1,8 @@
 {
   "id": "workboard",
+  "categories": [
+    "tools"
+  ],
   "cliCommands": [
     {
       "name": "workboard",
@@ -220,9 +223,9 @@
     "properties": {}
   },
   "controlUi": {
-    "entry": "dist/control-ui/efc77b06c53432d3e2d0d1e0f3055b32ae793ed5e36d60c31ca9688552c996d4/index.js",
+    "entry": "dist/control-ui/ccae393f01dd4d78d106c3feea131b885a633a1d7524cec1972d1170b289d938/index.js",
     "styles": [
-      "dist/control-ui/efc77b06c53432d3e2d0d1e0f3055b32ae793ed5e36d60c31ca9688552c996d4/index.css"
+      "dist/control-ui/ccae393f01dd4d78d106c3feea131b885a633a1d7524cec1972d1170b289d938/index.css"
     ]
   }
 }

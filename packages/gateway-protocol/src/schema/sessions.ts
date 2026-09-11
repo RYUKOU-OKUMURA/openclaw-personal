@@ -6,11 +6,13 @@ import { HumanMentionsSchema } from "./human-mentions.js";
 import { ChatAttachmentsSchema } from "./logs-chat.js";
 import { PluginJsonValueSchema } from "./plugins.js";
 import { NonEmptyString, SessionLabelString } from "./primitives.js";
+import { SessionFileRootSchema } from "./session-file-roots.js";
 import { SessionsCreateParamsSchema } from "./sessions-create.js";
 import { SessionsRecoverParamsSchema, SessionsRecoverResultSchema } from "./sessions-recover.js";
 import { SessionOwnerSchema } from "./sessions-row.js";
 
 export { SessionsCreateParamsSchema };
+export { SessionFileRootSchema };
 export * from "./sessions-title.js";
 export * from "./sessions-goal.js";
 export { SessionsListParamsSchema, type SessionsListParams } from "./sessions-list.js";
@@ -269,17 +271,6 @@ export const SessionFileBrowserResultSchema = closedObject({
   search: Type.Optional(Type.String()),
   entries: Type.Array(SessionFileBrowserEntrySchema),
   truncated: Type.Optional(Type.Boolean()),
-});
-
-/** Server-selected locations; ids are not client-supplied host paths. */
-export const SessionFileRootSchema = closedObject({
-  id: NonEmptyString,
-  kind: Type.Union([Type.Literal("workspace"), Type.Literal("outputs"), Type.Literal("shared")]),
-  name: NonEmptyString,
-  hostPath: NonEmptyString,
-  runtimePath: Type.Optional(NonEmptyString),
-  writable: Type.Boolean(),
-  available: Type.Boolean(),
 });
 
 /** Lists files touched by a session transcript. */

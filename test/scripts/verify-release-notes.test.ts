@@ -40,6 +40,27 @@ import {
   withoutExcludedContributionRecords,
 } from "../../.agents/skills/openclaw-changelog-update/scripts/verify-release-notes.mjs";
 
+function createReleaseNotesFixtureLines(): string[] {
+  return [
+    "# Changelog",
+    "",
+    "## 2026.7.1",
+    "",
+    "### Highlights",
+    "",
+    "- One.",
+    "- Two.",
+    "- Three.",
+    "- Four.",
+    "- Five.",
+    "",
+    "### Changes",
+    "",
+    "### Fixes",
+    "",
+  ];
+}
+
 const verifier = resolve(
   ".agents/skills/openclaw-changelog-update/scripts/verify-release-notes.mjs",
 );
@@ -973,24 +994,7 @@ describe("release-note verification", () => {
       const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-ancestry-"));
       try {
         git(cwd, ["init", "-q", "-b", "main"]);
-        const changelog = [
-          "# Changelog",
-          "",
-          "## 2026.7.1",
-          "",
-          "### Highlights",
-          "",
-          "- One.",
-          "- Two.",
-          "- Three.",
-          "- Four.",
-          "- Five.",
-          "",
-          "### Changes",
-          "",
-          "### Fixes",
-          "",
-        ].join("\n");
+        const changelog = createReleaseNotesFixtureLines().join("\n");
         writeFileSync(join(cwd, "CHANGELOG.md"), changelog);
         const commit = (subject: string, file: string) => {
           writeFileSync(join(cwd, file), subject);
@@ -1129,7 +1133,15 @@ console.log(JSON.stringify({ data }));
     { message: "CI #41 passed.", identity: "missing", accepted: false },
     { message: "CI #41 passed.", identity: "wrong-id", accepted: false },
     { message: "CI #41 passed.", identity: "wrong-repo", accepted: false },
+    { message: "CI #2147483647 passed.", node: "Issue", accepted: true },
+    { message: "CI run #34244092230 passed.", accepted: true },
+    { message: "Related #34244092230.", accepted: false },
+    { message: "CI #34244092230 passed. Fixes #34244092230.", accepted: false },
+    { message: "CI #34244092230 passed.", identity: "missing", accepted: false },
+    { message: "CI #34244092230 passed.", identity: "wrong-id", accepted: false },
+    { message: "CI #34244092230 passed.", identity: "wrong-repo", accepted: false },
   ])("classifies active workflow references without losing issue accounting: %j", (scenario) => {
+    const referenceNumber = Number(scenario.message.match(/#(\d+)/)?.[1]);
     const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-runs-"));
     try {
       git(cwd, ["init", "-q", "-b", "main"]);
@@ -1174,23 +1186,28 @@ console.log(JSON.stringify({ data }));
         gh,
         `#!${process.execPath}\n
 const scenario = ${JSON.stringify(scenario)};
-if (process.argv[3] === "repos/openclaw/openclaw/actions/runs/41") {
-  require("node:fs").appendFileSync("run-requests", "41\\n");
+const referenceNumber = ${referenceNumber};
+if (process.argv[3] === "repos/openclaw/openclaw/actions/runs/" + referenceNumber) {
+  require("node:fs").appendFileSync("run-requests", referenceNumber + "\\n");
   console.log(JSON.stringify(scenario.identity === "missing" ? { message: "Not Found" } : {
-    id: scenario.identity === "wrong-id" ? 42 : 41,
+    id: scenario.identity === "wrong-id" ? referenceNumber + 1 : referenceNumber,
     repository: { full_name: scenario.identity === "wrong-repo" ? "other/repository" : "openclaw/openclaw" },
     pull_requests: [],
   }));
   process.exit(0);
 }
 const query = process.argv.find((arg) => arg.startsWith("query="))?.slice(6) ?? "";
+if ([...query.matchAll(/issueOrPullRequest\\(number: (\\d+)\\)/g)].some(([, number]) => Number(number) > 2147483647)) {
+  console.log(JSON.stringify({ errors: [{ message: "Int cannot represent non 32-bit signed integer value" }] }));
+  process.exit(1);
+}
 const data = {};
 for (const [, alias] of query.matchAll(/(c\\d+): repository/g)) {
   data[alias] = { object: { associatedPullRequests: { nodes: [], pageInfo: { hasNextPage: false } }, author: { user: { login: "steipete" } } } };
 }
 for (const [, alias] of query.matchAll(/(n\\d+): repository/g)) {
   data[alias] = { issueOrPullRequest: scenario.node ? {
-    __typename: scenario.node, number: 41, title: "chore: validation", baseRefName: "main",
+    __typename: scenario.node, number: referenceNumber, title: "chore: validation", baseRefName: "main",
     mergedAt: "2026-01-01T00:00:00Z", mergeCommit: { oid: ${JSON.stringify(target)} }, author: { __typename: "User", login: "steipete" },
     closingIssuesReferences: { nodes: [], pageInfo: { hasNextPage: false } },
     closedByPullRequestsReferences: { nodes: [], pageInfo: { hasNextPage: false } },
@@ -1222,7 +1239,9 @@ console.log(JSON.stringify({ data }));
       );
       if (!scenario.accepted) {
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("GitHub could not resolve source references: #41");
+        expect(result.stderr).toContain(
+          `GitHub could not resolve source references: #${referenceNumber}`,
+        );
         return;
       }
       expect(result.stderr).toBe("");
@@ -1230,11 +1249,13 @@ console.log(JSON.stringify({ data }));
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       expect(manifest.source.references).toBe(scenario.node ? 1 : 0);
       expect(manifest.pullRequests.map((entry: { number: number }) => entry.number)).toEqual(
-        scenario.node === "PullRequest" ? [41] : [],
+        scenario.node === "PullRequest" ? [referenceNumber] : [],
       );
       if (!scenario.node) {
         expect(manifest.directCommits[0].references).toEqual([]);
-        expect(manifest.workflowRuns).toEqual([{ id: 41, repository: "openclaw/openclaw" }]);
+        expect(manifest.workflowRuns).toEqual([
+          { id: referenceNumber, repository: "openclaw/openclaw" },
+        ]);
       } else {
         expect(() => readFileSync(join(cwd, "run-requests"))).toThrow();
       }
@@ -1266,24 +1287,7 @@ console.log(JSON.stringify({ data }));
     const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-multi-revert-"));
     try {
       git(cwd, ["init", "-q", "-b", "main"]);
-      const prose = [
-        "# Changelog",
-        "",
-        "## 2026.7.1",
-        "",
-        "### Highlights",
-        "",
-        "- One.",
-        "- Two.",
-        "- Three.",
-        "- Four.",
-        "- Five.",
-        "",
-        "### Changes",
-        "",
-        "### Fixes",
-        "",
-      ].join("\n");
+      const prose = createReleaseNotesFixtureLines().join("\n");
       writeFileSync(join(cwd, "CHANGELOG.md"), prose);
       writeFileSync(join(cwd, "alpha.txt"), "original\n");
       writeFileSync(join(cwd, "beta.bin"), Buffer.from([0, 255, 1]));
@@ -1474,24 +1478,7 @@ console.log(JSON.stringify({ data }));
     const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-membership-"));
     try {
       git(cwd, ["init", "-q", "-b", "release"]);
-      const prose = [
-        "# Changelog",
-        "",
-        "## 2026.7.1",
-        "",
-        "### Highlights",
-        "",
-        "- One.",
-        "- Two.",
-        "- Three.",
-        "- Four.",
-        "- Five.",
-        "",
-        "### Changes",
-        "",
-        "### Fixes",
-        "",
-      ].join("\n");
+      const prose = createReleaseNotesFixtureLines().join("\n");
       writeFileSync(join(cwd, "CHANGELOG.md"), prose);
       const commitAt = (message: string, day: number) => {
         git(cwd, ["add", "."]);
@@ -1635,6 +1622,100 @@ console.log(JSON.stringify({ data }));
         const verified = run(false);
         expect(verified.stderr).toBe("");
         expect(verified.status, verified.stdout).toBe(0);
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { mode: "recover", attempts: 2, error: undefined },
+    { mode: "exhaust", attempts: 5, error: "unexpected EOF" },
+    { mode: "auth", attempts: 1, error: "Bad credentials" },
+    { mode: "missing-data", attempts: 1, error: "did not include data" },
+    { mode: "schema", attempts: 1, error: "Field unknownField does not exist" },
+  ])("handles GraphQL transport failure at the CLI boundary: $mode", (scenario) => {
+    const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-transport-"));
+    try {
+      git(cwd, ["init", "-q", "-b", "main"]);
+      const changelog = createReleaseNotesFixtureLines().join("\n");
+      writeFileSync(join(cwd, "CHANGELOG.md"), changelog);
+      git(cwd, ["add", "CHANGELOG.md"]);
+      git(cwd, ["commit", "-qm", "chore: baseline"]);
+      const base = git(cwd, ["rev-parse", "HEAD"]);
+      git(cwd, ["commit", "--allow-empty", "-qm", "chore: source contribution"]);
+      const target = git(cwd, ["rev-parse", "HEAD"]);
+      const gh = join(cwd, "gh");
+      writeFileSync(
+        gh,
+        `#!${process.execPath}\n
+const fs = require("node:fs");
+const mode = ${JSON.stringify(scenario.mode)};
+const state = fs.existsSync("request-state.json") ? JSON.parse(fs.readFileSync("request-state.json", "utf8")) : { attempts: 0, settled: false };
+if (!state.settled) {
+  state.attempts += 1;
+  fs.writeFileSync("request-state.json", JSON.stringify(state));
+  if (mode === "exhaust" || (mode === "recover" && state.attempts === 1)) {
+    process.stderr.write('Post "https://api.github.com/graphql": unexpected EOF\\n');
+    process.exit(1);
+  }
+  if (mode === "auth") {
+    console.log(JSON.stringify({ message: "Bad credentials", status: 401 }));
+    process.stderr.write("gh: Bad credentials (HTTP 401)\\n");
+    process.exit(1);
+  }
+  if (mode === "missing-data") {
+    console.log(JSON.stringify({ unexpected: "shape" }));
+    process.exit(0);
+  }
+  if (mode === "schema") {
+    console.log(JSON.stringify({ errors: [{ type: "GRAPHQL_VALIDATION_FAILED", message: "Field unknownField does not exist on type Repository" }] }));
+    process.exit(0);
+  }
+  state.settled = true;
+  fs.writeFileSync("request-state.json", JSON.stringify(state));
+}
+const query = process.argv.find((arg) => arg.startsWith("query="))?.slice(6) ?? "";
+const data = {};
+for (const [, alias] of query.matchAll(/(c\\d+): repository/g)) {
+  data[alias] = { object: { associatedPullRequests: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }, author: { user: { login: "steipete" } } } };
+}
+console.log(JSON.stringify({ data }));
+`,
+      );
+      chmodSync(gh, 0o755);
+      const manifestPath = join(cwd, "manifest.json");
+      const result = spawnSync(
+        process.execPath,
+        [
+          verifier,
+          "--base",
+          base,
+          "--target",
+          target,
+          "--main-ref",
+          target,
+          "--version",
+          "2026.7.1",
+          "--manifest",
+          manifestPath,
+          "--write-ledger",
+          "--json",
+        ],
+        { cwd, encoding: "utf8", env: { ...process.env, PATH: `${cwd}:${process.env.PATH}` } },
+      );
+      const requests = JSON.parse(readFileSync(join(cwd, "request-state.json"), "utf8"));
+      expect(requests.attempts, result.stderr).toBe(scenario.attempts);
+      if (scenario.error) {
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(scenario.error);
+        expect(readFileSync(join(cwd, "CHANGELOG.md"), "utf8")).toBe(changelog);
+      } else {
+        expect(result.status, result.stderr).toBe(0);
+        expect(JSON.parse(readFileSync(manifestPath, "utf8")).source.directCommits).toBe(1);
+        expect(readFileSync(join(cwd, "CHANGELOG.md"), "utf8")).toContain(
+          "### Complete contribution record",
+        );
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -1873,116 +1954,6 @@ console.log(JSON.stringify({ data }));
       expect(result.stderr).toContain(
         "release range base base-ref must be an ancestor of target HEAD",
       );
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-  it.each([
-    { mode: "recover", attempts: 2, error: undefined },
-    { mode: "exhaust", attempts: 5, error: "unexpected EOF" },
-    { mode: "auth", attempts: 1, error: "Bad credentials" },
-    { mode: "missing-data", attempts: 1, error: "did not include data" },
-    { mode: "schema", attempts: 1, error: "Field unknownField does not exist" },
-  ])("handles GraphQL transport failure at the CLI boundary: $mode", (scenario) => {
-    const cwd = mkdtempSync(join(tmpdir(), "openclaw-release-notes-transport-"));
-    try {
-      git(cwd, ["init", "-q", "-b", "main"]);
-      const changelog = [
-        "# Changelog",
-        "",
-        "## 2026.7.1",
-        "",
-        "### Highlights",
-        "",
-        "- One.",
-        "- Two.",
-        "- Three.",
-        "- Four.",
-        "- Five.",
-        "",
-        "### Changes",
-        "",
-        "### Fixes",
-        "",
-      ].join("\n");
-      writeFileSync(join(cwd, "CHANGELOG.md"), changelog);
-      git(cwd, ["add", "CHANGELOG.md"]);
-      git(cwd, ["commit", "-qm", "chore: baseline"]);
-      const base = git(cwd, ["rev-parse", "HEAD"]);
-      git(cwd, ["commit", "--allow-empty", "-qm", "chore: source contribution"]);
-      const target = git(cwd, ["rev-parse", "HEAD"]);
-      const gh = join(cwd, "gh");
-      writeFileSync(
-        gh,
-        `#!${process.execPath}\n
-const fs = require("node:fs");
-const mode = ${JSON.stringify(scenario.mode)};
-const state = fs.existsSync("request-state.json") ? JSON.parse(fs.readFileSync("request-state.json", "utf8")) : { attempts: 0, settled: false };
-if (!state.settled) {
-  state.attempts += 1;
-  fs.writeFileSync("request-state.json", JSON.stringify(state));
-  if (mode === "exhaust" || (mode === "recover" && state.attempts === 1)) {
-    process.stderr.write('Post "https://api.github.com/graphql": unexpected EOF\\n');
-    process.exit(1);
-  }
-  if (mode === "auth") {
-    console.log(JSON.stringify({ message: "Bad credentials", status: 401 }));
-    process.stderr.write("gh: Bad credentials (HTTP 401)\\n");
-    process.exit(1);
-  }
-  if (mode === "missing-data") {
-    console.log(JSON.stringify({ unexpected: "shape" }));
-    process.exit(0);
-  }
-  if (mode === "schema") {
-    console.log(JSON.stringify({ errors: [{ type: "GRAPHQL_VALIDATION_FAILED", message: "Field unknownField does not exist on type Repository" }] }));
-    process.exit(0);
-  }
-  state.settled = true;
-  fs.writeFileSync("request-state.json", JSON.stringify(state));
-}
-const query = process.argv.find((arg) => arg.startsWith("query="))?.slice(6) ?? "";
-const data = {};
-for (const [, alias] of query.matchAll(/(c\\d+): repository/g)) {
-  data[alias] = { object: { associatedPullRequests: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }, author: { user: { login: "steipete" } } } };
-}
-console.log(JSON.stringify({ data }));
-`,
-      );
-      chmodSync(gh, 0o755);
-      const manifestPath = join(cwd, "manifest.json");
-      const result = spawnSync(
-        process.execPath,
-        [
-          verifier,
-          "--base",
-          base,
-          "--target",
-          target,
-          "--main-ref",
-          target,
-          "--version",
-          "2026.7.1",
-          "--manifest",
-          manifestPath,
-          "--write-ledger",
-          "--json",
-        ],
-        { cwd, encoding: "utf8", env: { ...process.env, PATH: `${cwd}:${process.env.PATH}` } },
-      );
-      const requests = JSON.parse(readFileSync(join(cwd, "request-state.json"), "utf8"));
-      expect(requests.attempts, result.stderr).toBe(scenario.attempts);
-      if (scenario.error) {
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(scenario.error);
-        expect(readFileSync(join(cwd, "CHANGELOG.md"), "utf8")).toBe(changelog);
-      } else {
-        expect(result.status, result.stderr).toBe(0);
-        expect(JSON.parse(readFileSync(manifestPath, "utf8")).source.directCommits).toBe(1);
-        expect(readFileSync(join(cwd, "CHANGELOG.md"), "utf8")).toContain(
-          "### Complete contribution record",
-        );
-      }
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

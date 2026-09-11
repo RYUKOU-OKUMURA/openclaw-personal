@@ -129,10 +129,10 @@
     "subtitles.accessMap",
     "tabs.accessMap"
   ],
-  "generatedAt": "2026-09-08T22:08:56.633Z",
+  "generatedAt": "2026-09-11T06:40:55.757Z",
   "locale": "th",
-  "sourceHash": "22debfdca155014ce13335fac3d66f607b5581f7e1ca4823a97c2dda631985c2",
-  "totalKeys": 6771,
-  "translatedKeys": 6643,
+  "sourceHash": "126c0e20f4e0073240f7ef0af924e3c5b3568f7d5bc94c484b1aef9ff4cda78f",
+  "totalKeys": 8975,
+  "translatedKeys": 8847,
   "workflow": 1
 }

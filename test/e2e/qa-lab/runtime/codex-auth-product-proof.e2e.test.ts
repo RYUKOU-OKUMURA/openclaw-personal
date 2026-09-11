@@ -52,7 +52,7 @@ function expectBoundedMissingProfileRecovery(
   const serialized = JSON.stringify(value);
   if (options?.allowSessionTruncation) {
     expect(typeof value).toBe("string");
-    expect(value).toBe(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT.slice(0, String(value).length));
+    expect(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT.startsWith(String(value))).toBe(true);
   } else {
     expect(serialized).toContain(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT);
   }
@@ -451,7 +451,9 @@ describe("Codex auth product proof", () => {
           ).toMatchObject({ runId: setup.runId, status: "ok" });
         };
         await runConfiguredTurn("qa-codex-profile-binding-setup");
-        await expect(client.request("models.list", { agentId: "main" })).resolves.toMatchObject({
+        await expect(
+          client.request("models.list", { agentId: "main", refresh: true }),
+        ).resolves.toMatchObject({
           models: expect.arrayContaining([
             expect.objectContaining({ id: "gpt-5.6-luna", provider: "openai" }),
           ]),

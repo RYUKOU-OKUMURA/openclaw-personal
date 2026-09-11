@@ -255,8 +255,12 @@ export async function createSpecialist(
         ].join("\n"),
         { flag: "wx", mode: 0o600 },
       );
-      return async () => {
-        await rm(path, { force: true });
+      return {
+        // The role file is already final; publication transfers it to the new agent.
+        commit: () => {},
+        rollback: async () => {
+          await rm(path, { force: true });
+        },
       };
     },
   });

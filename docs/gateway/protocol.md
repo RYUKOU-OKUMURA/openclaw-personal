@@ -55,7 +55,7 @@ Every section heading from the previous single-page version keeps its anchor her
 - <a id="plugin-management" />[Plugin management](/gateway/protocol/rpc-methods#plugin-management)
 - <a id="messaging-and-logs" />[Messaging and logs](/gateway/protocol/rpc-methods#messaging-and-logs)
 - <a id="operator-terminal" />[Operator terminal](/gateway/protocol/rpc-methods#operator-terminal)
-- <a id="sandbox-access" />[Sandbox access](/gateway/protocol/rpc-methods#sandbox-access)
+- <a id="sandbox-access" />[Sandbox access](/gateway/protocol/rpc-talk-config-and-agents#sandbox-access)
 - <a id="talk-and-tts" />[Talk and TTS](/gateway/protocol/rpc-methods#talk-and-tts)
 - <a id="secrets-config-update-and-wizard" />[Secrets, config, update, and wizard](/gateway/protocol/rpc-methods#secrets-config-update-and-wizard)
 - <a id="agent-and-workspace-helpers" />[Agent and workspace helpers](/gateway/protocol/rpc-methods#agent-and-workspace-helpers)
@@ -85,6 +85,11 @@ Every section heading from the previous single-page version keeps its anchor her
 
 ## Related
 
-- [Building a Gateway client](https://docs.openclaw.ai/gateway/clients)
-- [Embedding OpenClaw](https://docs.openclaw.ai/gateway/embedding)
+- [Building a Gateway client](/gateway/clients)
+- [Embedding OpenClaw](/gateway/embedding)
 - [Gateway runbook](/gateway)
+- [Operator scopes](/gateway/operator-scopes) — the scopes protocol methods are authorized against
+- [Audit history](/gateway/audit) — metadata-only activity history and decision receipts
+- [Pairing](/channels/pairing) — approve who can DM you and which nodes can join
+- [Cloud Workers](/gateway/cloud-workers) — worker sessions driven over this protocol
+- [Tools invoke API](/gateway/tools-invoke-http-api) — invoke a single tool directly via the Gateway HTTP endpoint

@@ -44,7 +44,7 @@ runFakeCodexAppServer({
           displayName: model,
           description: "Synthetic auth product proof model",
           hidden: false,
-          isDefault: model === "gpt-5.6-luna",
+          isDefault: true,
           defaultReasoningEffort: "low",
           supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }],
           multiAgentVersion: "v2",
