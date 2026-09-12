@@ -88,6 +88,14 @@ openclaw-access-map-page {
   gap: 14px;
   margin-bottom: 24px;
 }
+.access-map-agent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
 .access-map-button,
 .access-map-icon-button {
   display: inline-flex;

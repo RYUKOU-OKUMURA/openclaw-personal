@@ -226,6 +226,50 @@ function requestParams(request: MockGatewayRequest): Record<string, unknown> {
     : {};
 }
 
+const RESEARCH_REPORT: SandboxExplainResult = {
+  ...BASE_REPORT,
+  agentId: "research",
+  sessionKey: "agent:research:main",
+  mainSessionKey: "agent:research:main",
+  sandbox: { ...BASE_SANDBOX, workspaceMounts: BASE_SANDBOX.workspaceMounts.slice(0, 1) },
+  inbox: {
+    ...BASE_INBOX,
+    entries: [{ name: "research.md", kind: "file" }],
+    counts: { files: 1, folders: 0, other: 0 },
+  },
+};
+
+function multiAgentScenario(defaultId = AGENT_ID): Partial<ControlUiMockGatewayScenario> {
+  return {
+    defaultAgentId: defaultId,
+    mainSessionKey: `agent:${defaultId}:main`,
+    sessionKey: `agent:${defaultId}:main`,
+    methodResponses: {
+      "agents.list": {
+        agents: [
+          { id: AGENT_ID, name: "Main" },
+          { id: "research", name: "Research" },
+        ],
+        defaultId,
+        mainKey: "main",
+        scope: "agent",
+      },
+      "sandbox.explain": {
+        cases: [
+          { match: { agentId: AGENT_ID }, response: BASE_REPORT },
+          { match: { agentId: "research" }, response: RESEARCH_REPORT },
+        ],
+      },
+    },
+  };
+}
+
+async function selectAccessMapAgent(root: Locator, label: string) {
+  const selector = root.locator('openclaw-agent-select[name="access-map-agent"]');
+  await selector.locator(".agent-select__trigger").click();
+  await selector.locator("wa-dropdown-item[data-agent-option]").filter({ hasText: label }).click();
+}
+
 async function openAccessMap(page: Page, scenario: ControlUiMockGatewayScenario = {}) {
   const gateway = await installMockGateway(page, accessMapScenario(scenario));
   const response = await page.goto(`${suite.server.baseUrl}${ACCESS_MAP_PATH}`);
@@ -259,6 +303,60 @@ async function expectDisabled(locator: Locator, disabled: boolean) {
 }
 
 suite.define(() => {
+  it("loads a concrete selected agent in a multi-agent Gateway and targets its file actions", async () => {
+    await suite.withPage(
+      { locale: "en-US", serviceWorkers: "block", viewport: { width: 1280, height: 900 } },
+      async ({ page }) => {
+        const { gateway, root } = await openAccessMap(page, multiAgentScenario("research"));
+        const requests = await gateway.getRequests("sandbox.explain");
+        expect(requests.map(requestParams)).toEqual([{ agentId: "research" }]);
+        await expectText(root.locator(".access-map-caption"), "Agent: research");
+        await expectText(root, "research.md");
+        expect(await root.locator(".access-map-entry", { hasText: "reference" }).count()).toBe(0);
+
+        await root.getByRole("button", { name: "Create new", exact: true }).click();
+        const mapDrawer = drawer(page);
+        await mapDrawer.getByRole("textbox", { name: "Name", exact: true }).fill("notes.md");
+        await mapDrawer.getByRole("button", { name: "Add to workspace", exact: true }).click();
+        expect(requestParams(await gateway.waitForRequest("sandbox.entries.add"))).toMatchObject({
+          agentId: "research",
+          mode: "copy",
+          source: { kind: "create", name: "notes.md", entryKind: "file" },
+        });
+      },
+    );
+  });
+
+  it("clears the previous agent while loading and discards its late permissions response", async () => {
+    await suite.withPage(
+      { locale: "en-US", serviceWorkers: "block", viewport: { width: 1280, height: 900 } },
+      async ({ page }) => {
+        const { gateway, root } = await openAccessMap(page, multiAgentScenario());
+        await expectText(root.locator(".access-map-caption"), "Agent: main");
+        await root.locator(".access-map-entry", { hasText: "reference" }).waitFor();
+        const before = (await gateway.getRequests("sandbox.explain")).length;
+        await gateway.deferNext("sandbox.explain");
+        await selectAccessMapAgent(root, "Research");
+        const pending = await gateway.waitForRequest("sandbox.explain", { after: before });
+        expect(requestParams(pending)).toEqual({ agentId: "research" });
+        expect(await root.locator(".access-map-entry").count()).toBe(0);
+        await expectDisabled(root.getByRole("button", { name: "Create new", exact: true }), true);
+
+        await selectAccessMapAgent(root, "Main");
+        await expectText(root.locator(".access-map-caption"), "Agent: main");
+        await gateway.resolveDeferred("sandbox.explain", RESEARCH_REPORT);
+        await expectText(root.locator(".access-map-caption"), "Agent: main");
+        expect(await root.locator(".access-map-entry", { hasText: "research.md" }).count()).toBe(0);
+        await root.locator(".access-map-entry", { hasText: "reference" }).waitFor();
+        expect((await gateway.getRequests("sandbox.explain")).map(requestParams)).toEqual([
+          { agentId: AGENT_ID },
+          { agentId: "research" },
+          { agentId: AGENT_ID },
+        ]);
+      },
+    );
+  });
+
   it("shows the effective inbox and mounts, then adds a Gateway file as a copy", async () => {
     await suite.withPage(
       {

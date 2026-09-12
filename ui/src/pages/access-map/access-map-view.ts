@@ -1,8 +1,11 @@
 import { html, nothing } from "lit";
 import type { SandboxExplainResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type { GatewayAgentRow } from "../../api/types.ts";
+import "../../components/agent-select-registration.ts";
 import { icon } from "../../components/icons.ts";
 import { t } from "../../i18n/index.ts";
 import { registerAccessMapEnglish } from "../../i18n/locales/en-access-map.ts";
+import { normalizeAgentLabel } from "../../lib/agents/display.ts";
 import {
   renderAccessMapDetails,
   renderAccessMapDiagram,
@@ -14,6 +17,8 @@ registerAccessMapEnglish();
 
 export function renderAccessMapView(p: {
   report: SandboxExplainResult | null;
+  agents: readonly GatewayAgentRow[];
+  selectedAgentId: string | null;
   loading: boolean;
   busy: boolean;
   canRead: boolean;
@@ -26,6 +31,7 @@ export function renderAccessMapView(p: {
   drawerOpen: boolean;
   assetBase: string;
   onRefresh: () => void;
+  onAgentChange: (agentId: string) => void;
   onAdd: () => void;
   onCreate: () => void;
   onFile: (files: FileList | null) => void;
@@ -77,6 +83,26 @@ export function renderAccessMapView(p: {
           : nothing
       }
     </header>
+    ${
+      p.agents.length
+        ? html`<div class="access-map-agent">
+            <span>${t("usage.filters.agent")}</span>
+            <openclaw-agent-select
+              class="agent-select--settings"
+              name="access-map-agent"
+              .options=${p.agents.map((agent) => ({
+                value: agent.id,
+                label: normalizeAgentLabel(agent),
+                agent,
+              }))}
+              .value=${p.selectedAgentId ?? ""}
+              .accessibleLabel=${t("usage.filters.agent")}
+              .disabled=${p.busy || !p.connected || !p.canRead}
+              .onSelect=${p.onAgentChange}
+            ></openclaw-agent-select>
+          </div>`
+        : nothing
+    }
     <div class="access-map-toolbar">
       <button
         class="access-map-button is-primary"

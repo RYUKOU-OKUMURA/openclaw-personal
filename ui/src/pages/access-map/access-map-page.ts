@@ -15,6 +15,7 @@ import { formatUiError } from "../../lib/format-error.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
+import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import type { AccessMapMount } from "./access-map-diagram.ts";
 import type { AccessMapDraft } from "./access-map-draft.ts";
 import { renderAccessMapDrawer, renderAccessMapPicker } from "./access-map-drawer.ts";
@@ -47,12 +48,45 @@ class AccessMapPage extends OpenClawLightDomElement {
   @state() private pending = false;
   private loadVersion = 0;
   private pickerVersion = 0;
+  private selectedAgentId: string | null = null;
 
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => this.reset(),
     ensureInitialData: () => void this.refresh(),
   });
+
+  private readonly subscriptions = new SubscriptionsController(this)
+    .watch(
+      () => this.context?.agents,
+      (agents, notify) => agents.subscribe(notify),
+    )
+    .effect(
+      () => this.context?.agentSelection,
+      (selection) => {
+        const synchronize = () => {
+          const agentId = selection.state.selectedId;
+          if (this.selectedAgentId === agentId) {
+            return;
+          }
+          this.selectedAgentId = agentId;
+          // Picker, upload, and mutation callbacks share the same owner boundary as reads.
+          this.gateway.invalidate();
+          this.reset();
+          void this.refresh();
+        };
+        this.selectedAgentId = selection.state.selectedId;
+        this.gateway.invalidate();
+        this.reset();
+        void this.refresh();
+        return selection.subscribe(synchronize);
+      },
+    );
+
+  override disconnectedCallback() {
+    this.subscriptions.clear();
+    super.disconnectedCallback();
+  }
 
   private get canRead() {
     return canCallGatewayMethod(this.gateway.snapshot, "sandbox.explain", "operator.read", {
@@ -85,7 +119,10 @@ class AccessMapPage extends OpenClawLightDomElement {
     this.draft = null;
     this.pickerOpen = false;
     this.listing = null;
+    this.pickerPath = "";
     this.pickerLoading = false;
+    this.pickerError = null;
+    this.detailsOpen = false;
     this.selectedShare = null;
     this.formError = null;
     this.pending = false;
@@ -100,7 +137,15 @@ class AccessMapPage extends OpenClawLightDomElement {
     this.loading = true;
     this.error = null;
     try {
-      const report = await loadSandboxExplain(scope.client);
+      const agents = await this.context.agents.ensureList();
+      if (!this.gateway.isCurrent(scope) || version !== this.loadVersion) {
+        return;
+      }
+      const agentId = this.context.agentSelection.state.selectedId;
+      if (!agents || !agentId || !agents.agents.some((agent) => agent.id === agentId)) {
+        throw new Error(this.context.agents.state.agentsError ?? t("agents.noAgents"));
+      }
+      const report = await loadSandboxExplain(scope.client, agentId);
       if (this.gateway.isCurrent(scope) && version === this.loadVersion) {
         this.report = report;
         this.pending = report.registry?.stale ?? false;
@@ -444,6 +489,8 @@ class AccessMapPage extends OpenClawLightDomElement {
   override render() {
     return html`${renderAccessMapView({
       report: this.report,
+      agents: this.context?.agents.state.agentsList?.agents ?? [],
+      selectedAgentId: this.context?.agentSelection.state.selectedId ?? null,
       loading: this.loading,
       busy: this.busy,
       canRead: this.canRead,
@@ -456,6 +503,11 @@ class AccessMapPage extends OpenClawLightDomElement {
       drawerOpen: Boolean(this.draft),
       assetBase: `${this.context?.resourceBasePath ?? ""}/`.replace(/\/+$/, "/"),
       onRefresh: () => void this.refresh(),
+      onAgentChange: (agentId) => {
+        if (!this.busy) {
+          this.context.agentSelection.set(agentId);
+        }
+      },
       onAdd: () => this.openPicker(),
       onCreate: () => this.openCreate(),
       onFile: (files) => void this.upload(files),
