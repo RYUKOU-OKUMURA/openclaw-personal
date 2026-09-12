@@ -25,7 +25,6 @@ import { rootedAgentRunParams } from "../../agents/rooted-run-params.js";
 import { wrapUntrustedPromptDataBlock } from "../../agents/sanitize-for-prompt.js";
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { hasResolvedThinkingCatalogEntry } from "../../agents/thinking-runtime.js";
 import { withPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import {
@@ -73,7 +72,7 @@ import {
   runCliAgent,
 } from "./run-execution.runtime.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
-import { assertCronExecutionRootRuntime } from "./run-prepare-runtime.js";
+import { assertCronExecutionRootRuntime, resolveCronAgentRuntime } from "./run-prepare-runtime.js";
 import {
   type CronLiveSelection,
   type MutableCronSession,
@@ -378,16 +377,30 @@ function createCronPromptExecutor(
     hasNewGeneratedMediaTaskForSessionKey(params.runSessionKey, attemptMediaTaskIds);
 
   const resolveCandidateExecution = (provider: string, model: string) => {
-    const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-      provider,
-      entry: params.cronSession.sessionEntry,
+    const runtimeResolution = resolveCronAgentRuntime({
       cfg: params.cfgWithAgentDefaults,
+      provider,
+      modelId: model,
+      agentId: params.agentId,
+      sessionKey: params.runSessionKey,
+      sessionEntry: params.cronSession.sessionEntry,
+      executionRoot: params.executionRoot,
+      declarationKey: params.job.declarationKey,
+      resolvedRuntime: resolveEffectiveAgentRuntime({
+        cfg: params.cfgWithAgentDefaults,
+        provider,
+        modelId: model,
+        agentId: params.agentId,
+        sessionKey: params.runSessionKey,
+        sessionEntry: params.cronSession.sessionEntry,
+      }),
     });
+    const runtimeOverride = runtimeResolution.runtimeOverride;
     const executionProvider =
-      (sessionRuntimeOverride && isCliProvider(sessionRuntimeOverride, params.cfgWithAgentDefaults)
-        ? sessionRuntimeOverride
+      (runtimeOverride && isCliProvider(runtimeOverride, params.cfgWithAgentDefaults)
+        ? runtimeOverride
         : undefined) ??
-      (sessionRuntimeOverride
+      (runtimeOverride
         ? provider
         : (resolveCliRuntimeExecutionProvider({
             provider,
@@ -396,9 +409,10 @@ function createCronPromptExecutor(
             modelId: model,
           }) ?? provider));
     return {
-      sessionRuntimeOverride,
+      runtimeOverride,
       executionProvider,
       cliExecution: isCliProvider(executionProvider, params.cfgWithAgentDefaults),
+      candidateRuntime: runtimeResolution.runtime,
     };
   };
 
@@ -492,7 +506,7 @@ function createCronPromptExecutor(
         sessionKey: params.runSessionKey,
         preparation: { kind: "direct" },
         resolveRuntimeOverride: (provider, model) =>
-          resolveCandidateExecution(provider, model).sessionRuntimeOverride,
+          resolveCandidateExecution(provider, model).runtimeOverride,
         resolveContextEngineHost: (provider, model) => {
           const { executionProvider, cliExecution } = resolveCandidateExecution(provider, model);
           if (!cliExecution) {
@@ -534,16 +548,8 @@ function createCronPromptExecutor(
         if (params.abortSignal?.aborted) {
           throw new Error(params.abortReason());
         }
-        const { sessionRuntimeOverride, executionProvider, cliExecution } =
+        const { runtimeOverride, executionProvider, cliExecution, candidateRuntime } =
           resolveCandidateExecution(providerOverride, modelOverride);
-        const candidateRuntime = resolveEffectiveAgentRuntime({
-          cfg: params.cfgWithAgentDefaults,
-          provider: providerOverride,
-          modelId: modelOverride,
-          agentId: params.agentId,
-          sessionKey: params.runSessionKey,
-          sessionEntry: params.cronSession.sessionEntry,
-        });
         const candidateConfiguredThinkLevel =
           params.immutableThinkLevel ??
           resolveConfiguredThinkingDefault({
@@ -787,7 +793,7 @@ function createCronPromptExecutor(
           lane: resolveCronAgentLane(params.lane),
           provider: providerOverride,
           model: modelOverride,
-          agentHarnessRuntimeOverride: sessionRuntimeOverride,
+          agentHarnessRuntimeOverride: runtimeOverride,
           modelFallbacksOverride: cronFallbacksOverride,
           authProfileId: params.liveSelection.authProfileId,
           authProfileIdSource: params.liveSelection.authProfileId
