@@ -2,6 +2,7 @@ import { isProviderRefusalAssistantError } from "@openclaw/llm-core/diagnostics"
 import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { formatErrorMessage, toErrorObject } from "../../../infra/errors.js";
 import { isRetryableAssistantError } from "../../../llm/utils/retry.js";
+import { hasAcceptedSessionSpawn } from "../../accepted-session-spawn.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../defaults.js";
 import type { FailoverReason } from "../../embedded-agent-helpers.js";
@@ -351,7 +352,21 @@ export async function recoverEmbeddedRunAttempt(input: {
     });
     return retry({ lastRetryFailoverReason: failureReason });
   }
-  if (!currentAttemptReplaySafe && !canContinueSettledMidTurnOverflow) {
+  // A transport context rejection can also follow a completed tool batch.
+  // Only continue its recorded results; pending work still owns continuation.
+  const canContinueSettledAssistantOverflow =
+    assistantOverflowClassification?.kind === "context_overflow" &&
+    settledEvidence.allToolsProvenSettled &&
+    !settledEvidence.parkedCodeModeRun &&
+    !hasAsyncActivity(attempt.toolMetas) &&
+    !hasAcceptedSessionSpawn(attempt.acceptedSessionSpawns) &&
+    !attempt.yieldDetected &&
+    !attempt.clientToolCalls;
+  if (
+    !currentAttemptReplaySafe &&
+    !canContinueSettledMidTurnOverflow &&
+    !canContinueSettledAssistantOverflow
+  ) {
     return { action: "proceed" };
   }
 
@@ -372,6 +387,11 @@ export async function recoverEmbeddedRunAttempt(input: {
     markOwnedTranscriptRetry: sessionPromptState.markOwnedTranscriptRetry,
   });
   if (overflowRecovery.action === "retry") {
+    if (canContinueSettledAssistantOverflow && !currentAttemptReplaySafe) {
+      sessionPromptState.continueFromCurrentTranscript({
+        includeToolFailureInstruction: Boolean(attempt.lastToolError),
+      });
+    }
     return retry();
   }
   if (overflowRecovery.action === "surface") {
