@@ -16,6 +16,7 @@ import {
   type WorkboardStatus,
   type WorkboardUiState,
 } from "../../lib/workboard/index.ts";
+import { getPlanningState } from "../../lib/workboard/planning.ts";
 import {
   buildAgentFilterOptions,
   matchesAgentFilter,
@@ -38,6 +39,7 @@ import {
   renderWorkboardError,
   type WorkboardProps,
 } from "./view-helpers.ts";
+import { renderPlanningBoard, renderPlanningToolbar } from "./view-planning.ts";
 import { renderWorkboardSelect, type WorkboardSelectOption } from "./workboard-select.ts";
 
 function renderDispatchSummary(state: WorkboardUiState) {
@@ -141,6 +143,8 @@ const emptyColumnModeOptions = [
 
 export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void }) {
   const state = getWorkboardState(props.host);
+  const planning = getPlanningState(props.host);
+  const planningVisible = Boolean(planning.boardId) && planning.mode === "planning";
   const defaultAgentId = props.agentsList?.defaultId ?? props.defaultAgentId;
   const agentOptions = buildAgentFilterOptions(props.agentsList, state.cards);
   state.agentFilter = normalizeActiveAgentFilter(agentOptions, state.agentFilter);
@@ -344,18 +348,22 @@ export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void 
               </div>
               ${renderRefreshStatus(state)}
             </div>
-            ${renderWorkboardSelect({
-              value: state.emptyColumnMode,
-              options: emptyColumnOptions,
-              label: t("workboard.emptyColumns"),
-              onChange: (value) => {
-                state.emptyColumnMode = value;
-                state.expandedEmptyStatuses.clear();
-              },
-              requestUpdate: props.onRequestUpdate,
-              className: "workboard-select--toolbar workboard-select--empty-columns",
-              showLabel: false,
-            })}
+            ${
+              planningVisible
+                ? nothing
+                : renderWorkboardSelect({
+                    value: state.emptyColumnMode,
+                    options: emptyColumnOptions,
+                    label: t("workboard.emptyColumns"),
+                    onChange: (value) => {
+                      state.emptyColumnMode = value;
+                      state.expandedEmptyStatuses.clear();
+                    },
+                    requestUpdate: props.onRequestUpdate,
+                    className: "workboard-select--toolbar workboard-select--empty-columns",
+                    showLabel: false,
+                  })
+            }
           </div>
           <div class="workboard-toolbar__actions">
             <button
@@ -407,27 +415,29 @@ export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void 
             }
           </div>
         </div>
-        ${renderHealthStrip(state, health, props.onRequestUpdate)}
+        ${renderPlanningToolbar(props)} ${renderHealthStrip(state, health, props.onRequestUpdate)}
         ${dialogOpen ? nothing : renderWorkboardError(visibleError)} ${renderDispatchSummary(state)}
         ${
-          (filtered.length === 0 && activeFiltering) || visibleStatuses.length === 0
-            ? html`
-                <div class="workboard-empty-state" role="status">
-                  <strong>${t("workboard.emptyFilteredTitle")}</strong>
-                  <span>${t("workboard.emptyFilteredHint")}</span>
-                </div>
-              `
-            : html`
-                <div
-                  class="workboard-board workboard-board--page workboard-board--${state.layout} ${
-                    visibleStatuses.length === 1 ? "workboard-board--single-column" : ""
-                  }"
-                >
-                  ${visibleStatuses.map((status) =>
-                    renderColumn(props, status, byStatus.get(status) ?? []),
-                  )}
-                </div>
-              `
+          planningVisible
+            ? renderPlanningBoard(props, filtered)
+            : (filtered.length === 0 && activeFiltering) || visibleStatuses.length === 0
+              ? html`
+                  <div class="workboard-empty-state" role="status">
+                    <strong>${t("workboard.emptyFilteredTitle")}</strong>
+                    <span>${t("workboard.emptyFilteredHint")}</span>
+                  </div>
+                `
+              : html`
+                  <div
+                    class="workboard-board workboard-board--page workboard-board--${state.layout} ${
+                      visibleStatuses.length === 1 ? "workboard-board--single-column" : ""
+                    }"
+                  >
+                    ${visibleStatuses.map((status) =>
+                      renderColumn(props, status, byStatus.get(status) ?? []),
+                    )}
+                  </div>
+                `
         }
       </div>
       ${renderCardModal(props)} ${renderCardDetailsPanel(props)}

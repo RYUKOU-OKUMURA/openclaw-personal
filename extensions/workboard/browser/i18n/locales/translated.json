@@ -1446,7 +1446,33 @@
       "rejectionDescription": "理由をコメントに保存してアーカイブします。AIが次回の提案時に読むことで、判断の参考にできます。",
       "rejectionFailed": "却下を保存できませんでした。",
       "rejectionArchivePending": "却下理由は記録されています。アーカイブはまだ完了していません。",
-      "rejectionRetryArchive": "却下済みアイデアをアーカイブ"
+      "rejectionRetryArchive": "却下済みアイデアをアーカイブ",
+      "planning": {
+        "view": "ボード表示",
+        "planning": "企画整理",
+        "execution": "実行状況",
+        "hint": "同じカードを企画用の列で整理します。実行状況は独立して管理されます。",
+        "edit": "ボードを編集",
+        "reload": "編集を破棄して再読み込み",
+        "editHint": "変更はこのボードに保存されます。列を削除すると、カードは指定した移動先へ移ります。",
+        "name": "列の名前",
+        "width": "幅（px）",
+        "left": "列を左へ移動",
+        "right": "列を右へ移動",
+        "inboxHint": "新規・未分類カードの受け皿です。削除できません。",
+        "deleteTo": "削除時のカード移動先",
+        "chooseDestination": "移動先を選択",
+        "delete": "列を削除",
+        "newColumn": "新しい列",
+        "add": "列を追加",
+        "resize": "列幅を変更",
+        "loading": "企画ボードを読み込み中…",
+        "unavailable": "企画ボードを読み込めません。更新して再試行してください。",
+        "moveTo": "企画の列",
+        "drop": "ここにカードをドロップ",
+        "responseMismatch": "企画ボードの応答が別のボードに属しています。",
+        "reloadRequired": "編集をキャンセルするか、再読み込みしてから再試行してください。"
+      }
     }
   },
   "ko": {

@@ -220,9 +220,13 @@ function renderLifecycle(
   `;
 }
 
-type WorkboardCardSurface = "page" | "widget";
+type WorkboardCardSurface = "page" | "widget" | "planning";
 
-function renderCard(props: WorkboardProps, card: WorkboardCard, surface: WorkboardCardSurface) {
+export function renderCard(
+  props: WorkboardProps,
+  card: WorkboardCard,
+  surface: WorkboardCardSurface,
+) {
   const {
     state,
     task,
@@ -349,6 +353,7 @@ function renderCard(props: WorkboardProps, card: WorkboardCard, surface: Workboa
       <div class="workboard-card__chips">
         <span class="workboard-card__priority">${formatPriorityLabel(card.priority)}</span>
         ${renderAgentChip(props, card)}
+        ${surface === "planning" ? html`<span class="workboard-planning-status">${formatStatusLabel(card.status)}</span>` : nothing}
         ${
           archived
             ? html`<span class="workboard-card__archived">${t("workboard.archived")}</span>`
