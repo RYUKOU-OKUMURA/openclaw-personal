@@ -39,6 +39,12 @@ import type {
   WorkboardKeyedStore,
   WorkboardOwnerClaimResult,
 } from "./persistence-types.js";
+import {
+  deleteBoardPlanning,
+  resetPlanningForBoardMove,
+  WORKBOARD_PLANNING_SCHEMA_SQL,
+  WorkboardSqlitePlanningStore,
+} from "./sqlite-planning.js";
 import { workboardCardConsumesOwnerSlot, workboardCardSlotOwner } from "./store-constants.js";
 const WORKBOARD_DB_RELATIVE_PATH = ["plugins", "workboard", "workboard.sqlite"] as const;
 const SCHEMA_VERSION = 3;
@@ -47,6 +53,7 @@ const WORKBOARD_SQLITE_DIR_MODE = 0o700;
 const WORKBOARD_SQLITE_FILE_MODE = 0o600;
 type Row = Record<string, unknown>;
 type WorkboardSqliteStores = {
+  planning: WorkboardSqlitePlanningStore;
   cards: WorkboardCardStore;
   boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
   subscriptions: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
@@ -369,6 +376,7 @@ const WORKBOARD_SCHEMA_SQL = `
 
 function ensureWorkboardSchema(db: DatabaseSync): void {
   db.exec(WORKBOARD_SCHEMA_SQL);
+  db.exec(WORKBOARD_PLANNING_SCHEMA_SQL);
   ensureColumn(db, "workboard_boards", "automation_job_id", "automation_job_id TEXT");
   ensureColumn(
     db,
@@ -918,6 +926,7 @@ function insertChildren<T>(
 }
 
 function insertCard(db: DatabaseSync, card: WorkboardCard): void {
+  resetPlanningForBoardMove(db, card.id, cardBoardId(card));
   const execution = card.execution;
   const metadata = card.metadata;
   const query = getNodeSqliteKysely<WorkboardCardDatabase>(db);
@@ -1446,8 +1455,19 @@ class WorkboardSqliteBoardStore implements WorkboardKeyedStore<PersistedWorkboar
   }
 
   async delete(key: string): Promise<boolean> {
-    const result = this.db.prepare("DELETE FROM workboard_boards WHERE id = ?").run(key);
-    return result.changes > 0;
+    return runSqliteImmediateTransactionSync(this.db, () => {
+      const result = executeSqliteQueryTakeFirstSync(
+        this.db,
+        getNodeSqliteKysely<{ workboard_boards: Row }>(this.db)
+          .deleteFrom("workboard_boards")
+          .where("id", "=", key)
+          .returning("id"),
+      );
+      if (result) {
+        deleteBoardPlanning(this.db, key);
+      }
+      return Boolean(result);
+    });
   }
 
   async entries(): Promise<Array<{ key: string; value: PersistedWorkboardBoard }>> {
@@ -1651,6 +1671,7 @@ export function createWorkboardSqliteStores(
     options.dbPath ?? resolveWorkboardSqlitePath(options.env),
   );
   return {
+    planning: new WorkboardSqlitePlanningStore(db),
     cards: new WorkboardSqliteCardStore(db),
     boards: new WorkboardSqliteBoardStore(db),
     subscriptions: new WorkboardSqliteSubscriptionStore(db),

@@ -5,6 +5,7 @@ import type {
   WorkboardEvent,
   WorkboardLink,
   WorkboardMetadata,
+  WorkboardPlanningBoard,
   WorkboardStatus,
 } from "@openclaw/workboard-contract";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -18,6 +19,7 @@ import type {
   WorkboardCardStore,
   WorkboardKeyedStore,
 } from "./persistence-types.js";
+import type { WorkboardSqlitePlanningStore } from "./sqlite-planning.js";
 import { normalizeAutomationPatch, normalizeCardAutomation } from "./store-automation.js";
 import {
   assertCanMutateClaimedCard,
@@ -97,6 +99,7 @@ const WORKBOARD_CAS_ATTEMPTS = 3;
 export class WorkboardCoreStore extends WorkboardStoreRuntime {
   private lastNotificationSequence = 0;
   private readonly cardStore?: WorkboardCardStore;
+  private readonly planningStore?: WorkboardSqlitePlanningStore;
   private compensationJournal?: WorkboardMutationJournalEntry[];
   protected readonly store: WorkboardKeyedStore;
   protected readonly boardStore: WorkboardKeyedStore<PersistedWorkboardBoard>;
@@ -106,6 +109,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
   constructor(
     store: WorkboardKeyedStore,
     stores: {
+      planning?: WorkboardSqlitePlanningStore;
       boards?: WorkboardKeyedStore<PersistedWorkboardBoard>;
       subscriptions?: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
       attachments?: WorkboardKeyedStore<PersistedWorkboardAttachment>;
@@ -114,6 +118,7 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     } = {},
   ) {
     super(stores.dataVersion, stores.close);
+    this.planningStore = stores.planning;
     if (isWorkboardCardStore(store)) {
       this.cardStore = this.trackCardStore(store);
       this.store = this.cardStore;
@@ -132,6 +137,37 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       stores.attachments ?? (store as unknown as WorkboardKeyedStore<PersistedWorkboardAttachment>),
       { notifyChanges: false },
     );
+  }
+
+  async getPlanning(boardId: unknown): Promise<WorkboardPlanningBoard> {
+    return await this.runOperation(() => {
+      if (!this.planningStore) {
+        throw new Error("Planning requires the Workboard SQLite store.");
+      }
+      return this.planningStore.get(boardId);
+    });
+  }
+
+  async updatePlanning(input: Record<string, unknown>): Promise<WorkboardPlanningBoard> {
+    return await this.enqueueMutation(async () => {
+      if (!this.planningStore) {
+        throw new Error("Planning requires the Workboard SQLite store.");
+      }
+      const result = this.planningStore.update(input);
+      this.recordPersistentMutation();
+      return result;
+    });
+  }
+
+  async movePlanningCard(input: Record<string, unknown>): Promise<WorkboardPlanningBoard> {
+    return await this.enqueueMutation(async () => {
+      if (!this.planningStore) {
+        throw new Error("Planning requires the Workboard SQLite store.");
+      }
+      const result = this.planningStore.move(input);
+      this.recordPersistentMutation();
+      return result;
+    });
   }
 
   protected async withCardCompensation<T>(run: () => Promise<T>): Promise<T> {

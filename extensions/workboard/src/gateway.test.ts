@@ -47,6 +47,9 @@ describe("workboard gateway methods", () => {
     registerWorkboardGatewayMethods({ api, store });
 
     expect([...methods.keys()]).toEqual([
+      "workboard.planning.get",
+      "workboard.planning.update",
+      "workboard.planning.move",
       "workboard.cards.list",
       "workboard.cards.create",
       "workboard.cards.captureSession",

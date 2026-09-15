@@ -1,4 +1,41 @@
 // Workboard contract declarations define the plugin and Control UI data model.
+export const WORKBOARD_PLANNING_INBOX_ID = "inbox";
+
+export type WorkboardPlanningColumn = {
+  id: string;
+  name: string;
+  width: number;
+  order: number;
+};
+
+export type WorkboardPlanningCard = {
+  cardId: string;
+  columnId: string;
+  order: number;
+};
+
+/** Planning placement never changes execution status or its position. */
+export type WorkboardPlanningBoard = {
+  boardId: string;
+  revision: number;
+  columns: WorkboardPlanningColumn[];
+  cards: WorkboardPlanningCard[];
+};
+
+export type WorkboardPlanningUpdate = {
+  boardId: string;
+  expectedRevision: number;
+  columns: WorkboardPlanningColumn[];
+  deletedColumnDestinations?: Record<string, string>;
+};
+
+export type WorkboardPlanningMove = {
+  boardId: string;
+  expectedRevision: number;
+  cardId: string;
+  columnId: string;
+  order: number;
+};
 export const WORKBOARD_STATUSES = [
   "triage",
   "backlog",

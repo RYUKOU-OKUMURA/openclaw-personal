@@ -40,6 +40,11 @@
         "id": "boards.list",
         "method": "workboard.boards.list",
         "description": "List Workboard boards."
+      },
+      {
+        "id": "planning.get",
+        "method": "workboard.planning.get",
+        "description": "Read board planning columns and card placement independently of execution status."
       }
     ],
     "actionVerbs": [
@@ -57,6 +62,16 @@
             }
           }
         }
+      },
+      {
+        "id": "planning.update",
+        "method": "workboard.planning.update",
+        "description": "Update planning columns with revision checking."
+      },
+      {
+        "id": "planning.move",
+        "method": "workboard.planning.move",
+        "description": "Move a card within planning columns without changing execution status."
       }
     ]
   },
