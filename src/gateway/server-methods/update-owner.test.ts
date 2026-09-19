@@ -142,7 +142,7 @@ describe("update.run current owner authority", () => {
       };
       detectRespawnSupervisorMock.mockReturnValue(supervisor);
       mockGlobalInstallSurface();
-      const { tools } = resolveGatewayScopedTools({
+      const { tools } = await resolveGatewayScopedTools({
         cfg: config,
         sessionKey: `agent:main:${channel}:dm:owner`,
         messageProvider: channel,

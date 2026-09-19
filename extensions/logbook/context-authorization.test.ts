@@ -1,0 +1,232 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import type {
+  OpenClawPluginApi,
+  OpenClawPluginToolContext,
+} from "openclaw/plugin-sdk/plugin-entry";
+import {
+  createPluginRegistryFixture,
+  registerVirtualTestPlugin,
+} from "openclaw/plugin-sdk/plugin-test-contracts";
+import { describe, expect, it, vi } from "vitest";
+import plugin from "./index.js";
+const serviceMock = vi.hoisted(() => ({
+  context: vi.fn(async () => ({ version: 1, records: [] })),
+  deleteDay: vi.fn(() => ({ frames: 1 })),
+}));
+vi.mock("./src/service.js", () => ({
+  LogbookService: class {
+    context = serviceMock.context;
+    deleteDay = serviceMock.deleteDay;
+    start() {}
+    stop() {}
+  },
+}));
+describe("Logbook conversation context authorization", () => {
+  async function harness(start = true) {
+    const contextResult = { version: 1, records: [] };
+    const request = vi.fn().mockResolvedValue(contextResult);
+    serviceMock.context.mockClear();
+    const registerTool = vi.fn<OpenClawPluginApi["registerTool"]>();
+    const on = vi.fn<OpenClawPluginApi["on"]>();
+    const registerService = vi.fn<OpenClawPluginApi["registerService"]>();
+    const registerGatewayMethod = vi.fn<OpenClawPluginApi["registerGatewayMethod"]>();
+    plugin.register({
+      pluginConfig: {},
+      runtimeSource: fileURLToPath(new URL("./index.ts", import.meta.url)),
+      runtime: { gateway: { request } },
+      lifecycle: { registerRuntimeLifecycle() {} },
+      session: { controls: { registerControlUiDescriptor: () => {} } },
+      registerNodeInvokePolicy: () => {},
+      registerService,
+      registerGatewayMethod,
+      registerTool,
+      on,
+    } as unknown as OpenClawPluginApi);
+    const factory = registerTool.mock.calls[0]![0];
+    if (typeof factory !== "function") {
+      throw new Error("Expected context tool factory");
+    }
+    const service = registerService.mock.calls[0]![0];
+    if (start) {
+      await service.start({
+        stateDir: "/unused",
+        config: {},
+        logger: { info() {}, warn() {}, error() {} },
+      });
+    }
+    return { factory, service, on, registerGatewayMethod, request, contextResult };
+  }
+
+  it.each([true, false])(
+    "exposes context only to host-owner private dashboard turns (service started=%s)",
+    async (start) => {
+      const { factory } = await harness(start);
+      const owner = { senderIsOwner: true, messageChannel: "webchat" };
+      const denied: OpenClawPluginToolContext[] = [
+        {},
+        { ...owner, senderIsOwner: false },
+        { ...owner, messageChannel: "discord" },
+        { ...owner, messageChannel: "telegram" },
+        { ...owner, nativeChannelId: "group" },
+        { ...owner, deliveryContext: { to: "external" } },
+        ...[
+          {},
+          { channel: "discord" },
+          { channel: "unknown" },
+          { channel: "" },
+          { channel: "webchat", to: "external" },
+          { channel: "webchat", threadId: "group" },
+          { channel: "webchat", accountId: "other" },
+        ].map((deliveryContext) => Object.assign({}, owner, { deliveryContext })),
+      ];
+      for (const context of denied) {
+        expect(factory(context)).toBeNull();
+      }
+      expect(factory({ ...owner, deliveryContext: { channel: "webchat" } })).toMatchObject({
+        name: "logbook_context",
+      });
+      expect(factory(owner)).toMatchObject({ name: "logbook_context" });
+      expect(factory({ ...owner, sandboxed: true })).toMatchObject({ name: "logbook_context" });
+    },
+  );
+
+  it("routes cold-discovery recall through the read Gateway and requires explicit deletion day", async () => {
+    const { factory, registerGatewayMethod, request, contextResult } = await harness(false);
+    const tool = factory({ senderIsOwner: true, messageChannel: "webchat" });
+    if (!tool || Array.isArray(tool)) {
+      throw new Error("Expected recall tool");
+    }
+    expect(tool.description).toContain("retry the same day without query");
+    const result = await tool.execute("call", { day: "2026-09-05", query: "  OpenClaw  " });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      "logbook.context",
+      { day: "2026-09-05", query: "OpenClaw" },
+      { scopes: ["operator.read"], timeoutMs: 10_000 },
+    );
+    expect(result).toEqual({
+      content: [{ type: "text", text: JSON.stringify(contextResult) }],
+      details: contextResult,
+    });
+    expect(serviceMock.context).not.toHaveBeenCalled();
+    await expect(tool.execute("invalid", { day: "today" })).rejects.toThrow(
+      "day must be YYYY-MM-DD",
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    const failure = new Error("Gateway unavailable");
+    request.mockRejectedValueOnce(failure);
+    await expect(tool.execute("failed", { day: "2026-09-05" })).rejects.toBe(failure);
+    const read = registerGatewayMethod.mock.calls.find(([method]) => method === "logbook.context")!;
+    const remove = registerGatewayMethod.mock.calls.find(
+      ([method]) => method === "logbook.context.delete",
+    )!;
+    expect(read[2]).toEqual({ scope: "operator.read" });
+    expect(remove[2]).toEqual({ scope: "operator.write" });
+    const respond = vi.fn();
+    await remove[1]({
+      req: { type: "req", id: "delete-test", method: "logbook.context.delete" },
+      params: {},
+      client: null,
+      isWebchatConnect: () => true,
+      respond,
+      get context(): never {
+        throw new Error("Deletion handler must not access unrelated Gateway context");
+      },
+    });
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ error: "day is required for context deletion" }),
+      expect.anything(),
+    );
+  });
+
+  it("rechecks tool authority after the context worker read completes", async () => {
+    const { on } = await harness();
+    let finish!: (value: { version: number; records: never[] }) => void;
+    serviceMock.context.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const registration = on.mock.calls.find(([name]) => name === "before_prompt_build")!;
+    const hook = registration[1] as (
+      event: { prompt: string; messages: unknown[] },
+      context: {
+        trigger: string;
+        toolAuthority: { fingerprint: string; allows(name: string): boolean; assertActive(): void };
+      },
+    ) => Promise<unknown>;
+    let active = true;
+    const result = hook(
+      { prompt: "resume", messages: [] },
+      {
+        trigger: "user",
+        toolAuthority: {
+          fingerprint: "turn",
+          allows: () => true,
+          assertActive() {
+            if (!active) {
+              throw new Error("turn retired");
+            }
+          },
+        },
+      },
+    );
+    active = false;
+    finish({ version: 1, records: [] });
+    await expect(result).rejects.toThrow("turn retired");
+  });
+
+  it("injects recent evidence only after finalized tool-policy authorization", async () => {
+    const { on } = await harness();
+    const registration = on.mock.calls.find(([name]) => name === "before_prompt_build")!;
+    expect(registration[2]).toEqual({ requiresToolAuthority: true });
+    // Recover the hook's correlated type from the public registration overload.
+    const hook = registration[1] as (
+      event: { prompt: string; messages: unknown[] },
+      context: {
+        trigger: string;
+        toolAuthority?: {
+          fingerprint: string;
+          allows(name: string): boolean;
+          assertActive(): void;
+        };
+      },
+    ) => unknown;
+    expect(await hook({ prompt: "resume", messages: [] }, { trigger: "user" })).toBeUndefined();
+    const assertActive = vi.fn();
+    const toolAuthority = { fingerprint: "turn", allows: () => false, assertActive };
+    expect(
+      await hook({ prompt: "resume", messages: [] }, { trigger: "user", toolAuthority }),
+    ).toBeUndefined();
+    toolAuthority.allows = () => true;
+    expect(
+      await hook({ prompt: "resume", messages: [] }, { trigger: "cron", toolAuthority }),
+    ).toBeUndefined();
+    expect(
+      await hook({ prompt: "resume", messages: [] }, { trigger: "user", toolAuthority }),
+    ).toMatchObject({ prependContext: expect.stringContaining("Recent Logbook evidence") });
+    expect(assertActive).toHaveBeenCalledTimes(2);
+    expect(serviceMock.context).toHaveBeenLastCalledWith(expect.anything(), 1300);
+  });
+});
+
+it("registers the context tool through the host registrar using its shipped manifest", () => {
+  const manifest: { contracts?: { tools?: string[] } } = JSON.parse(
+    readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"),
+  );
+  const { config, registry } = createPluginRegistryFixture();
+  registerVirtualTestPlugin({
+    registry,
+    config,
+    id: "logbook",
+    name: "Logbook",
+    contracts: manifest.contracts,
+    register: plugin.register,
+  });
+  expect(registry.registry.diagnostics.filter((entry) => entry.level === "error")).toEqual([]);
+  expect(registry.registry.tools).toContainEqual(
+    expect.objectContaining({ pluginId: "logbook", names: ["logbook_context"] }),
+  );
+});

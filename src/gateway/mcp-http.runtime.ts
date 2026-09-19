@@ -13,6 +13,7 @@ import {
 import { applyEmbeddedAttemptToolsAllow } from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { loadNodeExecAvailability } from "../agents/node-exec-availability.js";
 import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
+import type { SandboxContext } from "../agents/sandbox.js";
 import { normalizeToolPolicyName } from "../agents/tool-policy.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DirectoryCache } from "../infra/outbound/directory-cache.js";
@@ -40,6 +41,7 @@ const NATIVE_TOOL_EXCLUDE = new Set(
 
 type CachedScopedTools = {
   agentId: string | undefined;
+  sandbox?: SandboxContext;
   // Tool policy resolves the workspace root (grant value, else the agent's
   // configured workspace). Hook context must carry the same one the tools were
   // built with, or before-tool-call policy resolves state against a different root.
@@ -88,7 +90,7 @@ function resolveMediatedNativeTools(
     toolsAllow === undefined ||
     toolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*")
   ) {
-    return new Set();
+    return new Set(NATIVE_TOOL_EXCLUDE);
   }
   return new Set(
     applyEmbeddedAttemptToolsAllow(
@@ -152,7 +154,8 @@ async function resolvePairedComputerNodeScope(
   // Resolve the actual configured surface before contacting Gateway. Grant policy
   // alone is insufficient: profile, agent, sandbox, sender, and Gateway policy
   // can all remove computer from the final catalog.
-  const policyResolved = resolveMcpLoopbackTools(params, mode);
+  const policyResolved = await resolveMcpLoopbackTools(params, mode);
+  params.signal?.throwIfAborted();
   const computerAllowed = policyResolved.tools.some(
     (tool) => readMcpLoopbackToolName(tool) === "computer",
   );
@@ -177,10 +180,10 @@ async function resolvePairedComputerNodeScope(
     : { ...resolvedParams, policyResolved };
 }
 
-function resolveMcpLoopbackTools(
+async function resolveMcpLoopbackTools(
   params: McpLoopbackScopeParams,
   mode: LoopbackToolsAllowMode,
-): CachedScopedTools {
+): Promise<CachedScopedTools> {
   params.signal?.throwIfAborted();
   const { toolsAllow, ...context } = params.context;
   const excludeToolNames = new Set(NATIVE_TOOL_EXCLUDE);
@@ -200,7 +203,7 @@ function resolveMcpLoopbackTools(
     context.skillWorkshop || params.skillLibraryAuthoring
       ? { ...context.skillWorkshop, libraryAuthoring: params.skillLibraryAuthoring }
       : undefined;
-  const scoped = resolveGatewayScopedTools({
+  const scoped = await resolveGatewayScopedTools({
     ...context,
     rootedExecution: params.rootedExecution,
     messageActionTurnCapability: params.messageActionTurnCapability,
@@ -218,7 +221,9 @@ function resolveMcpLoopbackTools(
     includeNodeExecTool,
     nodeExecAvailable: params.nodeExecAvailability?.isAvailable,
     pairedNodeComputerUse: params.pairedComputerUseAvailability?.prepared,
+    signal: params.signal,
   });
+  params.signal?.throwIfAborted();
   const tools =
     mode === "exact"
       ? applyGrantToolsAllow(scoped.tools, toolsAllow)
@@ -228,6 +233,7 @@ function resolveMcpLoopbackTools(
   return {
     agentId: scoped.agentId,
     workspaceDir: scoped.workspaceDir,
+    sandbox: scoped.sandbox,
     tools,
     toolSchema,
   };
@@ -237,6 +243,7 @@ function resolveMcpLoopbackTools(
 export async function resolveMcpLoopbackScopedTools(params: McpLoopbackScopeParams): Promise<{
   agentId: string | undefined;
   workspaceDir?: string;
+  sandbox?: SandboxContext;
   tools: McpLoopbackTool[];
 }> {
   const resolved = await resolveNodeScope(params, "exact");
@@ -246,6 +253,8 @@ export async function resolveMcpLoopbackScopedTools(params: McpLoopbackScopePara
 /** Materializes runtime policy expressions against the concrete loopback catalog. */
 export async function resolveMcpLoopbackPolicyTools(params: McpLoopbackScopeParams): Promise<{
   agentId: string | undefined;
+  workspaceDir?: string;
+  sandbox?: SandboxContext;
   tools: McpLoopbackTool[];
 }> {
   const resolved = await resolveNodeScope(params, "policy");
@@ -345,7 +354,8 @@ export class McpLoopbackToolCache {
       return cached;
     }
 
-    const nextEntry = resolved.policyResolved ?? resolveMcpLoopbackTools(params, "exact");
+    const nextEntry = resolved.policyResolved ?? (await resolveMcpLoopbackTools(params, "exact"));
+    input.signal?.throwIfAborted();
     // Revocation may overtake discovery before a grant owns any cached rows.
     if (epoch !== this.#epoch) {
       return nextEntry;

@@ -4,6 +4,7 @@ export * from "./schema/human-mentions.js";
 export * from "./public-schema-push.js";
 export * from "./public-schema-users.js";
 export * from "./public-schema-plugins.js";
+export * from "./schema/sandbox.js";
 export {
   isCloudWorkerPlacementState,
   ConnectParamsSchema,
@@ -691,10 +692,9 @@ export {
   FsDirEntrySchema,
   FsListDirParamsSchema,
   FsListDirResultSchema,
-} from "./schema-modules.js";
-
-export {
+  FsPickPathParamsSchema,
+  FsPickPathResultSchema,
   SessionActivitySummarySchema,
   SessionsActivitySummaryEnsureParamsSchema,
   SessionsActivitySummaryEnsureResultSchema,
-} from "./schema/sessions-activity-summary.js";
+} from "./schema-modules.js";

@@ -179,6 +179,10 @@ export class WorkboardStoreRuntime {
     });
   }
 
+  protected recordPersistentMutation(): void {
+    this.mutationRevision += 1;
+  }
+
   private async runMutation<T>(run: () => Promise<T>): Promise<T> {
     const initialRevision = this.mutationRevision;
     try {

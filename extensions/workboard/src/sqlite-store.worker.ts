@@ -42,6 +42,12 @@ export function createSqliteWorkerBackend(
     switch (command.type) {
       case "dataVersion":
         return kernel.dataVersion();
+      case "planning.get":
+        return kernel.planning.get(...command.input.args);
+      case "planning.update":
+        return kernel.planning.update(...command.input.args);
+      case "planning.move":
+        return kernel.planning.move(...command.input.args);
       case "cards.register":
         return kernel.cards.register(...command.input.args);
       case "cards.registerIfAbsent":

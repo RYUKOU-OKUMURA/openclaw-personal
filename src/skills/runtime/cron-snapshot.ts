@@ -15,6 +15,7 @@ export async function resolveCronSkillsSnapshot(params: {
   workspaceDir: string;
   config: OpenClawConfig;
   agentId: string;
+  sessionKey: string;
   existingSnapshot?: SkillSnapshot;
   librarySelections?: SkillSnapshot["librarySelections"];
   isFastTestEnv: boolean;
@@ -29,6 +30,7 @@ export async function resolveCronSkillsSnapshot(params: {
   const nodeSkills = runtime.resolveNodeExecEligibility({
     cfg: params.config,
     agentId: params.agentId,
+    sessionKey: params.sessionKey,
   });
   return (
     await runtime.resolveReusableWorkspaceSkillSnapshot({

@@ -84,6 +84,7 @@ subset of catalog metadata:
 
 | Model id        | Input modalities | Reasoning efforts                    |
 | --------------- | ---------------- | ------------------------------------ |
+| `gpt-6-astra`   | text, image      | low, medium, high, xhigh, max, ultra |
 | `gpt-5.4`       | text, image      | low, medium, high, xhigh             |
 | `gpt-5.4-mini`  | text, image      | low, medium, high, xhigh             |
 | `gpt-5.5`       | text, image      | low, medium, high, xhigh             |

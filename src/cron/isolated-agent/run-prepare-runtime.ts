@@ -1,12 +1,21 @@
 /** Lazy preparation runtimes and session lifecycle helpers for cron runs. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
+import {
+  isDefaultAgentRuntimeId,
+  normalizeOptionalAgentRuntimeId,
+} from "../../agents/agent-runtime-id.js";
 import { hasAnyAuthProfileStoreSource } from "../../agents/auth-profiles/source-check.js";
+import { resolveModelRuntimePolicy } from "../../agents/model-runtime-policy.js";
+import { isCliProvider } from "../../agents/model-selection-cli.js";
+import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
+import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SkillSnapshot } from "../../skills/types.js";
+import { SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX } from "../system-owned-declaration.js";
 import type {
   CronAgentExecutionPhaseUpdate,
   CronAgentExecutionStarted,
@@ -47,6 +56,73 @@ export function resolveCronAgentTurnMessage(input: RunCronAgentTurnParams): stri
 export type WithRunSession = (
   result: Omit<RunCronAgentTurnResult, "sessionId" | "sessionKey">,
 ) => RunCronAgentTurnResult;
+
+type CronAgentRuntimeSelectionParams = {
+  cfg: OpenClawConfig;
+  provider: string;
+  modelId: string;
+  agentId?: string;
+  sessionKey?: string;
+  sessionEntry?: Pick<
+    SessionEntry,
+    "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked"
+  >;
+  executionRoot?: string;
+  declarationKey?: string;
+};
+
+type CronAgentRuntimeResolution = Readonly<{
+  /** Concrete runtime used for thinking policy, admission, and execution. */
+  runtime: string;
+  /** Existing session pin or this turn's rooted auto-policy override. */
+  runtimeOverride?: string;
+}>;
+
+/**
+ * Keeps cron runtime resolution consistent across preparation and execution.
+ *
+ * A rooted Workshop collection review is a host-owned execution with a trusted
+ * declaration key. Only an auto/unspecified model policy is forced to the
+ * built-in OpenClaw runtime; explicit model policies and persisted session pins
+ * remain authoritative and are still checked by the root admission gate. A
+ * direct CLI provider is also kept on its CLI route when the policy is absent.
+ */
+export function resolveCronAgentRuntime(
+  params: CronAgentRuntimeSelectionParams & { resolvedRuntime: string },
+): CronAgentRuntimeResolution {
+  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
+    provider: params.provider,
+    entry: params.sessionEntry,
+    cfg: params.cfg,
+  });
+  if (sessionRuntimeOverride) {
+    return {
+      runtime: params.resolvedRuntime,
+      runtimeOverride: sessionRuntimeOverride,
+    };
+  }
+
+  const rootedSkillCollectionReview =
+    Boolean(params.executionRoot) &&
+    params.declarationKey?.startsWith(SKILL_COLLECTION_REVIEW_DECLARATION_PREFIX) === true;
+  if (!rootedSkillCollectionReview) {
+    return { runtime: params.resolvedRuntime };
+  }
+
+  const configuredRuntime = normalizeOptionalAgentRuntimeId(
+    resolveModelRuntimePolicy({
+      config: params.cfg,
+      provider: params.provider,
+      modelId: params.modelId,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+    }).policy?.id,
+  );
+  if (isDefaultAgentRuntimeId(configuredRuntime) && !isCliProvider(params.provider, params.cfg)) {
+    return { runtime: "openclaw", runtimeOverride: "openclaw" };
+  }
+  return { runtime: params.resolvedRuntime };
+}
 
 const sessionAccessorRuntimeLoader = createLazyImportLoader(
   () => import("../../config/sessions/session-accessor.js"),

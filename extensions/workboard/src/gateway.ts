@@ -72,6 +72,27 @@ export function registerWorkboardGatewayMethods(params: {
 
   registerWorkboardResultMethods(api, [
     [
+      "workboard.planning.get",
+      READ_SCOPE,
+      async ({ params: requestParams }) => ({
+        planning: await store.getPlanning(requestParams.boardId),
+      }),
+    ],
+    [
+      "workboard.planning.update",
+      WRITE_SCOPE,
+      async ({ params: requestParams }) => ({
+        planning: await store.updatePlanning(requestParams),
+      }),
+    ],
+    [
+      "workboard.planning.move",
+      WRITE_SCOPE,
+      async ({ params: requestParams }) => ({
+        planning: await store.movePlanningCard(requestParams),
+      }),
+    ],
+    [
       "workboard.cards.list",
       READ_SCOPE,
       async ({ params: requestParams }) =>

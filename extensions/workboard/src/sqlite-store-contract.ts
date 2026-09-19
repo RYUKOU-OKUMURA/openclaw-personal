@@ -2,6 +2,7 @@ import type {
   PersistedWorkboardAttachment,
   PersistedWorkboardBoard,
   WorkboardCardStore,
+  WorkboardPlanningStore,
   WorkboardKeyedStore,
   WorkboardSubscriptionStore,
 } from "./persistence-types.js";
@@ -15,6 +16,9 @@ export type WorkboardSqliteOperations = {
   "connection.open": { input: undefined; output: { connection: number; dataVersion: number } };
   "connection.close": { input: { connection: number }; output: void };
   dataVersion: { input: { connection: number }; output: number };
+  "planning.get": Operation<WorkboardPlanningStore["get"]>;
+  "planning.update": Operation<WorkboardPlanningStore["update"]>;
+  "planning.move": Operation<WorkboardPlanningStore["move"]>;
   "cards.register": Operation<WorkboardCardStore["register"]>;
   "cards.registerIfAbsent": Operation<WorkboardCardStore["registerIfAbsent"]>;
   "cards.registerIfUpdatedAt": Operation<WorkboardCardStore["registerIfUpdatedAt"]>;

@@ -797,6 +797,8 @@ describe("Control UI Vite config", () => {
         expect(addWatchFile.mock.calls.map(([file]) => path.normalize(file))).toContain(
           path.join(repoRoot, "src/config/schema.hints.ts"),
         );
+        expect(catalog.common.health).toBe("Health");
+        expect(catalog.accessMap.eyebrow).toBe("Privacy & Security");
       },
     );
   });

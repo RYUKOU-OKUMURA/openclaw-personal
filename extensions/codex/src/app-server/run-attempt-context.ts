@@ -186,6 +186,7 @@ export async function prepareCodexAttemptContext(
   const baseDeveloperInstructions = joinPresentSections(
     buildDeveloperInstructions(runtimeParams, {
       dynamicTools: toolBridge.availableSpecs,
+      sandbox: sandbox ?? undefined,
     }),
     agentWorkspaceDeveloperInstructions,
   );

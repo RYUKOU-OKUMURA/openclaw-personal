@@ -439,6 +439,30 @@ export async function executeSystemAgentOperation(
       }
       return result;
     }
+    case "create-specialist": {
+      return await applyPersistentOperation({
+        auditOperation: "agents.create-specialist",
+        operation,
+        runtime,
+        opts,
+        run: async (ctx) => {
+          const { createSpecialist } = await import("./specialists.js");
+          if (!ctx.assertPersistentApply) {
+            throw new Error("Specialist creation requires live operator approval.");
+          }
+          const guard = ctx.assertPersistentApply;
+          const result = await ctx.commit(async () => await createSpecialist(operation, guard));
+          if (result.status === "error") {
+            throw new Error(result.message);
+          }
+          return {
+            summary: `Created specialist ${operation.name} (${result.agentId})`,
+            agentId: result.agentId,
+            details: { agentId: result.agentId },
+          };
+        },
+      });
+    }
     case "create-agent": {
       if (isReservedSystemAgentId(operation.agentId)) {
         throw new Error(

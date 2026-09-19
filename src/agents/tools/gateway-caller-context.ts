@@ -25,6 +25,11 @@ import {
 import type { AnyAgentTool } from "./common.js";
 
 type GatewayToolCallerIdentity = {
+  /** Host-prepared, narrow operation, never read from RPC/model arguments. */
+  specialistProposal?: Extract<
+    import("../../system-agent/operation-types.js").SystemAgentOperation,
+    { kind: "create-specialist" }
+  >;
   agentId: string;
   sessionKey: string;
   gatewayUiCommandTarget?: GatewayUiCommandTarget;
@@ -283,6 +288,7 @@ export async function withGatewayToolCallerIdentity<T>(
     {
       agentId: inheritedOwner?.agentId ?? identity.agentId.trim(),
       sessionKey: inheritedOwner?.sessionKey ?? identity.sessionKey.trim(),
+      ...(identity.specialistProposal ? { specialistProposal: identity.specialistProposal } : {}),
       ...(fullPermission !== undefined ? { fullPermission } : {}),
       ...(operationalRunInstance ? { operationalRunInstance } : {}),
       ...(embeddedRunToolAuthorityBinding ? { embeddedRunToolAuthorityBinding } : {}),

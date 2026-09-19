@@ -7,6 +7,7 @@ import {
   resolveEmbeddedSandboxInfoExecPolicy,
 } from "./embedded-agent-runner/sandbox-info.js";
 import type { SandboxContext } from "./sandbox.js";
+import { buildSandboxFileLocationsPrompt } from "./sandbox/file-locations-prompt.js";
 
 function createSandboxContext(overrides?: Partial<SandboxContext>): SandboxContext {
   // Mirrors the sandbox runtime shape enough for prompt-info tests without
@@ -44,7 +45,8 @@ function createSandboxContext(overrides?: Partial<SandboxContext>): SandboxConte
       containerName: "openclaw-sbx-browser-test",
     },
   } satisfies SandboxContext;
-  return { ...base, ...overrides };
+  const sandbox = { ...base, ...overrides };
+  return { ...sandbox, fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox) };
 }
 
 describe("buildEmbeddedSandboxInfo", () => {
@@ -69,9 +71,25 @@ describe("buildEmbeddedSandboxInfo", () => {
       containerWorkspaceDir: "/workspace",
       workspaceAccess: "none",
       agentWorkspaceMount: undefined,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
       browserBridgeUrl: "http://localhost:9222",
       hostBrowserAllowed: true,
     });
+  });
+
+  it("includes container-only shared and deliverable guidance", () => {
+    const sandbox = createSandboxContext({
+      workspaceAccess: "rw",
+      docker: {
+        ...createSandboxContext().docker,
+        binds: ["/host/read:/mnt/shared/脳内メモ:ro"],
+      },
+    });
+
+    const fileLocationsPrompt = buildEmbeddedSandboxInfo(sandbox)?.fileLocationsPrompt;
+    expect(fileLocationsPrompt).toContain('"/mnt/shared/脳内メモ" — read-only');
+    expect(fileLocationsPrompt).toContain('save under "/workspace/outputs"');
+    expect(fileLocationsPrompt).not.toContain("/host/read");
   });
 
   it("includes elevated info when allowed", () => {
@@ -92,6 +110,7 @@ describe("buildEmbeddedSandboxInfo", () => {
       containerWorkspaceDir: "/workspace",
       workspaceAccess: "none",
       agentWorkspaceMount: undefined,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
       hostBrowserAllowed: false,
       elevated: {
         allowed: true,
@@ -138,6 +157,7 @@ describe("buildEmbeddedSandboxInfo", () => {
       containerWorkspaceDir: "/workspace",
       workspaceAccess: "none",
       agentWorkspaceMount: undefined,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
       browserBridgeUrl: "http://localhost:9222",
       hostBrowserAllowed: true,
       elevated: {

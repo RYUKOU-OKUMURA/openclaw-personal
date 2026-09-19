@@ -956,6 +956,10 @@ enum class GatewayMethod(
   PluginsSkillsRead("plugins.skills.read"),
   DiagnosticsHeapProfile("diagnostics.heapProfile"),
   DesktopRelease("desktop.release"),
+  FsPickPath("fs.pickPath"),
+  SandboxExplain("sandbox.explain"),
+  SandboxEntriesAdd("sandbox.entries.add"),
+  SandboxRecreate("sandbox.recreate"),
 }
 
 enum class GatewayEvent(

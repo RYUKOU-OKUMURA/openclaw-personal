@@ -220,7 +220,7 @@ const SETTINGS_NAVIGATION_GROUPS = [
   },
   {
     labelKey: "nav.settingsGroupSecurity",
-    routes: ["security", "secrets", "approvals"],
+    routes: ["security", "secrets", "approvals", "access-map"],
   },
   {
     labelKey: "nav.settingsGroupSystem",
@@ -242,6 +242,7 @@ const NON_ADMIN_SETTINGS_ROUTES: ReadonlySet<NavigationRouteId> = new Set([
   "skill-settings",
   "memory",
   "approvals",
+  "access-map",
   "advanced",
   "debug",
   "logs",
@@ -372,6 +373,7 @@ const NAVIGATION_PRESENTATION: Record<NavigationRouteId, NavigationPresentation>
   notifications: ["bell", "routeTitles.notifications", "subtitles.notifications"],
   security: navigationPresentation("shieldCheck", "security"),
   secrets: ["key", "tabs.secrets", "secretsStore.hint"],
+  "access-map": ["shieldCheck", "tabs.accessMap", "subtitles.accessMap"],
   advanced: ["fileCode", "routeTitles.advanced", "subtitles.advanced"],
   debug: navigationPresentation("bug", "debug"),
   logs: navigationPresentation("scrollText", "logs"),

@@ -7609,33 +7609,40 @@ public struct FsDirEntry: Codable, Sendable {
     public let name: String
     public let path: String
     public let hidden: Bool?
+    public let kind: AnyCodable?
 
     public init(
         name: String,
         path: String,
-        hidden: Bool? = nil)
+        hidden: Bool? = nil,
+        kind: AnyCodable? = nil)
     {
         self.name = name
         self.path = path
         self.hidden = hidden
+        self.kind = kind
     }
 }
 
 public struct FsListDirParams: Codable, Sendable {
     public let path: String?
     public let nodeid: String?
+    public let includefiles: Bool?
 
     public init(
         path: String? = nil,
-        nodeid: String? = nil)
+        nodeid: String? = nil,
+        includefiles: Bool? = nil)
     {
         self.path = path
         self.nodeid = nodeid
+        self.includefiles = includefiles
     }
 
     private enum CodingKeys: String, CodingKey {
         case path
         case nodeid = "nodeId"
+        case includefiles = "includeFiles"
     }
 }
 
@@ -7644,17 +7651,38 @@ public struct FsListDirResult: Codable, Sendable {
     public let parent: String?
     public let home: String
     public let entries: [FsDirEntry]
+    public let nativepathpicker: Bool?
 
     public init(
         path: String,
         parent: String? = nil,
         home: String,
-        entries: [FsDirEntry])
+        entries: [FsDirEntry],
+        nativepathpicker: Bool? = nil)
     {
         self.path = path
         self.parent = parent
         self.home = home
         self.entries = entries
+        self.nativepathpicker = nativepathpicker
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case parent
+        case home
+        case entries
+        case nativepathpicker = "nativePathPicker"
+    }
+}
+
+public struct FsPickPathParams: Codable, Sendable {
+    public let path: String?
+
+    public init(
+        path: String? = nil)
+    {
+        self.path = path
     }
 }
 
@@ -12563,6 +12591,111 @@ public struct ResponseFrame: Codable, Sendable {
     }
 }
 
+public struct SandboxEntriesAddResult: Codable, Sendable {
+    public let entry: [String: AnyCodable]
+    public let recreaterequired: Bool
+
+    public init(
+        entry: [String: AnyCodable],
+        recreaterequired: Bool)
+    {
+        self.entry = entry
+        self.recreaterequired = recreaterequired
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case entry
+        case recreaterequired = "recreateRequired"
+    }
+}
+
+public struct SandboxExplainParams: Codable, Sendable {
+    public let agentid: String?
+
+    public init(
+        agentid: String? = nil)
+    {
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+    }
+}
+
+public struct SandboxExplainResult: Codable, Sendable {
+    public let docsurl: String
+    public let agentid: String
+    public let sessionkey: String
+    public let mainsessionkey: String
+    public let sandbox: [String: AnyCodable]
+    public let elevated: [String: AnyCodable]
+    public let fixit: [String]
+    public let inbox: AnyCodable?
+    public let registry: AnyCodable
+
+    public init(
+        docsurl: String,
+        agentid: String,
+        sessionkey: String,
+        mainsessionkey: String,
+        sandbox: [String: AnyCodable],
+        elevated: [String: AnyCodable],
+        fixit: [String],
+        inbox: AnyCodable? = nil,
+        registry: AnyCodable)
+    {
+        self.docsurl = docsurl
+        self.agentid = agentid
+        self.sessionkey = sessionkey
+        self.mainsessionkey = mainsessionkey
+        self.sandbox = sandbox
+        self.elevated = elevated
+        self.fixit = fixit
+        self.inbox = inbox
+        self.registry = registry
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case docsurl = "docsUrl"
+        case agentid = "agentId"
+        case sessionkey = "sessionKey"
+        case mainsessionkey = "mainSessionKey"
+        case sandbox
+        case elevated
+        case fixit = "fixIt"
+        case inbox
+        case registry
+    }
+}
+
+public struct SandboxRecreateParams: Codable, Sendable {
+    public let agentid: String?
+
+    public init(
+        agentid: String? = nil)
+    {
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+    }
+}
+
+public struct SandboxRecreateResult: Codable, Sendable {
+    public let removed: [String]
+    public let failed: [[String: AnyCodable]]
+
+    public init(
+        removed: [String],
+        failed: [[String: AnyCodable]])
+    {
+        self.removed = removed
+        self.failed = failed
+    }
+}
+
 public struct ScopeUpgradeApproved: Codable, Sendable {
     public let status: String
     public let requestid: String
@@ -13717,6 +13850,44 @@ public struct SessionFileEntry: Codable, Sendable {
         case mimetype = "mimeType"
         case contentencoding = "contentEncoding"
         case previewkind = "previewKind"
+    }
+}
+
+public struct SessionFileRoot: Codable, Sendable {
+    public let id: String
+    public let kind: AnyCodable
+    public let name: String
+    public let hostpath: String
+    public let runtimepath: String?
+    public let writable: Bool
+    public let available: Bool
+
+    public init(
+        id: String,
+        kind: AnyCodable,
+        name: String,
+        hostpath: String,
+        runtimepath: String? = nil,
+        writable: Bool,
+        available: Bool)
+    {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.hostpath = hostpath
+        self.runtimepath = runtimepath
+        self.writable = writable
+        self.available = available
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case name
+        case hostpath = "hostPath"
+        case runtimepath = "runtimePath"
+        case writable
+        case available
     }
 }
 
@@ -16391,42 +16562,50 @@ public struct SessionsFilesGetParams: Codable, Sendable {
     public let sessionkey: String
     public let path: String
     public let agentid: String?
+    public let rootid: String?
 
     public init(
         sessionkey: String,
         path: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        rootid: String? = nil)
     {
         self.sessionkey = sessionkey
         self.path = path
         self.agentid = agentid
+        self.rootid = rootid
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case path
         case agentid = "agentId"
+        case rootid = "rootId"
     }
 }
 
 public struct SessionsFilesGetResult: Codable, Sendable {
     public let sessionkey: String
     public let root: String?
+    public let readonly: Bool?
     public let file: SessionFileEntry
 
     public init(
         sessionkey: String,
         root: String? = nil,
+        readonly: Bool? = nil,
         file: SessionFileEntry)
     {
         self.sessionkey = sessionkey
         self.root = root
+        self.readonly = readonly
         self.file = file
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case root
+        case readonly = "readOnly"
         case file
     }
 }
@@ -16434,17 +16613,20 @@ public struct SessionsFilesGetResult: Codable, Sendable {
 public struct SessionsFilesListParams: Codable, Sendable {
     public let sessionkey: String
     public let agentid: String?
+    public let rootid: String?
     public let path: String?
     public let search: String?
 
     public init(
         sessionkey: String,
         agentid: String? = nil,
+        rootid: String? = nil,
         path: String? = nil,
         search: String? = nil)
     {
         self.sessionkey = sessionkey
         self.agentid = agentid
+        self.rootid = rootid
         self.path = path
         self.search = search
     }
@@ -16452,6 +16634,7 @@ public struct SessionsFilesListParams: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case agentid = "agentId"
+        case rootid = "rootId"
         case path
         case search
     }
@@ -16460,6 +16643,8 @@ public struct SessionsFilesListParams: Codable, Sendable {
 public struct SessionsFilesListResult: Codable, Sendable {
     public let sessionkey: String
     public let root: String?
+    public let rootid: String?
+    public let roots: [SessionFileRoot]?
     public let gitcheckout: Bool?
     public let files: [SessionFileEntry]
     public let browser: SessionFileBrowserResult?
@@ -16467,12 +16652,16 @@ public struct SessionsFilesListResult: Codable, Sendable {
     public init(
         sessionkey: String,
         root: String? = nil,
+        rootid: String? = nil,
+        roots: [SessionFileRoot]? = nil,
         gitcheckout: Bool? = nil,
         files: [SessionFileEntry],
         browser: SessionFileBrowserResult? = nil)
     {
         self.sessionkey = sessionkey
         self.root = root
+        self.rootid = rootid
+        self.roots = roots
         self.gitcheckout = gitcheckout
         self.files = files
         self.browser = browser
@@ -16481,6 +16670,8 @@ public struct SessionsFilesListResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionkey = "sessionKey"
         case root
+        case rootid = "rootId"
+        case roots
         case gitcheckout = "gitCheckout"
         case files
         case browser
@@ -16490,18 +16681,22 @@ public struct SessionsFilesListResult: Codable, Sendable {
 public struct SessionsFilesRevealParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
+    public let rootid: String?
 
     public init(
         key: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        rootid: String? = nil)
     {
         self.key = key
         self.agentid = agentid
+        self.rootid = rootid
     }
 
     private enum CodingKeys: String, CodingKey {
         case key
         case agentid = "agentId"
+        case rootid = "rootId"
     }
 }
 
@@ -28512,6 +28707,220 @@ public enum QuestionWaitAnswerResult: Codable, Sendable {
         case .answered(let value): try value.encode(to: encoder)
         case .cancelled(let value): try value.encode(to: encoder)
         case .expired(let value): try value.encode(to: encoder)
+        }
+    }
+}
+
+public struct SandboxEntriesAddParamsCopy: Codable, Sendable {
+    public let agentid: String?
+    public let mode: String
+    public let source: AnyCodable
+
+    public init(
+        agentid: String? = nil,
+        source: AnyCodable
+    )
+    {
+        self.agentid = agentid
+        self.mode = "copy"
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case mode
+        case source
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "mode", "source"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsCopy: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "copy" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal copy"
+            )
+        }
+        self.mode = "copy"
+        self.source = try container.decode(AnyCodable.self, forKey: .source)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode("copy", forKey: .mode)
+        try container.encode(source, forKey: .source)
+    }
+}
+
+public struct SandboxEntriesAddParamsRo: Codable, Sendable {
+    public let agentid: String?
+    public let source: [String: AnyCodable]
+    public let allowexternalsource: Bool?
+    public let mode: String
+
+    public init(
+        agentid: String? = nil,
+        source: [String: AnyCodable],
+        allowexternalsource: Bool? = nil
+    )
+    {
+        self.agentid = agentid
+        self.source = source
+        self.allowexternalsource = allowexternalsource
+        self.mode = "ro"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case source
+        case allowexternalsource = "allowExternalSource"
+        case mode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "source", "allowExternalSource", "mode"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsRo: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        self.source = try container.decode([String: AnyCodable].self, forKey: .source)
+        self.allowexternalsource = try container.decodeIfPresent(Bool.self, forKey: .allowexternalsource)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "ro" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal ro"
+            )
+        }
+        self.mode = "ro"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(allowexternalsource, forKey: .allowexternalsource)
+        try container.encode("ro", forKey: .mode)
+    }
+}
+
+public struct SandboxEntriesAddParamsRw: Codable, Sendable {
+    public let agentid: String?
+    public let source: [String: AnyCodable]
+    public let allowexternalsource: Bool?
+    public let mode: String
+
+    public init(
+        agentid: String? = nil,
+        source: [String: AnyCodable],
+        allowexternalsource: Bool? = nil
+    )
+    {
+        self.agentid = agentid
+        self.source = source
+        self.allowexternalsource = allowexternalsource
+        self.mode = "rw"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentid = "agentId"
+        case source
+        case allowexternalsource = "allowExternalSource"
+        case mode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let rawContainer = try decoder.container(keyedBy: GatewayAnyCodingKey.self)
+        let unexpectedKeys = rawContainer.allKeys
+            .map(\.stringValue)
+            .filter { !Set(["agentId", "source", "allowExternalSource", "mode"]).contains($0) }
+        if !unexpectedKeys.isEmpty {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: rawContainer.codingPath,
+                    debugDescription: "Unexpected keys for SandboxEntriesAddParamsRw: \(unexpectedKeys.sorted().joined(separator: ", "))"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+        self.source = try container.decode([String: AnyCodable].self, forKey: .source)
+        self.allowexternalsource = try container.decodeIfPresent(Bool.self, forKey: .allowexternalsource)
+        let decodedMode = try container.decode(String.self, forKey: .mode)
+        guard decodedMode == "rw" else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mode,
+                in: container,
+                debugDescription: "Expected mode to equal rw"
+            )
+        }
+        self.mode = "rw"
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+        try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(allowexternalsource, forKey: .allowexternalsource)
+        try container.encode("rw", forKey: .mode)
+    }
+}
+
+public enum SandboxEntriesAddParams: Codable, Sendable {
+    case copy(SandboxEntriesAddParamsCopy)
+    case ro(SandboxEntriesAddParamsRo)
+    case rw(SandboxEntriesAddParamsRw)
+
+    private enum CodingKeys: String, CodingKey {
+        case discriminator = "mode"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let discriminator = try container.decode(String.self, forKey: .discriminator)
+        switch discriminator {
+        case "copy": self = try .copy(SandboxEntriesAddParamsCopy(from: decoder))
+        case "ro": self = try .ro(SandboxEntriesAddParamsRo(from: decoder))
+        case "rw": self = try .rw(SandboxEntriesAddParamsRw(from: decoder))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .discriminator,
+                in: container,
+                debugDescription: "Unknown SandboxEntriesAddParams discriminator value"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .copy(let value): try value.encode(to: encoder)
+        case .ro(let value): try value.encode(to: encoder)
+        case .rw(let value): try value.encode(to: encoder)
         }
     }
 }

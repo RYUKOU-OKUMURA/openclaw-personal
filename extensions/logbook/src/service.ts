@@ -1,29 +1,23 @@
 // Logbook background service: snapshot capture loop, batch analysis, retention.
-import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { canonicalizeBase64 } from "openclaw/plugin-sdk/media-runtime";
 import type {
   OpenClawConfig,
   OpenClawPluginApi,
   PluginLogger,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { runLogbookBatch } from "./analysis-runner.js";
+import { selectBatchFrames } from "./analyze.js";
 import {
-  CARD_LOOKBACK_MS,
-  parseCardsJson,
-  parseObservationSegments,
-  revisionWindow,
-  selectBatchFrames,
-  validateCardCoverage,
-} from "./analyze.js";
-import { parseModelRef, type LogbookConfig } from "./config.js";
+  parseModelRef,
+  resolveLogbookConfig,
+  parseLogbookCaptureSchedule,
+  isLogbookCaptureScheduledPaused,
+  type LogbookConfig,
+} from "./config.js";
+import { buildLogbookContext } from "./context.js";
 import { dayKeyFor } from "./day.js";
-import {
-  buildAskPrompt,
-  buildCardsCorrectionPrompt,
-  buildCardsPrompt,
-  buildObservationInstructions,
-  buildStandupPrompt,
-  OBSERVATION_JSON_SCHEMA,
-} from "./prompts.js";
+import { buildAskPrompt, buildStandupPrompt } from "./prompts.js";
 import { LogbookStore } from "./store.js";
 import type { LogbookBatch, LogbookStatus } from "./types.js";
 
@@ -35,8 +29,8 @@ const MODEL_MISSING_LOG_INTERVAL_MS = 10 * 60 * 1000;
 const CAPTURE_FAILURE_PAUSE_TICKS = 10;
 const CAPTURE_FAILURE_THRESHOLD = 3;
 const JPEG_QUALITY = 0.6;
-// Only Codex currently implements the structured image-extraction contract.
-// Borrowed defaults must not select a provider that will fail every batch.
+// Preserve the established Codex route for borrowed media defaults.
+// Other structured providers require an explicit visionModel.
 const STRUCTURED_MEDIA_PROVIDER = "codex";
 type SnapshotPayload = {
   format?: string;
@@ -74,11 +68,13 @@ export class LogbookService {
   private readonly operations = new Set<Promise<unknown>>();
   private stopping: Promise<void> | undefined;
   private starting: Promise<void> | undefined;
+  private lifetime = new AbortController();
   private captureTimer: NodeJS.Timeout | null = null;
   private analysisTimer: NodeJS.Timeout | null = null;
   private pruneTimer: NodeJS.Timeout | null = null;
   private captureInFlight = false;
   private analysisInFlight = false;
+  private deleting = false;
   private capturePaused = false;
   private captureFailures = 0;
   private captureBackoffTicks = 0;
@@ -112,7 +108,7 @@ export class LogbookService {
         if (this.stopping) {
           return;
         }
-        // Batches interrupted by a gateway restart go back to pending.
+        // Interrupted stages retain durable progress and their retry budget.
         await store.resetRunningBatches();
         if (this.stopping) {
           return;
@@ -160,6 +156,7 @@ export class LogbookService {
     // Admitted work retains its connection through its final writes and error recording.
     this.stopping = Promise.allSettled(this.operations).then(async () => {
       const store = this.store;
+      this.lifetime.abort();
       this.store = null;
       await store?.close();
     });
@@ -176,7 +173,7 @@ export class LogbookService {
   }
 
   private requireStore(): LogbookStore {
-    if (this.stopping || !this.store) {
+    if (this.stopping || this.deleting || !this.store) {
       throw new Error("Logbook service is not running");
     }
     return this.store;
@@ -188,6 +185,94 @@ export class LogbookService {
       this.captureBackoffTicks = 0;
       this.captureFailures = 0;
     }
+  }
+
+  private screenIndex(): number {
+    return resolveLogbookConfig(
+      this.deps.runtime.config.current().plugins?.entries?.logbook?.config,
+    ).screenIndex;
+  }
+
+  private captureSchedule() {
+    return resolveLogbookConfig(
+      this.deps.runtime.config.current().plugins?.entries?.logbook?.config,
+    ).captureSchedule;
+  }
+
+  async setCaptureSchedule(raw: unknown): Promise<LogbookStatus> {
+    const schedule = raw === null ? undefined : parseLogbookCaptureSchedule(raw);
+    this.requireStore();
+    await this.deps.runtime.config.mutateConfigFile({
+      afterWrite: { mode: "auto" },
+      mutate: (draft) => {
+        const config = draft.plugins?.entries?.logbook?.config;
+        // Parent creation reloads the plugin and would lose the operator's manual pause.
+        if (!config) {
+          throw new Error(
+            "Initialize Logbook config and restart the Gateway before setting a capture schedule",
+          );
+        }
+        if (schedule) {
+          config.captureSchedule = schedule;
+        } else {
+          delete config.captureSchedule;
+        }
+      },
+    });
+    const deadline = Date.now() + 10_000;
+    while (true) {
+      const current = this.captureSchedule();
+      if (current?.start === schedule?.start && current?.end === schedule?.end) {
+        return this.status();
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Capture schedule was saved but not applied; check Gateway config reload and refresh Logbook status",
+        );
+      }
+      await delay(50);
+      this.requireStore();
+    }
+  }
+
+  async setScreenIndex(screenIndex: unknown): Promise<LogbookStatus> {
+    if (
+      typeof screenIndex !== "number" ||
+      !Number.isInteger(screenIndex) ||
+      screenIndex < 0 ||
+      screenIndex > 16
+    ) {
+      throw new Error("screenIndex must be an integer from 0 to 16");
+    }
+    this.requireStore();
+    await this.deps.runtime.config.mutateConfigFile({
+      afterWrite: { mode: "auto" },
+      mutate: (draft) => {
+        const config = draft.plugins?.entries?.logbook?.config;
+        // Creating the parent object is a broader plugin reload, which resets pause.
+        if (!config) {
+          throw new Error(
+            "Initialize Logbook config with screenIndex and restart the Gateway once before using live display selection",
+          );
+        }
+        config.screenIndex = screenIndex;
+      },
+    });
+    // The managed Gateway applies config asynchronously after the durable write.
+    // Confirm the active snapshot rather than keeping a second, divergent choice.
+    const deadline = Date.now() + 10_000;
+    while (this.screenIndex() !== screenIndex) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Screen selection was saved but not applied; check Gateway config reload and refresh Logbook status",
+        );
+      }
+      await delay(50);
+      this.requireStore();
+    }
+    this.captureBackoffTicks = 0;
+    this.captureFailures = 0;
+    return this.status();
   }
 
   private async resolveNode(): Promise<
@@ -244,7 +329,9 @@ export class LogbookService {
       this.stopping ||
       !this.config.captureEnabled ||
       this.capturePaused ||
+      isLogbookCaptureScheduledPaused(this.captureSchedule()) ||
       this.captureInFlight ||
+      this.deleting ||
       !store
     ) {
       return;
@@ -264,12 +351,17 @@ export class LogbookService {
           this.lastCaptureError = resolved.reason;
           return;
         }
+        // Node discovery can cross a pause boundary or a sleep/resume transition.
+        if (this.capturePaused || isLogbookCaptureScheduledPaused(this.captureSchedule())) {
+          return;
+        }
         const node = resolved.node;
+        const screenIndex = this.screenIndex();
         const invoked = await this.deps.runtime.nodes.invoke({
           nodeId: node.nodeId,
           command: node.command,
           params: {
-            screenIndex: this.config.screenIndex,
+            screenIndex,
             maxWidth: this.config.maxWidth,
             quality: JPEG_QUALITY,
             format: "jpeg",
@@ -297,7 +389,7 @@ export class LogbookService {
         await store.captureFrame({
           capturedAtMs,
           day,
-          screenIndex: this.config.screenIndex,
+          screenIndex,
           width: raw?.width,
           height: raw?.height,
           buffer,
@@ -375,8 +467,7 @@ export class LogbookService {
     return this.trackOperation(async () => {
       let handedOff = false;
       try {
-        // Explicit user action is the retry path for failed batches; automatic
-        // retries could loop model spend on a persistently failing batch.
+        // Explicit action renews an exhausted retry budget, preserving checkpoints.
         await store.resetErrorBatches();
         if (!(await store.nextPendingBatch())) {
           // Force-close the current window so "analyze now" needs no elapsed time.
@@ -399,7 +490,7 @@ export class LogbookService {
 
   private async analysisTick(): Promise<void> {
     const store = this.store;
-    if (this.stopping || this.analysisInFlight || !store) {
+    if (this.stopping || this.deleting || this.analysisInFlight || !store) {
       return;
     }
     // Without a vision model, leave frames unbatched and batches pending so
@@ -465,130 +556,17 @@ export class LogbookService {
   private async runBatch(store: LogbookStore, batch: LogbookBatch): Promise<void> {
     const vision = this.resolveVisionModel();
     if (!vision.ref) {
-      // Stay pending: the analysis tick pauses until a model is configured.
       return;
     }
-    await store.setBatchStatus(
-      batch.id,
-      "running",
-      undefined,
-      `${vision.ref.provider}/${vision.ref.model}`,
-    );
-    try {
-      const sampled = await store.batchImages(batch.id);
-      const images = sampled.map(({ frame, buffer }) => ({
-        type: "image" as const,
-        buffer,
-        fileName: path.basename(frame.path),
-        mime: "image/jpeg",
-      }));
-      const observationResult =
-        await this.deps.runtime.mediaUnderstanding.extractStructuredWithModel({
-          provider: vision.ref.provider,
-          model: vision.ref.model,
-          profile: vision.ref.profile,
-          preferredProfile: vision.ref.preferredProfile,
-          input: images,
-          instructions: buildObservationInstructions({
-            frameTimes: sampled.map(({ frame }) => frame.capturedAtMs),
-            startMs: batch.startMs,
-            endMs: batch.endMs,
-          }),
-          schemaName: "logbook.observations",
-          jsonSchema: OBSERVATION_JSON_SCHEMA,
-          cfg: this.deps.fullConfig,
-          timeoutMs: 180_000,
-        });
-      const segments = parseObservationSegments({
-        raw: observationResult.text ?? "",
-        day: batch.day,
-        startMs: batch.startMs,
-        endMs: batch.endMs,
-      });
-      if (segments.length === 0) {
-        await store.setBatchStatus(batch.id, "error", "vision model returned no usable segments");
-        return;
-      }
-      await store.replaceObservations(batch.id, batch.day, segments);
-      await this.reviseCards(store, batch);
-      await store.setBatchStatus(batch.id, "done");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await store.setBatchStatus(batch.id, "error", message);
-      this.deps.logger.warn(`logbook: batch ${batch.id} failed: ${message}`);
-    }
-  }
-
-  private async reviseCards(store: LogbookStore, batch: LogbookBatch): Promise<void> {
-    const lookbackStart = batch.startMs - CARD_LOOKBACK_MS;
-    const previousCards = await store.cardsForDay(batch.day, {
-      startMs: lookbackStart,
-      endMs: batch.endMs,
-    });
-    const observations = await store.observationsInRange(
-      batch.day,
-      Math.min(lookbackStart, batch.startMs),
-      batch.endMs,
-    );
-    const window = revisionWindow({
-      batchStartMs: batch.startMs,
-      batchEndMs: batch.endMs,
-      previousCards,
-    });
-    const prompt = buildCardsPrompt({
-      day: batch.day,
-      observations,
-      previousCards,
-      windowStartMs: window.startMs,
-      windowEndMs: window.endMs,
-    });
-    // Coverage is validated alongside parsing: a partial-but-valid output must
-    // trigger the repair round-trip instead of erasing previous cards below.
-    const requiredSpans = [
-      ...previousCards.map((card) => ({ startMs: card.startMs, endMs: card.endMs })),
-      { startMs: batch.startMs, endMs: batch.endMs },
-    ];
-    const evaluate = (raw: string) => {
-      const parsed = parseCardsJson({
-        raw,
-        day: batch.day,
-        windowStartMs: window.startMs,
-        windowEndMs: window.endMs,
-      });
-      if (!parsed.ok) {
-        return parsed;
-      }
-      const coverage = validateCardCoverage({
-        drafts: parsed.drafts,
-        requiredSpans,
-        windowStartMs: window.startMs,
-        windowEndMs: window.endMs,
-      });
-      return coverage.ok ? parsed : { ok: false as const, error: coverage.error };
-    };
-    const first = await this.deps.runtime.llm.complete({
-      messages: [{ role: "user", content: prompt }],
-      purpose: "logbook.cards",
-      maxTokens: 4000,
-    });
-    let parsed = evaluate(first.text);
-    if (!parsed.ok) {
-      const retry = await this.deps.runtime.llm.complete({
-        messages: [
-          { role: "user", content: prompt },
-          { role: "assistant", content: first.text },
-          { role: "user", content: buildCardsCorrectionPrompt(parsed.error) },
-        ],
-        purpose: "logbook.cards.repair",
-        maxTokens: 4000,
-      });
-      parsed = evaluate(retry.text);
-    }
-    if (!parsed.ok) {
-      throw new Error(`card synthesis failed validation: ${parsed.error}`);
-    }
-    await store.replaceCardsInWindow(batch.day, window.startMs, window.endMs, parsed.drafts, {
-      selectKeyframes: true,
+    await runLogbookBatch({
+      batch,
+      store,
+      runtime: this.deps.runtime,
+      fullConfig: this.deps.fullConfig,
+      config: this.config,
+      logger: this.deps.logger,
+      vision: vision.ref,
+      signal: this.lifetime.signal,
     });
   }
 
@@ -597,6 +575,7 @@ export class LogbookService {
     refresh: boolean,
   ): Promise<{ day: string; text: string; updatedMs: number }> {
     const store = this.requireStore();
+    const signal = this.lifetime.signal;
     return this.trackOperation(async () => {
       if (!refresh) {
         const cached = await store.getStandup(day);
@@ -605,21 +584,31 @@ export class LogbookService {
         }
       }
       const previousDay = dayKeyFor(new Date(`${day}T12:00:00`).getTime() - 24 * 60 * 60 * 1000);
+      const cards = await store.cardsForDay(day);
+      const previousDayCards = await store.cardsForDay(previousDay);
+      const source = JSON.stringify([cards, previousDayCards]);
       const result = await this.deps.runtime.llm.complete({
+        model: this.config.textModel,
+        signal,
         messages: [
           {
             role: "user",
             content: buildStandupPrompt({
               day,
-              cards: await store.cardsForDay(day),
-              previousDayCards: await store.cardsForDay(previousDay),
+              cards,
+              previousDayCards,
             }),
           },
         ],
         purpose: "logbook.standup",
         maxTokens: 800,
       });
-      await store.saveStandup(day, result.text.trim());
+      signal.throwIfAborted();
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error("standup model returned no text");
+      }
+      await store.saveStandup(day, text, { previousDay, source });
       const saved = await store.getStandup(day);
       if (!saved) {
         throw new Error("standup save failed");
@@ -630,9 +619,12 @@ export class LogbookService {
 
   async ask(day: string, question: string): Promise<string> {
     const store = this.requireStore();
+    const signal = this.lifetime.signal;
     return this.trackOperation(async () => {
       const observations = await store.observationsInRange(day, 0, Number.MAX_SAFE_INTEGER, 200);
       const result = await this.deps.runtime.llm.complete({
+        model: this.config.textModel,
+        signal,
         messages: [
           {
             role: "user",
@@ -647,7 +639,43 @@ export class LogbookService {
         purpose: "logbook.ask",
         maxTokens: 600,
       });
-      return result.text.trim();
+      signal.throwIfAborted();
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error("question answering model returned no text");
+      }
+      return text;
+    });
+  }
+
+  // ── Introspection ──────────────────────────────────────────────────
+
+  async context(params: { day: string; query?: string }, maxChars = 6000) {
+    const store = this.requireStore();
+    return this.trackOperation(async () =>
+      buildLogbookContext(
+        {
+          ...params,
+          observations: await store.observationsInRange(params.day, 0, Number.MAX_SAFE_INTEGER),
+          batches: await store.batchesForDay(params.day),
+        },
+        maxChars,
+      ),
+    );
+  }
+
+  deleteDay(day: string) {
+    if (this.analysisInFlight || this.captureInFlight || this.operations.size > 0) {
+      throw new Error("Logbook is busy; wait for active capture or analysis before deleting a day");
+    }
+    const store = this.requireStore();
+    this.deleting = true;
+    return this.trackOperation(async () => {
+      try {
+        return await store.deleteDay(day);
+      } finally {
+        this.deleting = false;
+      }
     });
   }
 
@@ -677,9 +705,13 @@ export class LogbookService {
       const today = dayKeyFor(Date.now());
       const latestBatch = await store.latestBatch();
       const vision = this.resolveVisionModel();
+      const captureSchedule = this.captureSchedule();
       return {
         captureEnabled: this.config.captureEnabled,
         capturePaused: this.capturePaused,
+        captureSchedule: captureSchedule ?? null,
+        captureSchedulePaused: isLogbookCaptureScheduledPaused(captureSchedule),
+        screenIndex: this.screenIndex(),
         captureIntervalSeconds: this.config.captureIntervalSeconds,
         analysisIntervalMinutes: this.config.analysisIntervalMinutes,
         retentionDays: this.config.retentionDays,
@@ -723,7 +755,8 @@ export class LogbookService {
 
   private async pruneStore(store: LogbookStore): Promise<void> {
     const cutoff = Date.now() - this.config.retentionDays * 24 * 60 * 60 * 1000;
-    const removed = await store.pruneFrames(cutoff);
+    const unfinishedCutoff = Date.now() - Math.max(this.config.retentionDays, 7) * 86_400_000;
+    const removed = await store.pruneFrames(cutoff, unfinishedCutoff);
     if (removed > 0) {
       this.deps.logger.info(
         `logbook: pruned ${removed} frames older than ${this.config.retentionDays}d`,

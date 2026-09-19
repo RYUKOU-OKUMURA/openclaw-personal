@@ -25,6 +25,11 @@ import {
   type WorkboardUiState,
   WORKBOARD_CHANGED_EVENT,
 } from "../../lib/workboard/index.ts";
+import {
+  syncPlanningContext,
+  refreshPlanning,
+  disposePlanning,
+} from "../../lib/workboard/planning.ts";
 import { createWorkboardSessionResolver } from "../../lib/workboard/session-resolution.ts";
 import { matchesAgentScope } from "./agent-filter.ts";
 import { matchesBoardFilter, WORKBOARD_ALL_BOARDS_FILTER } from "./board-filter.ts";
@@ -193,6 +198,13 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
       } else {
         stop();
       }
+      syncPlanningContext(
+        workboard,
+        connected && context.presented ? client : null,
+        connected && context.presented && boardId !== WORKBOARD_ALL_BOARDS_FILTER ? boardId : null,
+        requestUpdate,
+        host.connection.canWrite,
+      );
       const selectedBoard =
         boardId === WORKBOARD_ALL_BOARDS_FILTER
           ? null
@@ -336,6 +348,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
             onRefresh: () => {
               automations.clear();
               void refreshMetadata();
+              void refreshPlanning(workboard);
               sessionResolver.refresh();
               void refreshWorkboard({
                 host: workboard,
@@ -401,6 +414,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
     const unsubscribeEvents = host.onEvent(WORKBOARD_CHANGED_EVENT, (payload) => {
       if (!disposed && connected && context.presented) {
         handleWorkboardChanged(workboard, payload);
+        void refreshPlanning(workboard);
       }
     });
     const unsubscribeCron = host.onEvent("cron", (payload) => {
@@ -424,6 +438,7 @@ export function createWorkboardPage(workboard: WorkboardCapability): ControlUiVi
       },
       dispose() {
         disposed = true;
+        disposePlanning(workboard);
         metadataGeneration += 1;
         unsubscribeHost();
         unsubscribeState();

@@ -10,6 +10,7 @@ import { annotateInterSessionPromptText } from "../../sessions/input-provenance.
 import { recordSessionParticipantBestEffort } from "../../sessions/session-participant-recording.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
+import { runOutsidePreparedModelRuntimePluginGenerationScope } from "../prepared-model-runtime-generation-scope.js";
 import { waitForAgentRunReply } from "../run-wait.js";
 import {
   callAgentToolGatewayRequest,
@@ -78,20 +79,24 @@ export async function runAgentStep(params: {
   if (params.transcriptMessage !== undefined) {
     // Intentional direct in-process exception: the public agent schema rejects transcriptMessage.
     // Keep announce bookkeeping off the wire without expanding the model-authored RPC surface.
-    const result = await agentStepDeps.agentCommandFromIngress({
-      message,
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      transcriptMessage: params.transcriptMessage,
-      sessionKey: params.sessionKey,
-      deliver: false,
-      sourceReplyDeliveryMode: "message_tool_only",
-      channel,
-      lane,
-      runId: stepIdem,
-      extraSystemPrompt: params.extraSystemPrompt,
-      inputProvenance,
-      allowModelOverride: false,
-    });
+    // This is a new target turn, not a nested resume under the sender's lease.
+    // Re-admit on the target's current generation even after the sender finishes.
+    const result = await runOutsidePreparedModelRuntimePluginGenerationScope(() =>
+      agentStepDeps.agentCommandFromIngress({
+        message,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        transcriptMessage: params.transcriptMessage,
+        sessionKey: params.sessionKey,
+        deliver: false,
+        sourceReplyDeliveryMode: "message_tool_only",
+        channel,
+        lane,
+        runId: stepIdem,
+        extraSystemPrompt: params.extraSystemPrompt,
+        inputProvenance,
+        allowModelOverride: false,
+      }),
+    );
     return extractAgentCommandReply(result);
   }
   const response = await gatewayCall({

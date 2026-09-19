@@ -6,6 +6,7 @@ import {
   migrateSqliteSchemaToStrict,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { openNodeSqliteDatabase } from "openclaw/plugin-sdk/sqlite-worker-runtime";
+import { WORKBOARD_PLANNING_SCHEMA_SQL } from "./sqlite-planning.js";
 const SCHEMA_VERSION = 3;
 const WORKBOARD_SQLITE_BUSY_TIMEOUT_MS = 5000;
 const WORKBOARD_SQLITE_DIR_MODE = 0o700;
@@ -261,6 +262,7 @@ const WORKBOARD_SCHEMA_SQL = `
 
 function ensureWorkboardSchema(db: DatabaseSync): void {
   db.exec(WORKBOARD_SCHEMA_SQL);
+  db.exec(WORKBOARD_PLANNING_SCHEMA_SQL);
   ensureColumn(db, "workboard_boards", "automation_job_id", "automation_job_id TEXT");
   ensureColumn(
     db,

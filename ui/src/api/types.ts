@@ -6,6 +6,7 @@ import type {
   CronRunLogEntry as ProtocolCronRunLogEntry,
   CronRunsParams,
   ErrorShape,
+  SessionFileRoot as ProtocolSessionFileRoot,
   SessionsFilesListResult as ProtocolSessionsFilesListResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type {
@@ -219,6 +220,8 @@ export type { GatewayContextWindowOption, GatewayThinkingLevelOption };
 export type AgentsListResult = ProtocolAgentsListResult;
 
 type SessionWorkspaceArtifactEntry = ProtocolArtifactSummary;
+
+export type SessionWorkspaceRoot = ProtocolSessionFileRoot;
 
 // The workspace view joins file results with separately fetched artifacts.
 export type SessionWorkspaceListResult = ProtocolSessionsFilesListResult & {

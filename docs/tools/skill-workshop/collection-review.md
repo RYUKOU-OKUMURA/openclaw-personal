@@ -28,6 +28,13 @@ operator's existing cron execution and approval policy; enabling review does not
 grant additional shell access. An approval-required policy can refuse unattended
 shell commands; a full-access policy permits them. File discovery does not need a shell.
 
+For the system-owned weekly review, a host-rooted turn whose model runtime policy
+is auto or unspecified selects the embedded OpenClaw runtime for that turn. A
+legacy direct CLI provider such as `claude-cli/<model>` remains on its CLI
+backend; canonical CLI configuration uses `anthropic/<model>` with
+`agentRuntime.id: "claude-cli"`. Ordinary turns and explicit model or runtime
+policies keep their existing selection.
+
 Reviews support the embedded runtime and CLI runtimes that declare instruction
 isolation, disable their native tools, and use only the Gateway's restricted
 OpenClaw tool set, including Claude CLI. These CLI reviews retain the host-selected instruction snapshot;

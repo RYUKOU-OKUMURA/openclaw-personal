@@ -91,6 +91,10 @@ const loadOllamaMemoryEmbeddingProviderAdapter = createLazyRuntimeModule(
   async () =>
     (await import("./src/memory-embedding-adapter.js")).ollamaMemoryEmbeddingProviderAdapter,
 );
+const loadOllamaMediaUnderstandingProvider = createLazyRuntimeModule(
+  async () =>
+    (await import("./src/media-understanding-provider.js")).ollamaMediaUnderstandingProvider,
+);
 
 const lazyOllamaMemoryEmbeddingProviderAdapter: MemoryEmbeddingProviderAdapter = {
   id: OLLAMA_PROVIDER_ID,
@@ -104,8 +108,14 @@ const lazyOllamaMemoryEmbeddingProviderAdapter: MemoryEmbeddingProviderAdapter =
 const ollamaMediaUnderstandingProvider: MediaUnderstandingProvider = {
   id: OLLAMA_PROVIDER_ID,
   capabilities: ["image"],
+  // Generic image hooks are hydrated by the core registry; only the Ollama
+  // structured-extraction hook needs this plugin-owned runtime module.
   describeImage: undefined,
   describeImages: undefined,
+  extractStructured: async (request) => {
+    const provider = await loadOllamaMediaUnderstandingProvider();
+    return await provider.extractStructured(request);
+  },
 };
 
 async function checkWsl2CrashLoopRiskLazily(api: OpenClawPluginApi): Promise<void> {

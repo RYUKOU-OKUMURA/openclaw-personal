@@ -19,7 +19,7 @@ Automatic work journal: captures periodic screen snapshots from a paired node an
 
 ## Surface
 
-This plugin declares no channels, providers, commands, or contracts.
+- Contracts: `tools`
 
 ## Related docs
 

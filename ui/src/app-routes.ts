@@ -24,6 +24,7 @@ import {
 import type { ApplicationContext } from "./app/context.ts";
 import { gatewayPresentationScope } from "./app/gateway-presentation-scope.ts";
 import { page as aboutPage } from "./pages/about/route.ts";
+import { page as accessMapPage } from "./pages/access-map/route.ts";
 import { page as activityPage } from "./pages/activity/route.ts";
 import { page as agentsHomePage } from "./pages/agents-home/route.ts";
 import { page as agentsPage } from "./pages/agents/route.ts";
@@ -116,6 +117,7 @@ const APP_ROUTE_TREE = [
   sessionsPage,
   systemsPage,
   secretsPage,
+  accessMapPage,
   usagePage,
   debugPage,
   logsPage,

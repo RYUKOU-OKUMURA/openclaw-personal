@@ -5,6 +5,7 @@ import type {
   PersistedWorkboardAttachment,
   PersistedWorkboardBoard,
   WorkboardCardStore,
+  WorkboardPlanningStore,
   WorkboardKeyedStore,
   WorkboardSubscriptionStore,
 } from "./persistence-types.js";
@@ -16,6 +17,7 @@ import { unwrapWorkboardSqliteResult } from "./sqlite-store-errors.js";
 import { resolveWorkboardSqlitePath } from "./sqlite-store-paths.js";
 
 type WorkboardSqliteStores = {
+  planning: WorkboardPlanningStore;
   cards: WorkboardCardStore;
   boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
   subscriptions: WorkboardSubscriptionStore;
@@ -126,6 +128,20 @@ export function createWorkboardSqliteStores(options: {
   return {
     ready,
     dataVersion: () => run(undefined, (connection) => execute("dataVersion", { connection })),
+    planning: {
+      get: (...args) =>
+        run(args, (connection, captured) =>
+          execute("planning.get", { connection, args: captured }),
+        ),
+      update: (...args) =>
+        run(args, (connection, captured) =>
+          execute("planning.update", { connection, args: captured }),
+        ),
+      move: (...args) =>
+        run(args, (connection, captured) =>
+          execute("planning.move", { connection, args: captured }),
+        ),
+    },
     cards: {
       register: (...args) =>
         run(args, (connection, captured) =>

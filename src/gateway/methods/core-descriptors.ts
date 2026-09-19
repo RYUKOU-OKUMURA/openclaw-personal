@@ -678,4 +678,8 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["plugins.skills.read", "plugins", "operator.read", "2026.9"],
   ["diagnostics.heapProfile", "diagnostics", "operator.admin", "2026.9"],
   ["desktop.release", "environments", "operator.admin", "2026.9", { startup: true }],
+  ["fs.pickPath", "fs", "operator.admin", "2026.9"],
+  ["sandbox.explain", "sandbox", "operator.read", "2026.8"],
+  ["sandbox.entries.add", "sandbox", "operator.admin", "2026.8", CONTROL_PLANE_WRITE],
+  ["sandbox.recreate", "sandbox", "operator.admin", "2026.8", CONTROL_PLANE_WRITE],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, vi } from "vitest";
-import type { GatewayRequestHandlers, RespondFn } from "./types.js";
+import type { GatewayClient, GatewayRequestHandlers, RespondFn } from "./types.js";
 
 type SessionFilesMethod =
   | "sessions.files.list"
@@ -79,12 +79,13 @@ export function createSessionFilesHandlerInvoker(handlers: GatewayRequestHandler
     method: SessionFilesMethod,
     params: Record<string, unknown>,
     context: Record<string, unknown> = {},
+    client: GatewayClient | null = null,
   ) => {
     const responder = createResponder();
     await handlers[method]?.({
       req: { type: "req", id: method, method, params: {} },
       params,
-      client: null,
+      client,
       isWebchatConnect: () => false,
       respond: responder.respond,
       context: {

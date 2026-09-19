@@ -1,4 +1,5 @@
 // Gateway methods expose session files and workspace browsing.
+import path from "node:path";
 import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -14,6 +15,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
+import { ADMIN_SCOPE } from "../operator-scopes.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { sqliteMessageEventWithSeq } from "../session-transcript-entry-message.js";
 import {
@@ -33,12 +35,25 @@ import {
   resolveOpenPathCommand,
   sanitizePathForLog,
 } from "./open-path.js";
+import {
+  listSessionBrowserRoot,
+  rejectUnknownBrowserRoot,
+  resolveSessionBrowserRoots,
+  sessionBrowserRootPath,
+  type SessionBrowserRoot,
+} from "./session-file-roots.js";
 import { getRepositoryArtifact, listRepositoryArtifacts } from "./session-repository-artifacts.js";
 import { resolveRepositoryWorkspaceAccess } from "./session-repository-workspace-access.js";
-import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
+import type {
+  GatewayClient,
+  GatewayRequestContext,
+  GatewayRequestHandlers,
+  RespondFn,
+} from "./types.js";
 import { assertValidParams } from "./validation.js";
 import {
   getSessionWorkspaceFile,
+  toSessionFileEntry,
   listSessionWorkspaceFiles,
   setSessionWorkspaceFile,
   resolveFileRoot,
@@ -278,14 +293,8 @@ function loadSessionFileRoot(params: { sessionKey: string; agentId?: string }) {
 }
 
 /**
- * Canonical workspace root of a session that lives on this Gateway's own disk.
- * Workspace identity surfaces must name the same directory the file routes
- * open, so they read it from here instead of re-deriving the precedence.
- *
- * An exec-node session's directory only exists on the remote host, while the
- * precedence below falls back to the local agent workspace — returning that
- * would describe the wrong machine. `sessions.files.reveal` refuses the same
- * case; callers here get "no local root" and their own absent-workspace path.
+ * Uses the file routes' canonical local root for workspace identity surfaces.
+ * Exec-node directories live remotely; never label the local fallback as theirs.
  */
 export function resolveLocalSessionWorkspaceRoot(params: {
   sessionKey: string;
@@ -300,12 +309,15 @@ async function loadSessionFiles(params: {
   agentId?: string;
   context: GatewayRequestContext;
 }): Promise<
-  LoadedSessionFiles & { repository?: ReturnType<typeof resolveRepositoryWorkspaceAccess> }
+  LoadedSessionFiles &
+    ReturnType<typeof loadSessionFileRoot> & {
+      repository?: ReturnType<typeof resolveRepositoryWorkspaceAccess>;
+    }
 > {
   const loaded = loadSessionFileRoot(params);
   const { storePath, entry, canonicalKey, agentId } = loaded;
   if (!entry?.sessionId || !storePath || !agentId) {
-    return { files: [] };
+    return { ...loaded, files: [] };
   }
   const repository = resolveRepositoryWorkspaceAccess(loaded, params.context);
   const scope = {
@@ -323,10 +335,8 @@ async function loadSessionFiles(params: {
     `${agentId}\0${entry.sessionId}\0${target.storePath ?? ""}`,
   );
   return {
+    ...loaded,
     repository,
-    root: loaded.root,
-    fileRoot: loaded.fileRoot,
-    diffCwd: loaded.diffCwd,
     files: [...files.values()].toSorted((a, b) => {
       if (a.kind !== b.kind) {
         return a.kind === "modified" ? -1 : 1;
@@ -384,9 +394,39 @@ function requireSessionFilesAgentId(params: {
   return requestedAgent.agentId;
 }
 
+async function loadBrowserRoots(
+  loaded: ReturnType<typeof loadSessionFileRoot>,
+  client: GatewayClient | null,
+  context: GatewayRequestContext,
+): Promise<SessionBrowserRoot[] | undefined> {
+  if (
+    !loaded.root ||
+    !loaded.agentId ||
+    loaded.entry?.execNode ||
+    !client?.connect.scopes?.includes(ADMIN_SCOPE)
+  ) {
+    return undefined;
+  }
+  const placement = loaded.entry?.sessionId
+    ? context.workerSessionPlacementService
+        ?.getMany([loaded.entry.sessionId])
+        .get(loaded.entry.sessionId)
+    : undefined;
+  if (isCloudWorkerPlacementState(placement?.state)) {
+    return undefined;
+  }
+  const roots = await resolveSessionBrowserRoots({
+    cfg: loaded.cfg,
+    agentId: loaded.agentId,
+    sessionKey: loaded.canonicalKey,
+    workspaceRoot: loaded.root,
+  });
+  return roots.length ? roots : undefined;
+}
+
 /** Gateway handlers for session files and workspace browsing. */
 export const sessionsFilesHandlers: GatewayRequestHandlers = {
-  "sessions.files.list": async ({ params, respond, context }) => {
+  "sessions.files.list": async ({ params, respond, context, client }) => {
     if (
       !assertValidParams(params, validateSessionsFilesListParams, "sessions.files.list", respond)
     ) {
@@ -402,20 +442,42 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       return;
     }
     const loaded = await loadSessionFiles({ ...params, agentId, context });
-    const request = { files: loaded.files, path: params.path, search: params.search };
-    const result =
-      loaded.repository?.kind === "stored"
-        ? await listRepositoryArtifacts(loaded.repository, request)
-        : loaded.repository
-          ? await loaded.repository.inspect("list", request)
-          : await listSessionWorkspaceFiles({ ...loaded, ...request });
+    if (loaded.repository) {
+      const request = { files: loaded.files, path: params.path, search: params.search };
+      const result =
+        loaded.repository.kind === "stored"
+          ? await listRepositoryArtifacts(loaded.repository, request)
+          : await loaded.repository.inspect("list", request);
+      respond(true, {
+        sessionKey: params.sessionKey,
+        ...result,
+        root: undefined,
+      });
+      return;
+    }
+    const roots = await loadBrowserRoots(loaded, client, context);
+    if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+      return;
+    }
+    const selected = roots?.find(
+      (root) => root.info.id === params.rootId && root.info.kind !== "workspace",
+    );
+    const result = selected
+      ? {
+          root: selected.displayRoot,
+          files: [],
+          browser: await listSessionBrowserRoot(selected, params),
+        }
+      : await listSessionWorkspaceFiles({ ...loaded, path: params.path, search: params.search });
     respond(true, {
       sessionKey: params.sessionKey,
       ...result,
-      ...(loaded.repository ? { root: undefined } : {}),
+      ...(roots
+        ? { rootId: selected?.info.id ?? "workspace", roots: roots.map((root) => root.info) }
+        : {}),
     });
   },
-  "sessions.files.get": async ({ params, respond, context }) => {
+  "sessions.files.get": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsFilesGetParams, "sessions.files.get", respond)) {
       return;
     }
@@ -429,13 +491,63 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       return;
     }
     const loaded = await loadSessionFiles({ ...params, agentId, context });
-    const request = { files: loaded.files, path: params.path };
-    const result =
-      loaded.repository?.kind === "stored"
-        ? await getRepositoryArtifact(loaded.repository, params.path)
-        : loaded.repository
-          ? await loaded.repository.inspect("get", request)
-          : await getSessionWorkspaceFile({ ...loaded, ...request });
+    if (loaded.repository) {
+      const request = { files: loaded.files, path: params.path };
+      const result =
+        loaded.repository.kind === "stored"
+          ? await getRepositoryArtifact(loaded.repository, params.path)
+          : await loaded.repository.inspect("get", request);
+      if (!result.file || result.file.missing) {
+        respondSessionFileNotFound(respond, params.path);
+        return;
+      }
+      if (typeof result.file.content !== "string" && result.file.previewKind !== "unsupported") {
+        respondSessionFileTooLarge(respond, result.file, params.path);
+        return;
+      }
+      respond(true, {
+        sessionKey: params.sessionKey,
+        ...result,
+        root: undefined,
+      });
+      return;
+    }
+    const roots =
+      params.rootId && params.rootId !== "workspace"
+        ? await loadBrowserRoots(loaded, client, context)
+        : undefined;
+    if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+      return;
+    }
+    const selected = roots?.find((root) => root.info.id === params.rootId);
+    const selectedPath = selected?.info.available
+      ? sessionBrowserRootPath(selected, params.path)
+      : undefined;
+    const result = selected
+      ? {
+          root: selected.displayRoot,
+          readOnly: true,
+          file: selectedPath
+            ? await toSessionFileEntry(
+                { path: selectedPath, kind: "read" },
+                selected.fsRoot,
+                selected.fsRoot,
+                { includeContent: true, workspaceRoot: selected.workspaceRoot },
+              )
+            : undefined,
+        }
+      : await getSessionWorkspaceFile({ ...loaded, path: params.path });
+    if (selected && result.file) {
+      const relativePath = path
+        .relative(
+          selected.displayRoot,
+          path.join(selected.fsRoot, result.file.workspacePath ?? selectedPath!),
+        )
+        .split(path.sep)
+        .join("/");
+      result.file.path = relativePath;
+      result.file.workspacePath = relativePath;
+    }
     if (!result.file || result.file.missing) {
       respondSessionFileNotFound(respond, params.path);
       return;
@@ -447,7 +559,6 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     respond(true, {
       sessionKey: params.sessionKey,
       ...result,
-      ...(loaded.repository ? { root: undefined } : {}),
     });
   },
   "sessions.files.set": async ({ params, respond, context, sessionMutationAuthorization }) => {
@@ -522,7 +633,7 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       file: update.file,
     });
   },
-  "sessions.files.reveal": async ({ params, respond, context }) => {
+  "sessions.files.reveal": async ({ params, respond, context, client }) => {
     if (
       !assertValidParams(
         params,
@@ -543,6 +654,7 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       return;
     }
     const loaded = loadSessionFileRoot({ sessionKey: params.key, agentId });
+    let workspaceRoot = loaded.root;
     if (loaded.entry?.repositoryWorkspaceId) {
       respond(true, {
         ok: false,
@@ -551,7 +663,6 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
       });
       return;
     }
-    const workspaceRoot = loaded.root;
     if (!workspaceRoot) {
       respond(true, {
         ok: false,
@@ -579,6 +690,27 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
         error: `Cannot reveal this workspace because the session runs remotely (${placement.state}).`,
       });
       return;
+    }
+    if (params.rootId && params.rootId !== "workspace") {
+      const roots = await loadBrowserRoots(loaded, client, context);
+      if (rejectUnknownBrowserRoot(params.rootId, roots, respond)) {
+        return;
+      }
+      const selected = roots?.find((root) => root.info.id === params.rootId);
+      // Extra locations are preview-only. Only Outputs has a native folder action;
+      // in particular, a shared file must never be launched through the host OS.
+      if (selected?.info.kind !== "outputs") {
+        respond(true, { ok: false, error: "Shared locations support preview only." });
+        return;
+      }
+      if (!selected?.info.available) {
+        respond(true, {
+          ok: false,
+          error: "This file location does not exist yet or is unavailable.",
+        });
+        return;
+      }
+      workspaceRoot = selected.info.hostPath;
     }
     const command = resolveOpenPathCommand(workspaceRoot);
     try {

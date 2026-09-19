@@ -16,6 +16,7 @@ import {
   type WorkboardCard,
   type WorkboardStatus,
 } from "../../lib/workboard/index.ts";
+import { getPlanningState } from "../../lib/workboard/planning.ts";
 import {
   agentDisplayName,
   buildAgentFilterOptions,
@@ -45,6 +46,7 @@ import {
   matchesFilter,
   type WorkboardProps,
 } from "./view-helpers.ts";
+import { renderPlanningBoard, renderPlanningToolbar } from "./view-planning.ts";
 import { workboardPopoverRef } from "./view-popover.ts";
 import { boardScrollEdgesRef } from "./view-scroll-fade.ts";
 import {
@@ -59,6 +61,8 @@ const workboardFilterPopoverId = "workboard-filter-popover";
 
 export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void }) {
   const state = getWorkboardState(props.host);
+  const planning = getPlanningState(props.host);
+  const planningVisible = Boolean(planning.boardId) && planning.mode === "planning";
   const agentOptions = buildAgentFilterOptions(props.agentsList, state.cards);
   state.agentFilter = normalizeActiveAgentFilter(agentOptions, state.agentFilter);
   reconcileSelectionScope(props);
@@ -621,52 +625,55 @@ export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void 
               : nothing
           }
         </div>
+        ${renderPlanningToolbar(props)}
         ${
-          (filtered.length === 0 && activeFiltering) || visibleStatuses.length === 0
-            ? html`
-                <div class="workboard-empty-state" role="status">
-                  <strong>${t("workboard.emptyFilteredTitle")}</strong>
-                  <span>${t("workboard.emptyFilteredHint")}</span>
-                  ${
-                    hasActiveFilters
-                      ? html`<button class="btn" type="button" @click=${clearFilters}>
-                          ${t("workboard.clearFilters")}
-                        </button>`
-                      : nothing
-                  }
-                </div>
-              `
-            : html`
-                <div
-                  class="workboard-board-viewport ${
-                    state.viewMode === "list" ? "workboard-board-viewport--list" : ""
-                  }"
-                >
-                  <div
-                    ${ref(boardScrollEdgesRef())}
-                    class="workboard-board workboard-board--page workboard-board--${state.layout} ${
-                      state.viewMode === "list" ? "workboard-board--list" : ""
-                    } ${visibleStatuses.length === 1 ? "workboard-board--single-column" : ""}"
-                  >
+          planningVisible
+            ? renderPlanningBoard(props, filtered)
+            : (filtered.length === 0 && activeFiltering) || visibleStatuses.length === 0
+              ? html`
+                  <div class="workboard-empty-state" role="status">
+                    <strong>${t("workboard.emptyFilteredTitle")}</strong>
+                    <span>${t("workboard.emptyFilteredHint")}</span>
                     ${
-                      state.viewMode === "list"
-                        ? html`<div class="workboard-list-header" aria-hidden="true">
-                            <span>${t("workboard.fieldPriority")}</span>
-                            <span>${t("workboard.fieldTitle")}</span>
-                            <span>${t("workboard.fieldSession")}</span>
-                            <span>${t("workboard.detailUpdated")}</span>
-                            <span></span>
-                          </div>`
+                      hasActiveFilters
+                        ? html`<button class="btn" type="button" @click=${clearFilters}>
+                            ${t("workboard.clearFilters")}
+                          </button>`
                         : nothing
                     }
-                    ${visibleStatuses.map((status) =>
-                      renderColumn(props, status, byStatus.get(status) ?? [], {
-                        surface: state.viewMode === "list" ? "list" : "page",
-                      }),
-                    )}
                   </div>
-                </div>
-              `
+                `
+              : html`
+                  <div
+                    class="workboard-board-viewport ${
+                      state.viewMode === "list" ? "workboard-board-viewport--list" : ""
+                    }"
+                  >
+                    <div
+                      ${ref(boardScrollEdgesRef())}
+                      class="workboard-board workboard-board--page workboard-board--${state.layout} ${
+                        state.viewMode === "list" ? "workboard-board--list" : ""
+                      } ${visibleStatuses.length === 1 ? "workboard-board--single-column" : ""}"
+                    >
+                      ${
+                        state.viewMode === "list"
+                          ? html`<div class="workboard-list-header" aria-hidden="true">
+                              <span>${t("workboard.fieldPriority")}</span>
+                              <span>${t("workboard.fieldTitle")}</span>
+                              <span>${t("workboard.fieldSession")}</span>
+                              <span>${t("workboard.detailUpdated")}</span>
+                              <span></span>
+                            </div>`
+                          : nothing
+                      }
+                      ${visibleStatuses.map((status) =>
+                        renderColumn(props, status, byStatus.get(status) ?? [], {
+                          surface: state.viewMode === "list" ? "list" : "page",
+                        }),
+                      )}
+                    </div>
+                  </div>
+                `
         }
       </div>
       ${renderWorkboardToast({

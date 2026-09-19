@@ -75,7 +75,7 @@ export async function execDockerRaw(
 const log = createSubsystemLogger("docker");
 
 const HOT_CONTAINER_WINDOW_MS = 5 * 60 * 1000;
-const sandboxContainerLifecycleQueue = new KeyedAsyncQueue();
+export const sandboxContainerLifecycleQueue = new KeyedAsyncQueue();
 
 type ExecDockerOptions = ExecDockerRawOptions;
 
@@ -514,6 +514,37 @@ async function readContainerConfigHash(
   containerName: string,
 ): Promise<string | null> {
   return await readContainerLabel(engine, containerName, "openclaw.configHash");
+}
+
+/** Uses the same normalized hash inputs for runtime creation and read-only diagnostics. */
+export async function computeExpectedSandboxConfigHash(params: {
+  cfg: Pick<SandboxConfig, "docker" | "workspaceAccess">;
+  workspaceDir: string;
+  agentWorkspaceDir: string;
+  skillsWorkspaceDir?: string;
+  readOnlyResourceMounts?: Array<{ hostPath: string; containerPath: string }>;
+}): Promise<string> {
+  const mountPlan = await prepareSandboxMountPlan({
+    engine: DOCKER_SANDBOX_ENGINE,
+    workspaceDir: params.workspaceDir,
+    agentWorkspaceDir: params.agentWorkspaceDir,
+    skillsWorkspaceDir: params.skillsWorkspaceDir,
+    workdir: params.cfg.docker.workdir,
+    workspaceAccess: params.cfg.workspaceAccess,
+    binds: params.cfg.docker.binds,
+    tmpfs: params.cfg.docker.tmpfs,
+    readOnlyResourceMounts: params.readOnlyResourceMounts,
+  });
+  return computeSandboxConfigHash({
+    docker: params.cfg.docker,
+    dockerEnvPolicyEpoch: resolveDockerEnvPolicyEpoch(params.cfg.docker.env),
+    workspaceAccess: params.cfg.workspaceAccess,
+    workspaceDir: params.workspaceDir,
+    agentWorkspaceDir: params.agentWorkspaceDir,
+    mountFormatVersion: SANDBOX_MOUNT_FORMAT_VERSION,
+    createArgsEpoch: SANDBOX_DOCKER_CREATE_ARGS_EPOCH,
+    managedMounts: mountPlan.binds,
+  });
 }
 
 type EnsureSandboxContainerParams = {

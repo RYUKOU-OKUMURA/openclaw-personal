@@ -156,7 +156,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
           }
         : undefined;
     if (!sandbox || readDirectory) {
-      const ls = createLsTool(options.codingRoot, {
+      const ls = createLsTool(sandbox?.containerWorkdir ?? options.codingRoot, {
         operations: listingOperations,
         modelBudget: resolveToolResultBudget(options.modelContextWindowTokens),
       });

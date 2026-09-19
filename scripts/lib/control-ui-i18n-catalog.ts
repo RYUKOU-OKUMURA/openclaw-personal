@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildBaseHints } from "../../src/config/schema.hints.js";
 import { configHintTranslationKey } from "../../ui/src/i18n/lib/config-hint-translation.ts";
+import { registerAccessMapEnglish } from "../../ui/src/i18n/locales/en-access-map.ts";
 import { registerActivityEnglish } from "../../ui/src/i18n/locales/en-activity.ts";
 import { registerAgentsHomeEnglish } from "../../ui/src/i18n/locales/en-agents-home.ts";
 import { registerAppsEnglish } from "../../ui/src/i18n/locales/en-apps.ts";
@@ -74,6 +75,7 @@ const sourceFiles = [
   "en-model-accounts.ts",
   "en-model-controls.ts",
   "en-model-setup.ts",
+  "en-access-map.ts",
   "en-session-placement.ts",
   "en-new-session-setup.ts",
   "en-plugin-consent.ts",
@@ -141,6 +143,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     registerModelAccountsEnglish.catalog,
     registerModelControlsEnglish.catalog,
     registerModelSetupEnglish.catalog,
+    registerAccessMapEnglish.catalog,
     registerSessionPlacementEnglish.catalog,
     registerNewSessionSetupEnglish.catalog,
     registerPluginConsentEnglish.catalog,

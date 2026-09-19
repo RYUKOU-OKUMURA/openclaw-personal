@@ -24,6 +24,7 @@ import type {
   WorkboardOwnerClaimResult,
   WorkboardSubscriptionStore,
 } from "./persistence-types.js";
+import { WorkboardSqlitePlanningStore, deleteBoardPlanning } from "./sqlite-planning.js";
 import {
   asBlobContent,
   blobToBase64,
@@ -47,6 +48,7 @@ type SyncStore<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => Promise<infer R> ? (...args: A) => R : never;
 };
 export type WorkboardSqliteKernel = {
+  planning: WorkboardSqlitePlanningStore;
   cards: SyncStore<WorkboardCardStore>;
   boards: SyncStore<WorkboardKeyedStore<PersistedWorkboardBoard>>;
   subscriptions: SyncStore<WorkboardSubscriptionStore>;
@@ -418,7 +420,10 @@ class WorkboardSqliteBoardStore implements SyncStore<WorkboardKeyedStore<Persist
   }
 
   delete(key: string): boolean {
-    const result = this.db.prepare("DELETE FROM workboard_boards WHERE id = ?").run(key);
+    const result = runSqliteImmediateTransactionSync(this.db, () => {
+      deleteBoardPlanning(this.db, key);
+      return this.db.prepare("DELETE FROM workboard_boards WHERE id = ?").run(key);
+    });
     return result.changes > 0;
   }
 
@@ -627,6 +632,7 @@ export function createWorkboardSqliteKernel(
 ): WorkboardSqliteKernel {
   const { db, close } = createWorkboardDatabase(dbPath, retainClose);
   return {
+    planning: new WorkboardSqlitePlanningStore(db),
     cards: new WorkboardSqliteCardStore(db),
     boards: new WorkboardSqliteBoardStore(db),
     subscriptions: new WorkboardSqliteSubscriptionStore(db),

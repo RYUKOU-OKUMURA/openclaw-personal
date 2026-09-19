@@ -4,6 +4,7 @@ import type {
   WorkboardBoardMetadata,
   WorkboardCard,
   WorkboardNotificationSubscription,
+  WorkboardPlanningBoard,
 } from "@openclaw/workboard-contract";
 
 export type PersistedWorkboardCard = {
@@ -83,4 +84,10 @@ export type WorkboardCardStore = Omit<WorkboardKeyedStore, "entries"> & {
   listBoardAggregates(): Promise<WorkboardBoardCardAggregate[]>;
   listStatsAggregates(boardId?: string): Promise<WorkboardCardStatsAggregate[]>;
   hasCards(boardId: string): Promise<boolean>;
+};
+
+export type WorkboardPlanningStore = {
+  get(boardId: unknown): Promise<WorkboardPlanningBoard>;
+  update(input: Record<string, unknown>): Promise<WorkboardPlanningBoard>;
+  move(input: Record<string, unknown>): Promise<WorkboardPlanningBoard>;
 };

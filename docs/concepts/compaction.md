@@ -41,6 +41,12 @@ Auto-compaction is on by default. It runs when the session nears the context lim
 If the provider rejects a request after tool calls have completed, the built-in runtime can compact and continue from their recorded results. It keeps the current model and account, preserves the original request, and does not replay completed actions. This recovery requires settled tool results; pending tools, approvals, cancellation, and a tool that intentionally ended the turn retain their normal handling.
 
 Overflow recovery trims tool results within the current model-context window. Older messages and reset boundaries remain in retained history without being copied into new transcript entries.
+For OpenAI-compatible endpoints with local output-budget clamping, an estimated
+input that leaves no room for output triggers overflow recovery before HTTP
+dispatch. For a fully recorded and settled tool batch that is unsafe to replay,
+the built-in runtime can compact and continue from those results without
+resubmitting the original request. Pending or asynchronous tool work does not
+qualify for this recovery.
 
 Stopping a run also stops its overflow or timeout recovery. The built-in OpenClaw runtime does not start further recovery hooks, maintenance, transcript truncation, or retries after cancellation. Cancellation is not rollback: a compaction that already completed remains in the transcript and is still counted, without sending a late reply. The context estimate follows the latest model or compaction observation; billing totals remain separate.
 

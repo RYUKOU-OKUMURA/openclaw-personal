@@ -19,6 +19,8 @@ type LogbookControllerState = LogbookUiState & {
   // Every load advances result ownership; foreground loading state has its own
   // owner so a superseded request cannot clear a newer spinner.
   loadGeneration: number;
+  // Successful mutations retire older status reads without discarding the day/timeline load.
+  statusGeneration: number;
   loadingGeneration: number | null;
   backgroundRefresh: Promise<void> | null;
   backgroundRefreshQueued: boolean;
@@ -61,9 +63,11 @@ export function getLogbookState(host: object): LogbookControllerState {
       askAnswer: null,
       askLoading: false,
       actionPending: false,
+      scheduleDraft: null,
       client: null,
       clientGeneration: 0,
       loadGeneration: 0,
+      statusGeneration: 0,
       loadingGeneration: null,
       backgroundRefresh: null,
       backgroundRefreshQueued: false,
@@ -107,6 +111,7 @@ function bindClient(state: LogbookControllerState, client: GatewayBrowserClient 
   state.backgroundRefresh = null;
   state.backgroundRefreshQueued = false;
   state.actionPending = false;
+  state.scheduleDraft = null;
   state.standupLoading = false;
   state.askLoading = false;
   state.frameLoads = new Set();
@@ -138,6 +143,7 @@ export async function loadLogbook(
     state.dayPinned = false;
   }
   const generation = ++state.loadGeneration;
+  const statusGeneration = state.statusGeneration;
   const requestedDay = state.day;
   if (!opts?.silent) {
     state.loadingGeneration = generation;
@@ -158,7 +164,9 @@ export async function loadLogbook(
     ) {
       return;
     }
-    state.status = status;
+    if (statusGeneration === state.statusGeneration) {
+      state.status = status;
+    }
     state.days = days.days;
     // Unpinned views follow the gateway's day: the browser clock can sit in
     // another timezone than the capture host, and midnight rollover should
@@ -341,7 +349,40 @@ export async function setLogbookCapturePaused(
   try {
     const status = await client.request<LogbookStatusPayload>("logbook.capture.set", { paused });
     if (ownsClient(state, client, clientGeneration)) {
+      state.statusGeneration += 1;
       state.status = status;
+    }
+  } catch (err) {
+    if (ownsClient(state, client, clientGeneration)) {
+      state.error = formatUiError(err);
+    }
+  } finally {
+    if (ownsClient(state, client, clientGeneration)) {
+      state.actionPending = false;
+      notify(state);
+    }
+  }
+}
+
+export async function saveLogbookSchedule(
+  state: LogbookControllerState,
+  client: GatewayBrowserClient | null,
+): Promise<void> {
+  const clientGeneration = currentClientGeneration(state, client);
+  const draft = state.scheduleDraft;
+  if (!client || clientGeneration === null || state.actionPending || !draft) {
+    return;
+  }
+  state.actionPending = true;
+  state.error = null;
+  notify(state);
+  try {
+    const schedule = draft.enabled ? { start: draft.start, end: draft.end } : null;
+    const status = await client.request<LogbookStatusPayload>("logbook.schedule.set", { schedule });
+    if (ownsClient(state, client, clientGeneration)) {
+      state.statusGeneration += 1;
+      state.status = status;
+      state.scheduleDraft = null;
     }
   } catch (err) {
     if (ownsClient(state, client, clientGeneration)) {

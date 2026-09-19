@@ -46,9 +46,13 @@ function isCardActionTarget(event: Event): boolean {
     : false;
 }
 
-type WorkboardCardSurface = "page" | "widget" | "list";
+type WorkboardCardSurface = "page" | "widget" | "list" | "planning";
 
-function renderCard(props: WorkboardProps, card: WorkboardCard, surface: WorkboardCardSurface) {
+export function renderCard(
+  props: WorkboardProps,
+  card: WorkboardCard,
+  surface: WorkboardCardSurface,
+) {
   const {
     state,
     task,
@@ -333,6 +337,7 @@ function renderCard(props: WorkboardProps, card: WorkboardCard, surface: Workboa
                 <div class="workboard-card__header-actions">${actionsMenu}</div>
               </header>
               ${renderCardSession(props, card, lifecycle, task, sessionStatus)}
+              ${surface === "planning" ? html`<span class="workboard-planning-status">${formatStatusLabel(card.status)}</span>` : nothing}
               ${renderCardMeta(card, archived)} ${renderCardAlert(alerts, alertDescriptionId)}
               ${renderCardCounts(card)}
               <footer class="workboard-card__footer">${priority} ${updatedTime}</footer>

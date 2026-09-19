@@ -23,6 +23,11 @@ export function createKernelStores(dbPath: string): ReturnType<typeof createWork
     ready: Promise.resolve(kernel.dataVersion()),
     dataVersion: async () => kernel.dataVersion(),
     close: async () => kernel.close(),
+    planning: {
+      get: async (...args) => kernel.planning.get(...args),
+      update: async (...args) => kernel.planning.update(...args),
+      move: async (...args) => kernel.planning.move(...args),
+    },
     cards: {
       ...asyncKeyedStore(kernel.cards),
       entries: async (boardId) => kernel.cards.entries(boardId),

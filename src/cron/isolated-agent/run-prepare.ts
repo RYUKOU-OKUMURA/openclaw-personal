@@ -49,6 +49,7 @@ import { resolveCronPreflight } from "./run-fallback-policy.js";
 import {
   appendCronUnattendedRunPreamble,
   resolveCronAuthSelection,
+  resolveCronAgentRuntime,
   loadCronExternalContentRuntime,
   loadSessionAccessorRuntime,
   resolveCronAgentTurnMessage,
@@ -410,14 +411,26 @@ export async function prepareCronRunContext(params: {
       };
     }
     const { provider, model, modelFallbacksOverride, runtimePluginCandidates } = preflight;
-    const effectiveAgentRuntime = resolveEffectiveAgentRuntime({
-      cfg: cfgWithAgentDefaults,
-      provider,
-      modelId: model,
-      agentId: modelOwner.agentId,
-      sessionKey: agentSessionKey,
-      sessionEntry: cronSession.sessionEntry,
-    });
+    const resolveCronRuntime = (candidateProvider: string, candidateModel: string) =>
+      resolveCronAgentRuntime({
+        cfg: cfgWithAgentDefaults,
+        provider: candidateProvider,
+        modelId: candidateModel,
+        agentId: modelOwner.agentId,
+        sessionKey: agentSessionKey,
+        sessionEntry: cronSession.sessionEntry,
+        executionRoot: input.executionRoot,
+        declarationKey: input.job.declarationKey,
+        resolvedRuntime: resolveEffectiveAgentRuntime({
+          cfg: cfgWithAgentDefaults,
+          provider: candidateProvider,
+          modelId: candidateModel,
+          agentId: modelOwner.agentId,
+          sessionKey: agentSessionKey,
+          sessionEntry: cronSession.sessionEntry,
+        }),
+      });
+    const effectiveAgentRuntime = resolveCronRuntime(provider, model).runtime;
     const thinkingSelection = await resolveCronThinkingSelection({
       cfg: cfgWithAgentDefaults,
       owner: modelOwner,
@@ -457,11 +470,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir,
         allowGatewaySubagentBinding: true,
         runtimePluginSelections: runtimePluginCandidates.map((candidate) => {
-          const runtime = resolveSessionRuntimeOverrideForProvider({
-            provider: candidate.provider,
-            entry: cronSession.sessionEntry,
-            cfg: cfgWithAgentDefaults,
-          });
+          const runtime = resolveCronRuntime(candidate.provider, candidate.model).runtimeOverride;
           return runtime
             ? { provider: candidate.provider, modelId: candidate.model, runtime, agentId }
             : { provider: candidate.provider, modelId: candidate.model, agentId };
@@ -568,6 +577,7 @@ export async function prepareCronRunContext(params: {
         workspaceDir: executionWorkspaceDir,
         config: cfgWithAgentDefaults,
         agentId,
+        sessionKey: agentSessionKey,
         existingSnapshot: cronSession.sessionEntry.skillsSnapshot,
         librarySelections: cronSession.sessionEntry.skillLibrarySelections,
         isFastTestEnv: params.isFastTestEnv,

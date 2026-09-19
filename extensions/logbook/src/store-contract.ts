@@ -15,7 +15,10 @@ export type LogbookBatchInput = {
   endMs: number;
   frameIds: number[];
 };
-export type LogbookObservationInput = Pick<LogbookObservation, "startMs" | "endMs" | "text">;
+export type LogbookObservationInput = Pick<
+  LogbookObservation,
+  "startMs" | "endMs" | "text" | "context"
+>;
 export type LogbookTimeline = { day: string; cards: LogbookCard[]; stats: LogbookDayStats };
 export type LogbookStandup = { day: string; text: string; updatedMs: number };
 export type LogbookDay = { day: string; cards: number; firstMs: number; lastMs: number };
@@ -34,10 +37,20 @@ export type LogbookOperations = {
     { batchId: number; status: LogbookBatchStatus; error?: string; model?: string },
     void
   >;
+  beginBatch: Operation<{ batchId: number; model?: string }, void>;
+  batchesForDay: Operation<{ day: string }, LogbookBatch[]>;
+  checkpointObservations: Operation<
+    { batch: LogbookBatch; endMs: number; segments: LogbookObservationInput[] },
+    void
+  >;
+  deleteDay: Operation<
+    { day: string },
+    { frames: number; batches: number; observations: number; cards: number; standups: number }
+  >;
   latestBatch: Operation<undefined, LogbookBatch | null>;
   resetRunningBatches: Operation<undefined, void>;
   resetErrorBatches: Operation<undefined, number>;
-  nextPendingBatch: Operation<undefined, LogbookBatch | null>;
+  nextPendingBatch: Operation<{ nowMs: number }, LogbookBatch | null>;
   batchFrames: Operation<{ batchId: number }, LogbookFrame[]>;
   sampledBatchFrames: Operation<{ batchId: number }, LogbookFrame[]>;
   replaceObservations: Operation<
@@ -66,6 +79,9 @@ export type LogbookOperations = {
   listDays: Operation<undefined, LogbookDay[]>;
   timelineForDay: Operation<{ day: string }, LogbookTimeline>;
   getStandup: Operation<{ day: string }, LogbookStandup | null>;
-  saveStandup: Operation<{ day: string; text: string }, void>;
-  pruneFrames: Operation<{ olderThanMs: number }, number>;
+  saveStandup: Operation<
+    { day: string; text: string; expected?: { previousDay: string; source: string } },
+    void
+  >;
+  pruneFrames: Operation<{ olderThanMs: number; olderUnfinishedThanMs?: number }, number>;
 };

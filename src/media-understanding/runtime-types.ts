@@ -104,7 +104,10 @@ export type ExtractStructuredWithModelParams = {
   profile?: string;
   preferredProfile?: string;
   authStore?: AuthProfileStore;
+  /** Output-token budget when the provider transport supports it; otherwise advisory. */
+  maxTokens?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type ExtractStructuredWithModelResult = Awaited<

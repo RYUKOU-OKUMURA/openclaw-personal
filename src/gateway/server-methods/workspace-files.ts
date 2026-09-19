@@ -230,7 +230,7 @@ function applyOversizedFileMetadata(
   }
 }
 
-async function toSessionFileEntry(
+export async function toSessionFileEntry(
   touched: TouchedFile,
   root: string | undefined,
   fileRoot: string | undefined,

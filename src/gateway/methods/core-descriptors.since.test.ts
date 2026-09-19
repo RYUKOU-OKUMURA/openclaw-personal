@@ -81,6 +81,9 @@ const TRAIN_2026_7_METHODS = [
 ] as const;
 
 const TRAIN_2026_8_METHODS = [
+  "sandbox.explain",
+  "sandbox.entries.add",
+  "sandbox.recreate",
   "diagnostics.lanes",
   "plugins.inspect",
   "device.pair.setupStatus",
@@ -198,6 +201,7 @@ describe("core gateway method release trains", () => {
     ]) {
       expect(methods.find((candidate) => candidate.name === method)?.since).toBe("2026.9");
     }
+    expect(methods.find((method) => method.name === "fs.pickPath")?.since).toBe("2026.9");
     expect(methods.find((method) => method.name === "update.hold")?.since).toBe("2026.8");
     expect(methods.find((method) => method.name === "sessions.catalog.startTerminal")?.since).toBe(
       "2026.8",

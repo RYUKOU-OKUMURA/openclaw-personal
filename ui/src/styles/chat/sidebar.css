@@ -127,6 +127,21 @@
   white-space: nowrap;
 }
 
+.chat-workspace-rail__roots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 8px;
+}
+
+.chat-workspace-rail__root-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.chat-workspace-rail__shared-list {
+  grid-column: 1 / -1;
+}
+
 .chat-workspace-rail__state {
   padding: 14px 12px;
   color: var(--muted);
@@ -201,7 +216,9 @@
   margin-top: 8px;
 }
 
-.chat-workspace-rail__chip {
+.chat-workspace-rail__chip,
+.chat-workspace-rail__summary span,
+.chat-workspace-rail__root-badge {
   padding: 2px 6px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: var(--radius-full);
@@ -241,7 +258,8 @@
   background: var(--bg-hover);
 }
 
-.chat-workspace-rail__file-open {
+.chat-workspace-rail__file-open,
+.chat-workspace-rail__root-button {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
@@ -257,7 +275,19 @@
   text-align: left;
 }
 
-.chat-workspace-rail__file-open:focus-visible {
+.chat-workspace-rail__root-button {
+  display: flex;
+  border-radius: var(--radius-sm);
+  font-size: var(--control-ui-text-xs);
+}
+
+.chat-workspace-rail__root-button:hover,
+.chat-workspace-rail__root-button--active {
+  background: var(--bg-hover);
+}
+
+.chat-workspace-rail__file-open:focus-visible,
+.chat-workspace-rail__root-button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   outline-offset: -2px;
 }
@@ -274,7 +304,8 @@
 }
 
 .chat-workspace-rail__file-name,
-.chat-workspace-rail__file-meta {
+.chat-workspace-rail__file-meta,
+.chat-workspace-rail__root-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

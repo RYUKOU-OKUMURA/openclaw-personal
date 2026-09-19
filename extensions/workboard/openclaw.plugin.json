@@ -40,6 +40,11 @@
         "id": "boards.list",
         "method": "workboard.boards.list",
         "description": "List Workboard boards."
+      },
+      {
+        "id": "planning.get",
+        "method": "workboard.planning.get",
+        "description": "Read board planning columns and card placement independently of execution status."
       }
     ],
     "actionVerbs": [
@@ -57,6 +62,16 @@
             }
           }
         }
+      },
+      {
+        "id": "planning.update",
+        "method": "workboard.planning.update",
+        "description": "Update planning columns with revision checking."
+      },
+      {
+        "id": "planning.move",
+        "method": "workboard.planning.move",
+        "description": "Move a card within planning columns without changing execution status."
       }
     ]
   },
@@ -223,9 +238,9 @@
     "properties": {}
   },
   "controlUi": {
-    "entry": "dist/control-ui/6372f154ac18c2420205c6a7cbb2b7f80cabbc6dc1e80eed4c1ef4039c749aa6/index.js",
+    "entry": "dist/control-ui/2505919b0728f22e827274536c76edede8e06bb2e1dd4414a794171eefb9ce5f/index.js",
     "styles": [
-      "dist/control-ui/6372f154ac18c2420205c6a7cbb2b7f80cabbc6dc1e80eed4c1ef4039c749aa6/index.css"
+      "dist/control-ui/2505919b0728f22e827274536c76edede8e06bb2e1dd4414a794171eefb9ce5f/index.css"
     ]
   }
 }
