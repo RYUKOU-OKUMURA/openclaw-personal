@@ -8,13 +8,19 @@ import {
   type ControlUiEnvironment,
   type ControlUiPluginFrameGrantAck,
 } from "../../../src/gateway/control-ui-bootstrap-contract.js";
+import type { GatewayHelloOk } from "../api/gateway.ts";
 import { uiDevGatewayResourceUrl } from "../dev-gateway.ts";
 import { normalizeAssistantIdentity } from "../lib/assistant-identity.ts";
 import { resolveControlUiAuthCandidates } from "./control-ui-auth.ts";
 import { canReloadControlUiDocument } from "./document-reload-guard.ts";
 
 type ApplicationConfigAuthSource = {
-  hello?: { auth?: { deviceToken?: string | null } | null } | null;
+  hello?: {
+    auth?: {
+      deviceToken?: string | null;
+      method?: NonNullable<GatewayHelloOk["auth"]>["method"];
+    } | null;
+  } | null;
   settings?: { token?: string | null } | null;
   password?: string | null;
 };
@@ -192,9 +198,15 @@ export function createApplicationConfigCapability(params: {
   }
   const url = `${normalizeRouteBasePath(params.resourceBasePath)}${CONTROL_UI_BOOTSTRAP_CONFIG_PATH}`;
   const sameOrigin = new URL(url, window.location.origin).origin === window.location.origin;
-  const resolveAuth = () =>
-    sameOrigin ? resolveControlUiAuthCandidates(params.getAuth?.() ?? {}) : [];
+  const resolveAuth = () => {
+    const source = sameOrigin ? (params.getAuth?.() ?? {}) : {};
+    return {
+      candidates: resolveControlUiAuthCandidates(source),
+      method: source.hello?.auth?.method,
+    };
+  };
   let authCandidates: string[] = [];
+  let authMethod: ReturnType<typeof resolveAuth>["method"];
   let pending: { signal?: AbortSignal; promise: Promise<ApplicationConfig | null> } | undefined;
   const listeners = new Set<(config: ApplicationConfig) => void>();
 
@@ -205,14 +217,16 @@ export function createApplicationConfigCapability(params: {
     async refresh(options) {
       // Queued bootstrap work cannot own credentials: plugin activation may
       // request its asset grant before that queue reaches the config refresh.
-      const candidates = resolveAuth();
+      const { candidates, method } = resolveAuth();
       if (
+        method !== authMethod ||
         candidates.length !== authCandidates.length ||
         candidates.some((candidate, index) => candidate !== authCandidates[index])
       ) {
         // Changing credentials retires previous authority even when this refresh
         // skips its request. Equivalent startup consumers share the live load.
         authCandidates = candidates;
+        authMethod = method;
         authVersion++;
         pending = undefined;
       }
@@ -226,17 +240,20 @@ export function createApplicationConfigCapability(params: {
       const authority = authVersion;
       const signal = options?.signal;
       const isCurrent = () => {
-        const liveCandidates = resolveAuth();
+        const { candidates: liveCandidates, method: liveMethod } = resolveAuth();
         return (
           authority === authVersion &&
           !signal?.aborted &&
+          method === liveMethod &&
           candidates.length === liveCandidates.length &&
           candidates.every((candidate, index) => candidate === liveCandidates[index])
         );
       };
       const promise = loadApplicationConfig({
         url,
-        authCandidates: candidates,
+        // This read endpoint accepts the verified Serve identity. A legacy
+        // device Bearer would suppress it and fail the HTTP issuer check.
+        authCandidates: method === "tailscale" ? [] : candidates,
         signal,
       }).then((loaded) => {
         if (!loaded || !isCurrent()) {
