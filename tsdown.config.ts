@@ -250,6 +250,8 @@ function workerDeployBuildConfig(entry: Record<string, string>): UserConfig {
       WORKER_DEPLOY_VERSION: JSON.stringify(workerDeployVersion),
     },
     alias: {
+      // LinkeDOM falls back to this shim when its optional native peer is absent.
+      canvas: path.resolve("node_modules/linkedom/commonjs/canvas-shim.cjs"),
       bufferutil: WORKER_DEPLOY_OPTIONAL_NATIVE_MODULE_ID,
       "chromium-bidi/lib/cjs/bidiMapper/BidiMapper": WORKER_DEPLOY_OPTIONAL_NATIVE_MODULE_ID,
       "chromium-bidi/lib/cjs/cdp/CdpConnection": WORKER_DEPLOY_OPTIONAL_NATIVE_MODULE_ID,
