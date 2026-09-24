@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
+  executeSqliteQuerySync,
   prepareSqliteQuerySync,
   type getNodeSqliteKysely,
 } from "openclaw/plugin-sdk/sqlite-worker-runtime";
@@ -74,5 +75,19 @@ export function createLogbookFrameQueries(
       return framesQuery.where("id", "in", sampledIds);
     },
   );
-  return { framesQuery, sampledBatchFrames };
+  const framesInRange = (startMs: number, endMs: number) =>
+    executeSqliteQuerySync(
+      db,
+      framesQuery
+        .clearSelect()
+        // Keep native integer decoding and overflow errors for unused numeric fields.
+        .select(["id", "captured_at_ms", "screen_index", "width", "height", "byte_size", "idle"])
+        .where("captured_at_ms", ">=", startMs)
+        .where("captured_at_ms", "<", endMs),
+    ).rows.map((row) => ({
+      id: row.id,
+      capturedAtMs: row.captured_at_ms,
+      idle: row.idle === 1,
+    }));
+  return { framesQuery, sampledBatchFrames, framesInRange };
 }

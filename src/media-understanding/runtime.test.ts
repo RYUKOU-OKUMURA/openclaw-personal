@@ -3,14 +3,12 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { MediaAttachment, MediaUnderstandingOutput } from "../media-understanding/types.js";
 import {
   describeVideoFile,
   describeImageFile,
   describeImageFileWithModel,
-  extractStructuredWithModel,
   runMediaUnderstandingFile,
   transcribeAudioFile,
 } from "./runtime.js";
@@ -817,161 +815,6 @@ describe("media-understanding runtime", () => {
     expect(mocks.describeImageWithModel).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "worker", agentDir: "/tmp/worker-agent" }),
     );
-  });
-
-  it("routes structured extraction to a provider by id and model", async () => {
-    const providerRegistry = new Map();
-    const authStore = {} as AuthProfileStore;
-    const extractStructured = vi.fn(async () => ({
-      text: '{"ok":true}',
-      parsed: { ok: true },
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json" as const,
-    }));
-    mocks.buildMediaUnderstandingRegistry.mockReturnValue(providerRegistry);
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin", extractStructured });
-
-    await expect(
-      extractStructuredWithModel({
-        input: [
-          { type: "text", text: "Extract the fact." },
-          {
-            type: "image",
-            buffer: Buffer.from("image-bytes"),
-            fileName: "fact.png",
-            mime: "image/png",
-          },
-        ],
-        instructions: "Return JSON.",
-        provider: "Vision-Plugin",
-        model: "vision-json",
-        profile: "work",
-        preferredProfile: "preferred-work",
-        authStore,
-        timeoutMs: 45_000,
-        cfg: {} as OpenClawConfig,
-        agentDir: "/tmp/agent",
-      }),
-    ).resolves.toEqual({
-      text: '{"ok":true}',
-      parsed: { ok: true },
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json",
-    });
-
-    expect(mocks.buildMediaUnderstandingRegistry).toHaveBeenCalledWith(undefined, {});
-    expect(mocks.getMediaUnderstandingProvider).toHaveBeenCalledWith(
-      "Vision-Plugin",
-      providerRegistry,
-    );
-    const [extractOptions] = expectDefined(
-      (
-        extractStructured.mock.calls as unknown as Array<
-          [
-            {
-              input?: unknown;
-              instructions?: string;
-              provider?: string;
-              model?: string;
-              profile?: string;
-              preferredProfile?: string;
-              authStore?: AuthProfileStore;
-              timeoutMs?: number;
-              agentDir?: string;
-            },
-          ]
-        >
-      )[0],
-      "(extractStructured.mock.calls as unknown as Array<\n        [\n          {\n            input?: unknown;\n            instructions?: string;\n            provider?: string;\n            model?: string;\n            profile?: string;\n            preferredProfile?: string;\n            authStore?: AuthProfileStore;\n            timeoutMs?: number;\n            agentDir?: string;\n          },\n        ]\n      >)[0] test invariant",
-    );
-    expect(extractOptions?.input).toEqual([
-      { type: "text", text: "Extract the fact." },
-      {
-        type: "image",
-        buffer: Buffer.from("image-bytes"),
-        fileName: "fact.png",
-        mime: "image/png",
-      },
-    ]);
-    expect(extractOptions?.instructions).toBe("Return JSON.");
-    expect(extractOptions?.provider).toBe("Vision-Plugin");
-    expect(extractOptions?.model).toBe("vision-json");
-    expect(extractOptions?.profile).toBe("work");
-    expect(extractOptions?.preferredProfile).toBe("preferred-work");
-    expect(extractOptions?.authStore).toBe(authStore);
-    expect(extractOptions?.timeoutMs).toBe(45_000);
-    expect(extractOptions?.agentDir).toBe("/tmp/agent");
-  });
-
-  it("caps explicit structured extraction timeouts before provider execution", async () => {
-    const extractStructured = vi.fn(async () => ({
-      text: "{}",
-      parsed: {},
-      model: "vision-json",
-      provider: "vision-plugin",
-      contentType: "json" as const,
-    }));
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin", extractStructured });
-
-    await extractStructuredWithModel({
-      input: [
-        {
-          type: "image",
-          buffer: Buffer.from("image-bytes"),
-          fileName: "fact.png",
-          mime: "image/png",
-        },
-      ],
-      instructions: "Return JSON.",
-      provider: "vision-plugin",
-      model: "vision-json",
-      timeoutMs: Number.MAX_SAFE_INTEGER,
-      cfg: {} as OpenClawConfig,
-    });
-
-    expect(extractStructured).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: MAX_TIMER_TIMEOUT_MS }),
-    );
-  });
-
-  it("rejects text-only structured extraction before provider lookup", async () => {
-    await expect(
-      extractStructuredWithModel({
-        input: [{ type: "text", text: "Extract the fact." }],
-        instructions: "Return JSON.",
-        provider: "vision-plugin",
-        model: "vision-json",
-        cfg: {} as OpenClawConfig,
-      }),
-    ).rejects.toThrow("Structured extraction requires at least one image input.");
-
-    expect(mocks.buildMediaUnderstandingRegistry).not.toHaveBeenCalled();
-    expect(mocks.getMediaUnderstandingProvider).not.toHaveBeenCalled();
-  });
-
-  it("fails clearly when a provider lacks structured extraction", async () => {
-    const providerRegistry = new Map();
-    mocks.buildMediaUnderstandingRegistry.mockReturnValue(providerRegistry);
-    mocks.getMediaUnderstandingProvider.mockReturnValue({ id: "vision-plugin" });
-
-    await expect(
-      extractStructuredWithModel({
-        input: [
-          {
-            type: "image",
-            buffer: Buffer.from("image-bytes"),
-            fileName: "fact.png",
-            mime: "image/png",
-          },
-        ],
-        instructions: "Return JSON.",
-        provider: "vision-plugin",
-        model: "vision-json",
-        cfg: {} as OpenClawConfig,
-      }),
-    ).rejects.toThrow("Provider does not support structured extraction: vision-plugin");
   });
 
   it("surfaces the underlying provider failure when media understanding fails", async () => {

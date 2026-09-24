@@ -114,12 +114,14 @@ export function buildEmbeddedSandboxInfo(
         execPolicy,
         hostPolicy,
       });
+  const fileLocationsPrompt = sandbox.fileLocationsPrompt;
   return {
     enabled: true,
     workspaceDir: sandbox.workspaceDir,
     containerWorkspaceDir: sandbox.containerWorkdir,
     workspaceAccess: sandbox.workspaceAccess,
     agentWorkspaceMount: sandbox.workspaceAccess === "ro" ? "/agent" : undefined,
+    ...(fileLocationsPrompt ? { fileLocationsPrompt } : {}),
     browserBridgeUrl: sandbox.browser?.bridgeUrl,
     hostBrowserAllowed: sandbox.browserAllowHostControl,
     ...(elevatedConfigured

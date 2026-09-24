@@ -4,6 +4,7 @@ import {
   compileSqliteQueryBindings,
   getNodeSqliteKysely,
 } from "openclaw/plugin-sdk/sqlite-worker-runtime";
+import { resetPlanningForBoardMove } from "./sqlite-planning.js";
 import {
   jsonValue,
   type CARD_CHILD_TABLES,
@@ -46,6 +47,7 @@ function insertChildren<T>(
 }
 
 export function insertCard(db: DatabaseSync, card: WorkboardCard): void {
+  resetPlanningForBoardMove(db, card.id, cardBoardId(card));
   const execution = card.execution;
   const metadata = card.metadata;
   const query = getNodeSqliteKysely<WorkboardCardDatabase>(db);

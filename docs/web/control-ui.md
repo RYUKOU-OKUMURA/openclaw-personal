@@ -274,6 +274,7 @@ Every section heading from the previous single-page version keeps its anchor her
 - <a id="community-invitation" />[Community invitation](/web/control-ui/settings#community-invitation)
 - <a id="personal-identity" />[Personal identity](/web/control-ui/settings#personal-identity)
 - <a id="gateway-host-status" />[Gateway host status](/web/control-ui/settings#gateway-host-status)
+- <a id="sandbox-access-map" />[Sandbox access map](/web/control-ui/settings#sandbox-access-map)
 - <a id="language-support" />[Language support](/web/control-ui/settings#language-support)
 - <a id="appearance-themes" />[Appearance themes](/web/control-ui/settings#appearance-themes)
 - <a id="manage-plugins" />[Manage plugins](/web/control-ui/settings#manage-plugins)

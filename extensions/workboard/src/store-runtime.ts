@@ -201,6 +201,10 @@ export class WorkboardStoreRuntime {
     return await this.runWithWriteAuthority(assertCurrent, run);
   }
 
+  protected recordPersistentMutation(): void {
+    this.mutationRevision += 1;
+  }
+
   private async runMutation<T>(run: () => Promise<T>): Promise<T> {
     const initialRevision = this.mutationRevision;
     try {

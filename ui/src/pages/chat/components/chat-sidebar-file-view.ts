@@ -218,7 +218,7 @@ export function renderSidebarFile(
                             </button>
                           </openclaw-tooltip>
                           ${
-                            controls.onReveal
+                            controls.onReveal && !content.previewOnly
                               ? html`
                                   <openclaw-tooltip .content=${t("chat.detailPanel.showInFiles")}>
                                     <button
@@ -233,12 +233,16 @@ export function renderSidebarFile(
                                 `
                               : nothing
                           }
-                          ${renderChatSidebarEditorMenu({
-                            absolutePath,
-                            open: controls.editorMenuOpen,
-                            onOpenChange: controls.onEditorMenuOpenChange,
-                            onOpenEditor: controls.onOpenEditor,
-                          })}
+                          ${
+                            content.previewOnly
+                              ? nothing
+                              : renderChatSidebarEditorMenu({
+                                  absolutePath,
+                                  open: controls.editorMenuOpen,
+                                  onOpenChange: controls.onEditorMenuOpenChange,
+                                  onOpenEditor: controls.onOpenEditor,
+                                })
+                          }
                           ${renderFileCopyButton("contents", controls)}
                         `
                   }

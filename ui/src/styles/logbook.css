@@ -408,3 +408,15 @@
   border-radius: 8px;
   background: color-mix(in oklab, var(--panel) 70%, transparent);
 }
+
+.logbook-schedule {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.logbook-schedule__times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}

@@ -82,6 +82,7 @@ import { createSessionsSpawnTool } from "./tools/sessions-spawn-tool.js";
 import { createSessionsTool } from "./tools/sessions-tool.js";
 import { createSessionsYieldTool } from "./tools/sessions-yield-tool.js";
 import { createConfiguredSkillWorkshopTool } from "./tools/skill-workshop-tool-factory.js";
+import { createSpecialistToolsForRun } from "./tools/specialists-tool.js";
 import { createSubagentsTool } from "./tools/subagents-tool.js";
 import { createTaskSuggestionTools } from "./tools/task-suggestion-tools.js";
 import { createTerminalTool } from "./tools/terminal-tool.js";
@@ -117,11 +118,10 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
     swarmOutputSchema: options?.swarmOutputSchema,
     assertCollectorWriteAuthority: options?.assertCollectorWriteAuthority,
   });
-  const inferredWorkspaceDir =
-    options?.workspaceDir || !resolvedConfig
-      ? undefined
-      : resolveAgentWorkspaceDir(resolvedConfig, sessionAgentId);
-  const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir ?? inferredWorkspaceDir);
+  const workspaceDir = resolveWorkspaceRoot(
+    options?.workspaceDir ??
+      (resolvedConfig ? resolveAgentWorkspaceDir(resolvedConfig, sessionAgentId) : undefined),
+  );
   const spawnWorkspaceDir = resolveWorkspaceRoot(options?.spawnWorkspaceDir ?? workspaceDir);
   options?.recordToolPrepStage?.("openclaw-tools:session-workspace");
   const widgetPresentation = resolveWidgetPresentationForRun(options);
@@ -426,7 +426,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
       ? createTaskSuggestionTools({
           sessionKey,
           agentId: sessionAgentId,
-          cwd: resolveWorkspaceRoot(options?.cwd ?? options?.workspaceDir ?? inferredWorkspaceDir),
+          cwd: resolveWorkspaceRoot(options?.cwd ?? workspaceDir),
         })
       : []),
     ...(messageTool && includeMessageTool ? [messageTool] : []),
@@ -469,6 +469,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
           }),
           createPluginsTool(),
           ...createOpenClawDelegateToolsForRun({ ...options, sessionAgentId }),
+          ...createSpecialistToolsForRun({ ...options, config: resolvedConfig, sessionAgentId }),
         ]),
     createAgentsListTool({
       agentSessionKey: options?.agentSessionKey,

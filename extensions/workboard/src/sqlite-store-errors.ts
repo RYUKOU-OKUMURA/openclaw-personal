@@ -1,5 +1,9 @@
+import type { WorkboardPlanningBoard } from "@openclaw/workboard-contract";
+import { WorkboardPlanningConflictError } from "./planning-errors.js";
+
 export type WorkboardSqliteFailure = {
   error: Error;
+  planningConflict?: WorkboardPlanningBoard;
   name?: string;
   code?: string | number;
   errcode?: number;
@@ -24,6 +28,9 @@ export function encodeWorkboardSqliteFailure(
   // V8 preserves standard Error kinds, but omits AggregateError details and SQLite fields.
   const encoded: WorkboardSqliteFailure = {
     error: failure,
+    ...(failure instanceof WorkboardPlanningConflictError
+      ? { planningConflict: failure.current }
+      : {}),
     name: failure.name,
     ...("code" in failure && (typeof failure.code === "string" || typeof failure.code === "number")
       ? { code: failure.code }
@@ -53,7 +60,11 @@ function decodeWorkboardSqliteFailure(
   if (existing) {
     return existing;
   }
-  const error = failure.aggregate ? new AggregateError([], failure.error.message) : failure.error;
+  const error = failure.planningConflict
+    ? new WorkboardPlanningConflictError(failure.planningConflict)
+    : failure.aggregate
+      ? new AggregateError([], failure.error.message)
+      : failure.error;
   seen.set(failure, error);
   if (failure.name !== undefined) {
     error.name = failure.name;

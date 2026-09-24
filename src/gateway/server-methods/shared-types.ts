@@ -119,6 +119,7 @@ type SystemAgentHistoryTurn = {
 
 export type GatewaySystemAgentSession = {
   engine: {
+    propose?: (operation: SystemAgentOperation) => string;
     handle: (
       message: string,
       options?: { uiContext?: { page: string } },

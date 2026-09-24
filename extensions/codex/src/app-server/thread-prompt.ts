@@ -6,6 +6,7 @@ import {
   resolveMainSessionDelegationMode,
   SKILL_WORKSHOP_TOOL_NAME,
   type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
+  type SandboxContext,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { listRegisteredPluginAgentPromptGuidance } from "openclaw/plugin-sdk/plugin-runtime";
 import {
@@ -36,7 +37,10 @@ export type CodexThreadPromptContext = Pick<
 
 export function buildDeveloperInstructions(
   params: CodexThreadPromptContext,
-  options: { dynamicTools?: readonly CodexDynamicToolSpec[] } = {},
+  options: {
+    dynamicTools?: readonly CodexDynamicToolSpec[];
+    sandbox?: SandboxContext;
+  } = {},
 ): string {
   const deferredToolNames = new Set<string>();
   let screenToolName: string | undefined;
@@ -106,6 +110,7 @@ export function buildDeveloperInstructions(
       : undefined;
   const sections = [
     "You are a personal agent running inside OpenClaw. OpenClaw has dynamic tools for OpenClaw-owned messaging, cron, sessions, media, gateway, and nodes.",
+    options.sandbox?.fileLocationsPrompt,
     deferredToolNames.size > 0
       ? `Deferred searchable OpenClaw dynamic tools available: ${[...deferredToolNames]
           .toSorted((left, right) => left.localeCompare(right))

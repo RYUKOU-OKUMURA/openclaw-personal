@@ -6,6 +6,7 @@ export * from "./public-schema-push.js";
 export * from "./public-schema-users.js";
 export * from "./public-schema-plugins.js";
 export * from "./public-schema-environments.js";
+export * from "./schema/sandbox.js";
 export {
   isCloudWorkerPlacementState,
   ConnectParamsSchema,
@@ -663,6 +664,8 @@ export {
   FsDirEntrySchema,
   FsListDirParamsSchema,
   FsListDirResultSchema,
+  FsPickPathParamsSchema,
+  FsPickPathResultSchema,
 } from "./schema-modules.js";
 
 export {

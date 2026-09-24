@@ -216,7 +216,8 @@ function updatePreviewContent(
       previous.edit?.hash === content.edit?.hash &&
       previous.path === content.path &&
       previous.root === content.root &&
-      previous.mimeType === content.mimeType
+      previous.mimeType === content.mimeType &&
+      previous.previewOnly === content.previewOnly
     )
   ) {
     preview.content = content;

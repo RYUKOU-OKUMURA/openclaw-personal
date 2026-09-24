@@ -87,7 +87,6 @@ const TRAIN_2026_8_METHODS = [
   "openclaw.setup.activate.start",
   "exec.approval.grants.list",
   "exec.approval.grants.revoke",
-  "models.authOrderSet",
   "sessions.patchMany",
   "sessions.goal.update",
   "sessions.goal.clear",
@@ -115,24 +114,11 @@ const TRAIN_2026_8_METHODS = [
   "secrets.store.list",
   "secrets.store.set",
   "secrets.store.delete",
-  "users.authConnect.answer",
-  "users.authConnect.cancel",
-  "users.authConnect.status",
-  "users.authConnect.start",
-  "users.authConnect.catalog",
-  "users.linkAuthProfile",
-  "users.listAuthLinks",
-  "users.listModelAccounts",
-  "users.selectModelAccount",
   "users.prefs.get",
   "users.prefs.set",
-  "users.mentionable",
-  "mentions.list",
-  "mentions.dismiss",
   "push.web.preferences.get",
   "push.web.preferences.set",
   "users.setRole",
-  "users.unlinkAuthProfile",
   "desktop.observe",
   "desktop.launch",
   "device.scopes.requestUpgrade",
@@ -159,9 +145,6 @@ const TRAIN_2026_8_METHODS = [
   "skills.library.activate",
   "skills.library.import",
   "skills.library.upload",
-  "sessions.title.prepare",
-  "transcripts.list",
-  "transcripts.get",
 ] as const;
 
 describe("core gateway method release trains", () => {
@@ -185,6 +168,26 @@ describe("core gateway method release trains", () => {
         .toSorted(),
     ).toEqual(TRAIN_2026_8_METHODS.toSorted());
     for (const method of [
+      "sandbox.explain",
+      "sandbox.entries.add",
+      "sandbox.recreate",
+      "users.listAuthLinks",
+      "users.listModelAccounts",
+      "users.selectModelAccount",
+      "users.linkAuthProfile",
+      "users.unlinkAuthProfile",
+      "users.authConnect.start",
+      "users.authConnect.answer",
+      "users.authConnect.status",
+      "users.authConnect.cancel",
+      "users.authConnect.catalog",
+      "sessions.title.prepare",
+      "users.mentionable",
+      "mentions.list",
+      "mentions.dismiss",
+      "transcripts.list",
+      "transcripts.get",
+      "models.authOrderSet",
       "canvas.document.preview",
       "canvas.document.view",
       "plugins.controlUi.list",
@@ -198,6 +201,7 @@ describe("core gateway method release trains", () => {
     ]) {
       expect(methods.find((candidate) => candidate.name === method)?.since).toBe("2026.9");
     }
+    expect(methods.find((method) => method.name === "fs.pickPath")?.since).toBe("2026.9");
     expect(methods.find((method) => method.name === "update.hold")?.since).toBe("2026.8");
     expect(methods.find((method) => method.name === "sessions.catalog.startTerminal")?.since).toBe(
       "2026.8",

@@ -261,7 +261,13 @@ describe("authenticated WebSocket request cancellation", () => {
     },
   );
 
-  it("cancels a session companion ask when its authenticated socket closes", async () => {
+  it.each([
+    {
+      method: "sessions.companion.ask",
+      params: { sessionKey: "agent:main:main", question: "What changed?" },
+    },
+    { method: "fs.pickPath", params: {} },
+  ])("cancels $method when its authenticated socket closes", async ({ method, params }) => {
     const socket = new EventEmitter();
     const { client, dispatcher } = createDispatcher(socket, {
       id: GATEWAY_CLIENT_IDS.CONTROL_UI,
@@ -281,8 +287,8 @@ describe("authenticated WebSocket request cancellation", () => {
       {
         type: "req",
         id: "session-companion",
-        method: "sessions.companion.ask",
-        params: { sessionKey: "agent:main:main", question: "What changed?" },
+        method,
+        params,
       },
       client,
     );

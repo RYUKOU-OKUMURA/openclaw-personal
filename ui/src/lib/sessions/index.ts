@@ -24,7 +24,6 @@ import { createSessionScopedOperations } from "./session-scoped-operations.ts";
 import { createSessionThinkingClaims } from "./session-thinking-claims.ts";
 import { SwarmActivityTracker } from "./swarm-activity.ts";
 
-export type { SessionArchivedFilter } from "./navigation.ts";
 export type {
   SessionCapability,
   SessionListOptions,
@@ -49,11 +48,10 @@ export {
   scopedAgentListParamsForSession,
   scopedAgentParamsForSession,
   visibleSessionMatches,
-} from "./navigation.ts";
-export type {
-  SessionRefreshTarget,
-  SessionScopeHost,
-  SessionScopeHostWithKey,
+  type SessionArchivedFilter,
+  type SessionRefreshTarget,
+  type SessionScopeHost,
+  type SessionScopeHostWithKey,
 } from "./navigation.ts";
 
 export function createSessionCapability(

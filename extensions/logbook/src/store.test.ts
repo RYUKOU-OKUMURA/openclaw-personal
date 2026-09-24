@@ -119,7 +119,7 @@ describe("LogbookStore", () => {
     }
   });
 
-  it("creates every owned table as STRICT with foreign keys enabled", () => {
+  it("creates every owned table as STRICT with foreign keys enabled", async () => {
     const database = new DatabaseSync(path.join(dir, "logbook.sqlite"), { readOnly: true });
     try {
       const ordinaryTables = database
@@ -249,7 +249,7 @@ describe("LogbookStore", () => {
     }
   });
 
-  it("rejects values that violate STRICT column types", () => {
+  it("rejects values that violate STRICT column types", async () => {
     const database = new DatabaseSync(path.join(dir, "logbook.sqlite"));
     try {
       expect(() =>
@@ -325,7 +325,7 @@ describe("LogbookStore", () => {
     expect(await store.countUnbatchedActiveFrames()).toBe(1);
   });
 
-  it("resets running batches to pending on startup recovery", async () => {
+  it("recovers interrupted batches with persisted retry timing", async () => {
     const t0 = Date.now();
     await insertFrame(t0);
     const batchId = await store.createBatch({
@@ -334,9 +334,15 @@ describe("LogbookStore", () => {
       endMs: t0 + 1000,
       frameIds: [1],
     });
-    await store.setBatchStatus(batchId, "running");
+    await store.beginBatch(batchId);
+    await store.close();
+    store = await LogbookStore.open(dir, workerModuleUrl);
     await store.resetRunningBatches();
-    expect((await store.nextPendingBatch())?.id).toBe(batchId);
+    const recovered = expectDefined(await store.latestBatch(), "recovered batch");
+    expect(recovered).toMatchObject({ status: "error", attempts: 1 });
+    const due = expectDefined(recovered.retryAfterMs, "persisted retry deadline");
+    expect(await store.nextPendingBatch(due - 1)).toBeNull();
+    expect((await store.nextPendingBatch(due))?.id).toBe(batchId);
   });
 
   it("replaces only cards overlapping the revision window", async () => {
@@ -353,12 +359,16 @@ describe("LogbookStore", () => {
         await store.cardsForDay(DAY, { startMs: base + 50 * 60_000, endMs: base + 2 * 60 * 60_000 })
       ).map((card) => card.title),
     ).toEqual(["Mid"]);
+    await store.saveStandup(DAY, "old summary");
+    await store.saveStandup("2026-07-04", "old previous-day summary");
     // Revise only the window covering "Mid"; "Early" must survive untouched.
     await store.replaceCardsInWindow(DAY, base + 50 * 60_000, base + 2 * 60 * 60_000, [
       draft({ startMs: base + 55 * 60_000, endMs: base + 95 * 60_000, title: "Mid revised" }),
     ]);
     const titles = (await store.cardsForDay(DAY)).map((card) => card.title);
     expect(titles).toEqual(["Early", "Mid revised"]);
+    expect(await store.getStandup(DAY)).toBeNull();
+    expect(await store.getStandup("2026-07-04")).toBeNull();
   });
 
   it("round-trips distractions and computes day stats", async () => {
@@ -442,6 +452,180 @@ describe("LogbookStore", () => {
     expect((await store.cardsForDay(DAY))[0]?.keyframeId).toBeUndefined();
   });
 
+  it("commits resumable evidence atomically and keeps it through retry and reopen", async () => {
+    const t0 = Date.now();
+    const id = await store.createBatch({
+      day: DAY,
+      startMs: t0,
+      endMs: t0 + 1000,
+      frameIds: [await insertFrame(t0)],
+    });
+    const batch = expectDefined(await store.nextPendingBatch(), "pending batch");
+    const context = {
+      version: 1 as const,
+      target: "test",
+      activity: "edit",
+      result: "saved",
+      unresolved: "verification",
+      uncertainty: "not yet tested",
+    };
+    await store.beginBatch(id);
+    await store.checkpointObservations(batch, t0 + 500, [
+      { startMs: t0, endMs: t0 + 500, text: "first", context },
+    ]);
+    await store.close();
+    store = await LogbookStore.open(dir, workerModuleUrl);
+    expect(await store.latestBatch()).toMatchObject({ observationCursor: t0 + 500, attempts: 0 });
+    expect((await store.observationsInRange(DAY, t0, t0 + 1000))[0]?.context).toEqual(context);
+    await store.beginBatch(id);
+    const database = new DatabaseSync(path.join(dir, "logbook.sqlite"));
+    try {
+      database.exec(`CREATE TRIGGER reject_checkpoint BEFORE INSERT ON observations
+        WHEN NEW.text = 'fail' BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
+      await expect(
+        store.checkpointObservations(batch, t0 + 1000, [
+          { startMs: t0 + 500, endMs: t0 + 700, text: "second" },
+          { startMs: t0 + 700, endMs: t0 + 1000, text: "fail" },
+        ]),
+      ).rejects.toThrow("disk failure");
+      expect((await store.latestBatch())?.observationCursor).toBe(t0 + 500);
+      expect((await store.observationsInRange(DAY, t0, t0 + 1000)).map((o) => o.text)).toEqual([
+        "first",
+      ]);
+      database.exec("DROP TRIGGER reject_checkpoint");
+    } finally {
+      database.close();
+    }
+    await store.setBatchStatus(id, "error", "retry");
+    await store.resetErrorBatches();
+    await store.beginBatch(id);
+    await store.checkpointObservations(batch, t0 + 1000, [
+      { startMs: t0 + 500, endMs: t0 + 1000, text: "second" },
+    ]);
+    await expect(
+      store.checkpointObservations(batch, t0 + 1000, [
+        { startMs: t0 + 500, endMs: t0 + 1000, text: "duplicate" },
+      ]),
+    ).rejects.toThrow("stale");
+    expect((await store.observationsInRange(DAY, t0, t0 + 1000)).map((o) => o.text)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(await store.latestBatch()).toMatchObject({ observationCursor: t0 + 1000, attempts: 0 });
+  });
+
+  it("bounds repeated failures and restart recovery to three attempts until explicit retry", async () => {
+    const t0 = Date.now();
+    const id = await store.createBatch({
+      day: DAY,
+      startMs: t0,
+      endMs: t0 + 1000,
+      frameIds: [await insertFrame(t0)],
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await store.beginBatch(id);
+      if (attempt === 3) {
+        await store.close();
+        store = await LogbookStore.open(dir, workerModuleUrl);
+        await store.resetRunningBatches();
+      } else {
+        await store.setBatchStatus(id, "error", "failed");
+      }
+      const failed = expectDefined(await store.latestBatch(), "failed batch");
+      const due = expectDefined(failed.retryAfterMs, "retry deadline");
+      expect(failed.attempts).toBe(attempt);
+      expect(await store.nextPendingBatch(due - 1)).toBeNull();
+      expect((await store.nextPendingBatch(due))?.id).toBe(attempt < 3 ? id : undefined);
+    }
+    await store.close();
+    store = await LogbookStore.open(dir, workerModuleUrl);
+    expect(await store.nextPendingBatch(Number.MAX_SAFE_INTEGER)).toBeNull();
+    await store.resetErrorBatches();
+    expect(await store.nextPendingBatch()).toMatchObject({ id, attempts: 0 });
+  });
+
+  it("gives unfinished observations bounded retention grace but expires completed vision normally", async () => {
+    const now = Date.now();
+    const dayMs = 86400000;
+    const pending = await insertFrame(now - 4 * dayMs);
+    const expired = await insertFrame(now - 8 * dayMs);
+    const complete = await insertFrame(now - 5 * dayMs);
+    const failedFrame = await insertFrame(now - 9 * dayMs);
+    const failedBatch = await store.createBatch({
+      day: dayKeyFor(now - 9 * dayMs),
+      startMs: now - 9 * dayMs,
+      endMs: now - 9 * dayMs + 1000,
+      frameIds: [failedFrame],
+    });
+    await store.beginBatch(failedBatch);
+    await store.setBatchStatus(failedBatch, "error", "vision timeout");
+    const batchId = await store.createBatch({
+      day: DAY,
+      startMs: now - 5 * dayMs,
+      endMs: now - 5 * dayMs + 1000,
+      frameIds: [complete],
+    });
+    const batch = expectDefined(await store.nextPendingBatch(), "vision batch");
+    await store.beginBatch(batchId);
+    await store.checkpointObservations(batch, batch.endMs, [
+      { startMs: batch.startMs, endMs: batch.endMs, text: "saved" },
+    ]);
+    await store.setBatchStatus(batchId, "error", "card synthesis failed");
+    expect(await store.pruneFrames(now - 3 * dayMs, now - 7 * dayMs)).toBe(3);
+    expect((await store.batchesForDay(dayKeyFor(now - 8 * dayMs)))[0]).toMatchObject({
+      status: "error",
+      attempts: 3,
+      frameCount: 1,
+      error: expect.stringContaining("unavailable"),
+    });
+    expect((await store.batchesForDay(dayKeyFor(now - 9 * dayMs)))[0]).toMatchObject({
+      id: failedBatch,
+      status: "error",
+      attempts: 3,
+    });
+    expect(await store.frameById(pending)).not.toBeNull();
+    expect(await store.frameById(expired)).toBeNull();
+    expect(await store.frameById(complete)).toBeNull();
+    expect(await store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER)).toHaveLength(1);
+    expect(await store.pruneFrames(now - 3 * dayMs, now - 3 * dayMs)).toBe(1);
+  });
+
+  it("reopens an old schema-1 database and remains readable and writable by old SQL", async () => {
+    await store.close();
+    const databasePath = path.join(dir, "logbook.sqlite");
+    const old = new DatabaseSync(databasePath);
+    old.exec(`ALTER TABLE batches DROP COLUMN observation_cursor;
+      ALTER TABLE batches DROP COLUMN attempts; ALTER TABLE batches DROP COLUMN retry_after_ms;
+      ALTER TABLE observations DROP COLUMN context_json;`);
+    old.exec(`INSERT INTO batches(day,start_ms,end_ms,status,error,frame_count,model,created_ms,updated_ms)
+      VALUES ('${DAY}',10,20,'error','legacy failure',1,NULL,10,20)`);
+    old.close();
+    store = await LogbookStore.open(dir, workerModuleUrl);
+    expect(await store.nextPendingBatch()).toMatchObject({
+      startMs: 10,
+      status: "error",
+      attempts: undefined,
+    });
+    await store.close();
+    const downgraded = new DatabaseSync(databasePath);
+    try {
+      expect(downgraded.prepare("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+      expect(
+        downgraded
+          .prepare("SELECT id,day,start_ms,end_ms,status,error,frame_count,model FROM batches")
+          .all(),
+      ).toHaveLength(1);
+      downgraded.exec(`INSERT INTO batches(day,start_ms,end_ms,status,frame_count,created_ms,updated_ms)
+        VALUES ('${DAY}',20,30,'done',1,20,30);
+        INSERT INTO observations(batch_id,day,start_ms,end_ms,text) VALUES (2,'${DAY}',20,30,'old writer');`);
+    } finally {
+      downgraded.close();
+    }
+    store = await LogbookStore.open(dir, workerModuleUrl);
+    expect(await store.batchesForDay(DAY)).toHaveLength(2);
+    expect((await store.observationsInRange(DAY, 0, 100))[0]?.text).toBe("old writer");
+  });
+
   it("replaces observations on batch retry instead of appending", async () => {
     const t0 = Date.now();
     const frameId = await insertFrame(t0);
@@ -520,7 +704,80 @@ describe("LogbookStore", () => {
     expect(requeued?.error).toBeUndefined();
   });
 
-  it("keeps capture data owner-only on disk", () => {
+  it.each(["later file removal", "SQLite transaction"])(
+    "resumes day deletion after %s fails without recreating removed files",
+    async (failure) => {
+      const t0 = new Date(`${DAY}T10:00:00`).getTime();
+      const frame = await insertFrame(t0);
+      const secondFrame = await insertFrame(t0 + 500);
+      const file = expectDefined(await store.frameById(frame), "first frame").path;
+      const secondFile = expectDefined(await store.frameById(secondFrame), "second frame").path;
+      await store.createBatch({
+        day: DAY,
+        startMs: t0,
+        endMs: t0 + 1000,
+        frameIds: [frame, secondFrame],
+      });
+      const batch = expectDefined(await store.nextPendingBatch(), "batch");
+      await store.beginBatch(batch.id);
+      await store.checkpointObservations(batch, batch.endMs, [
+        { startMs: t0, endMs: batch.endMs, text: "private" },
+      ]);
+      await store.replaceCardsInWindow(DAY, t0, t0 + 1000, [
+        draft({ startMs: t0, endMs: t0 + 1000, keyframeId: frame }),
+      ]);
+      await store.saveStandup(DAY, "derived");
+      await store.saveStandup("2026-07-04", "also derived");
+      await store.saveStandup("2026-07-05", "keep");
+      const database = new DatabaseSync(path.join(dir, "logbook.sqlite"));
+      try {
+        if (failure === "later file removal") {
+          rmSync(secondFile);
+          mkdirSync(secondFile);
+        } else {
+          database.exec(`CREATE TRIGGER reject_day_delete BEFORE DELETE ON batches
+            BEGIN SELECT RAISE(ABORT, 'injected transaction failure'); END`);
+        }
+        await expect(store.deleteDay(DAY)).rejects.toThrow();
+        // A real partial unlink happened; recovery must not depend on restoring it.
+        expect(existsSync(file)).toBe(false);
+        expect(await store.batchFrames(batch.id)).toHaveLength(2);
+        expect(await store.cardsForDay(DAY)).toHaveLength(1);
+        expect(await store.observationsInRange(DAY, t0, t0 + 1000)).toHaveLength(1);
+        expect((await store.getStandup(DAY))?.text).toBe("derived");
+        expect((await store.getStandup("2026-07-04"))?.text).toBe("also derived");
+        if (failure === "later file removal") {
+          rmSync(secondFile, { recursive: true });
+        } else {
+          expect(existsSync(secondFile)).toBe(false);
+          database.exec("DROP TRIGGER reject_day_delete");
+        }
+      } finally {
+        database.close();
+      }
+      await store.close();
+      store = await LogbookStore.open(dir, workerModuleUrl);
+      expect(await store.deleteDay(DAY)).toEqual({
+        frames: 2,
+        batches: 1,
+        observations: 1,
+        cards: 1,
+        standups: 2,
+      });
+      expect(existsSync(file)).toBe(false);
+      expect(existsSync(secondFile)).toBe(false);
+      expect(await store.frameById(frame)).toBeNull();
+      expect(await store.frameById(secondFrame)).toBeNull();
+      expect(await store.batchesForDay(DAY)).toEqual([]);
+      expect(await store.cardsForDay(DAY)).toEqual([]);
+      expect(await store.observationsInRange(DAY, 0, Number.MAX_SAFE_INTEGER)).toEqual([]);
+      expect(await store.getStandup(DAY)).toBeNull();
+      expect(await store.getStandup("2026-07-04")).toBeNull();
+      expect((await store.getStandup("2026-07-05"))?.text).toBe("keep");
+    },
+  );
+
+  it("keeps capture data owner-only on disk", async () => {
     const mode = (p: string) => statSync(p).mode & 0o777;
     expect(mode(dir)).toBe(0o700);
     expect(mode(store.framesDir)).toBe(0o700);

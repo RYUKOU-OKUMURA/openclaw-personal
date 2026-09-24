@@ -33,13 +33,15 @@ import {
   renderStopCardAction,
 } from "./view-card-actions.ts";
 import {
+  renderCardEventHistory,
   renderDependencyDetailList,
   renderDetailRow,
   renderTechnicalDetails,
 } from "./view-card-detail-records.ts";
+import { renderWorkboardDiscussion } from "./view-card-discussion.ts";
 import { renderCardDiscardDialog } from "./view-card-modal.ts";
+import { renderWorkboardRejection } from "./view-card-rejection.ts";
 import {
-  formatEventLabel,
   formatLifecycle,
   formatPriorityLabel,
   workboardErrorMessage,
@@ -289,14 +291,14 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
   const visibleAutomationFields = automationDetailFields(automation);
   const detailsDialog = renderDialog(
     {
-      className: "drawer drawer--floating",
+      className: "workboard-card-detail-modal",
       label: card.title,
       description:
         task && taskIsAuthoritative
           ? taskDetail(task)
           : (lifecycle.session?.displayName ?? formatted.detail),
       style:
-        "--openclaw-modal-width: 620px; --openclaw-modal-backdrop-filter: none; --wa-color-overlay-modal: rgba(0, 0, 0, 0.24);",
+        "--openclaw-modal-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-width: min(1000px, calc(100vw - 32px)); --openclaw-modal-max-height: min(calc(100dvh - 32px), 90dvh); --wa-transition-normal: 0ms;",
       onCancel: dismissDetails,
     },
     html`
@@ -572,21 +574,7 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
               ?hidden=${activeTab !== "activity"}
             >
               <section class="workboard-detail__section workboard-detail__activity">
-                ${
-                  events.length
-                    ? html`
-                        <h3>${t("workboard.eventsLabel")}</h3>
-                        <ol class="workboard-detail__list workboard-detail__events">
-                          ${events.map(
-                            (event) => html`<li>
-                              <span>${formatEventLabel(event)}</span>
-                              <time>${formatUpdatedTime(event.at)}</time>
-                            </li>`,
-                          )}
-                        </ol>
-                      `
-                    : nothing
-                }
+                ${renderCardEventHistory(events)}
                 ${
                   comments.length
                     ? html`
@@ -646,6 +634,7 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
                 }
               </section>
             </section>
+            ${renderWorkboardDiscussion(props, card)} ${renderWorkboardRejection(props, card)}
             ${technicalDetails}
             ${
               sessionTarget

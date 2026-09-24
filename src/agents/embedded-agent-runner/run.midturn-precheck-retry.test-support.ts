@@ -2,7 +2,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTextToolResult } from "../../../test/helpers/text-tool-result.js";
 import { buildEmbeddedRunnerAssistant } from "../test-helpers/embedded-agent-runner-e2e-fixtures.js";
-import { makeCompactionSuccess, makeOverflowError } from "./run.overflow-compaction.fixture.js";
+import {
+  makeAttemptResult,
+  makeCompactionSuccess,
+  makeOverflowError,
+} from "./run.overflow-compaction.fixture.js";
 import {
   mockedCompactDirect,
   mockedRunEmbeddedAttempt,
@@ -86,6 +90,39 @@ function makeReplayUnsafeMidTurnOverflow(params?: {
       completedCount: activeCount === 0 ? 1 : 0,
       activeCount,
     },
+  });
+}
+
+function makeReplayUnsafeTransportOverflow(params?: {
+  activeCount?: number;
+  asyncStarted?: boolean;
+  resultRecorded?: boolean;
+  yieldDetected?: boolean;
+  stopReason?: "error" | "length";
+}) {
+  const settled = makeReplayUnsafeMidTurnOverflow(params);
+  const stopReason = params?.stopReason ?? "error";
+  const assistant = buildEmbeddedRunnerAssistant({
+    content: [],
+    stopReason,
+    ...(stopReason === "error"
+      ? {
+          errorMessage:
+            "Context overflow: prompt too large; no room for output (estimated input 201000 tokens, context 200000 tokens).",
+        }
+      : {}),
+    timestamp: 3,
+  });
+  return makeAttemptResult({
+    ...settled,
+    // A transport error arrives on the assistant, without a mid-turn precheck marker.
+    terminal: { kind: "ok" },
+    preflightRecovery: undefined,
+    lastAssistant: assistant,
+    currentAttemptAssistant: assistant,
+    currentAttemptCompletedAssistant: assistant,
+    messagesSnapshot: [...settled.messagesSnapshot, assistant],
+    yieldDetected: params?.yieldDetected ?? false,
   });
 }
 
@@ -416,5 +453,82 @@ describe("runEmbeddedAgent mid-turn precheck retry", () => {
       kind: "compaction_failure",
       message: expect.stringContaining("compaction unavailable"),
     });
+  });
+
+  it("compacts an assistant transport overflow after settled tools and resumes their transcript", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(makeReplayUnsafeTransportOverflow())
+      .mockResolvedValueOnce(makeAttemptResult());
+    mockedCompactDirect.mockResolvedValueOnce(
+      makeCompactionSuccess({
+        summary: "Compacted after transport rejected the next request",
+        firstKeptEntryId: "entry-transport-overflow",
+        tokensBefore: 201_000,
+      }),
+    );
+
+    const result = await runEmbeddedAgent({
+      ...session.runParams,
+      runId: "run-settled-transport-overflow",
+    });
+
+    expect(mockedCompactDirect).toHaveBeenCalledOnce();
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expectRetryContinuesFromTranscript();
+    expect(mockedRunEmbeddedAttempt.mock.calls[1]?.[0].disableTools).not.toBe(true);
+    expect(result.meta.error).toBeUndefined();
+  });
+
+  it.each([
+    ["an unrecorded tool result", { resultRecorded: false }],
+    ["an active lifecycle item", { activeCount: 1 }],
+    ["asynchronous work", { asyncStarted: true }],
+    ["an intentional yield", { yieldDetected: true }],
+    ["a length stop without a context overflow error", { stopReason: "length" as const }],
+  ])("does not compact a transport turn with %s", async (_label, attemptParams) => {
+    const finalAssistant = buildEmbeddedRunnerAssistant({
+      content: [{ type: "text", text: "The task remains incomplete." }],
+      stopReason: "stop",
+    });
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(makeReplayUnsafeTransportOverflow(attemptParams))
+      // A length stop may use the existing text-only finalizer; it must not gain tool replay.
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          assistantTexts: ["The task remains incomplete."],
+          lastAssistant: finalAssistant,
+          currentAttemptAssistant: finalAssistant,
+        }),
+      );
+
+    await runEmbeddedAgent({
+      ...session.runParams,
+      runId: "run-transport-overflow-without-settlement",
+    });
+
+    expect(mockedCompactDirect).not.toHaveBeenCalled();
+    expect(
+      mockedRunEmbeddedAttempt.mock.calls.filter(([attempt]) => attempt.disableTools !== true),
+    ).toHaveLength(1);
+  });
+
+  it("surfaces a transport overflow when compaction after settled tools fails", async () => {
+    mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeReplayUnsafeTransportOverflow());
+    mockedCompactDirect.mockResolvedValueOnce({
+      ok: false,
+      compacted: false,
+      reason: "compaction unavailable",
+    });
+
+    const result = await runEmbeddedAgent({
+      ...session.runParams,
+      runId: "run-transport-overflow-compaction-failure",
+    });
+
+    expect(mockedCompactDirect).toHaveBeenCalledOnce();
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledOnce();
+    expect(result.meta.error).toBeDefined();
+    expect(result.payloads?.[0]?.text).toContain("Try /reset (or /new)");
+    expect(result.payloads?.[0]?.text).toContain("Completed tool actions were not replayed");
   });
 });

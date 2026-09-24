@@ -103,7 +103,7 @@ const runBeforeToolCallHookMock = vi.hoisted(() =>
 );
 
 const resolveGatewayScopedToolsMock = vi.hoisted(() =>
-  vi.fn<(...args: unknown[]) => MockGatewayScopedTools>(() => ({
+  vi.fn<(...args: unknown[]) => MockGatewayScopedTools | Promise<MockGatewayScopedTools>>(() => ({
     agentId: "main",
     tools: [
       {
@@ -4101,8 +4101,10 @@ describe("collector result tool across the loopback MCP boundary", () => {
     const { resolveGatewayScopedTools: resolveActual } =
       await vi.importActual<typeof import("./tool-resolution.js")>("./tool-resolution.js");
     resolveGatewayScopedToolsMock.mockImplementation(
-      (...args) =>
-        resolveActual(...(args as Parameters<typeof resolveActual>)) as MockGatewayScopedTools,
+      async (...args) =>
+        (await resolveActual(
+          ...(args as Parameters<typeof resolveActual>),
+        )) as MockGatewayScopedTools,
     );
   });
 

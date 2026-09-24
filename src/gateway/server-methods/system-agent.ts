@@ -13,6 +13,7 @@ import {
   validateSystemAgentSetupVerifyParams,
   type SystemAgentChatQuestion,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { getGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { defaultRuntime } from "../../runtime.js";
 import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
@@ -380,6 +381,32 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateSystemAgentChatParams, "openclaw.chat", respond)) {
       return;
     }
+    const specialistCaller = getGatewayToolCallerIdentity();
+    const specialistProposal = specialistCaller?.specialistProposal;
+    if (params.sessionId.startsWith("specialists-") || specialistProposal) {
+      if (
+        !params.sessionId.startsWith("specialists-") ||
+        !specialistProposal ||
+        specialistProposal.kind !== "create-specialist" ||
+        specialistCaller?.fullPermission !== false ||
+        params.delegation?.agentId !== specialistProposal.requesterAgentId ||
+        specialistCaller.agentId !== specialistProposal.requesterAgentId ||
+        params.delegation?.sessionKey !== specialistCaller.sessionKey ||
+        params.reset ||
+        params.wizardAnswer !== undefined ||
+        params.wizardCancel !== undefined
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "Specialist creation requires its host-prepared caller capability.",
+          ),
+        );
+        return;
+      }
+    }
     const inputError = getSystemAgentChatInputError(params);
     if (inputError) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, inputError));
@@ -484,7 +511,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
         });
         // `reset: true` keeps the durable logbook but deliberately starts
         // model context clean; only ordinary fresh sessions receive its tail.
-        if (!params.reset) {
+        if (!params.reset && !specialistProposal) {
           engine.seedHistory(
             readTranscriptTail(SYSTEM_AGENT_SEED_HISTORY_LIMIT, { afterLastReset: true }).map(
               ({ role, text }) => ({ role, text }),
@@ -496,7 +523,9 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
         let welcome: string;
         let welcomeQuestion: SystemAgentChatQuestion | undefined;
         try {
-          if (params.welcomeVariant === "onboarding") {
+          if (specialistProposal) {
+            welcome = "専用担当の作成内容を確認してください。";
+          } else if (params.welcomeVariant === "onboarding") {
             const onboardingWelcome = await buildOnboardingWelcome({ engine });
             welcome = onboardingWelcome.text;
             welcomeQuestion = onboardingWelcome.question;
@@ -617,10 +646,15 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
             delegation: params.delegation,
           });
         }
-        const turnReply = await runSystemAgentChatInput({
-          engine: session.engine,
-          input: params,
-        });
+        if (specialistProposal && !session.engine.propose) {
+          throw new Error("Specialist proposal engine unavailable.");
+        }
+        const turnReply = specialistProposal
+          ? { text: session.engine.propose!(specialistProposal), action: "none" as const }
+          : await runSystemAgentChatInput({
+              engine: session.engine,
+              input: params,
+            });
         if (!turnReply) {
           respond(
             false,

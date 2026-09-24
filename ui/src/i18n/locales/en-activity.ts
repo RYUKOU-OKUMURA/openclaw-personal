@@ -4,6 +4,18 @@ import { en } from "./en.ts";
 // Activity-only copy is registered when the lazy Activity page loads so the
 // diagnostic inspector does not tax every Control UI startup.
 const enActivity = {
+  logbook: {
+    status: {
+      schedulePaused: "Capture paused by schedule",
+    },
+    schedule: {
+      title: "Capture pause schedule",
+      help: "Daily, in {timeZone}. Only screen capture pauses; analysis continues. Matching times pause all day. Manual pause stays in effect after this window ends.",
+      enabled: "Pause capture during this window",
+      start: "Pause at",
+      end: "Resume at",
+    },
+  },
   activity: {
     images: {
       failed: "Image previews are unavailable. Open the session or retry.",
@@ -279,6 +291,8 @@ const enActivity = {
 export const registerActivityEnglish = Object.assign(
   () => {
     en.activity = enActivity.activity;
+    Object.assign(en.logbook.status as TranslationMap, enActivity.logbook.status);
+    Object.assign(en.logbook as TranslationMap, { schedule: enActivity.logbook.schedule });
   },
   { catalog: enActivity },
 );

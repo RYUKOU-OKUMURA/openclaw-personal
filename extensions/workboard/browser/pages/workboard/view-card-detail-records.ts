@@ -6,9 +6,27 @@ import { formatUiExternalText } from "../../lib/format-error.ts";
 import type {
   WorkboardCard,
   WorkboardDependencyState,
+  WorkboardEvent,
   WorkboardTaskSummary,
 } from "../../lib/workboard/index.ts";
-import { formatStatusLabel, formatUpdatedTime } from "./view-helpers.ts";
+import { formatEventLabel, formatStatusLabel, formatUpdatedTime } from "./view-helpers.ts";
+
+export function renderCardEventHistory(events: readonly WorkboardEvent[]) {
+  if (!events.length) {
+    return nothing;
+  }
+  return html`
+    <h3>${t("workboard.eventsLabel")}</h3>
+    <ol class="workboard-detail__list workboard-detail__events">
+      ${events.map(
+        (event) => html`<li>
+          <span>${formatEventLabel(event)}</span>
+          <time>${formatUpdatedTime(event.at)}</time>
+        </li>`,
+      )}
+    </ol>
+  `;
+}
 
 export function renderDependencyDetailList(dependencies: WorkboardDependencyState) {
   if (dependencies.parents.length === 0) {

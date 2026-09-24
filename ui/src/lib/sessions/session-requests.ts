@@ -4,6 +4,7 @@ import type {
   SessionsListParams,
   SessionsPatchManyParams,
   SessionsPatchManyResult,
+  SessionsFilesRevealResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../../src/shared/session-archive-timeout.ts";
 import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../../src/shared/session-list-limits.ts";
@@ -262,13 +263,14 @@ export function requestSessionCompact(
 export function requestSessionFilesList(
   client: SessionRequestClient,
   key: string,
-  options: { agentId?: string | null; path?: string; search?: string } = {},
+  options: { agentId?: string | null; path?: string; search?: string; rootId?: string | null } = {},
 ): Promise<SessionWorkspaceListResult | null> {
   return client.request<SessionWorkspaceListResult | null>("sessions.files.list", {
     sessionKey: key,
     path: options.path ?? "",
     search: options.search ?? "",
     ...(options.agentId?.trim() ? { agentId: options.agentId.trim() } : {}),
+    ...(options.rootId?.trim() ? { rootId: options.rootId.trim() } : {}),
   });
 }
 
@@ -276,12 +278,25 @@ export function requestSessionFile(
   client: SessionRequestClient,
   key: string,
   path: string,
-  options: { agentId?: string | null } = {},
+  options: { agentId?: string | null; rootId?: string | null } = {},
 ): Promise<SessionWorkspaceGetResult | null> {
   return client.request<SessionWorkspaceGetResult | null>("sessions.files.get", {
     sessionKey: key,
     path,
     ...(options.agentId?.trim() ? { agentId: options.agentId.trim() } : {}),
+    ...(options.rootId?.trim() ? { rootId: options.rootId.trim() } : {}),
+  });
+}
+
+export function requestSessionFilesReveal(
+  client: SessionRequestClient,
+  key: string,
+  options: { agentId?: string | null; rootId?: string | null } = {},
+): Promise<SessionsFilesRevealResult> {
+  return client.request<SessionsFilesRevealResult>("sessions.files.reveal", {
+    key,
+    ...(options.agentId?.trim() ? { agentId: options.agentId.trim() } : {}),
+    ...(options.rootId?.trim() ? { rootId: options.rootId.trim() } : {}),
   });
 }
 

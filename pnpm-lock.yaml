@@ -1467,6 +1467,10 @@ importers:
         version: link:../../packages/plugin-sdk
 
   extensions/logbook:
+    dependencies:
+      typebox:
+        specifier: 1.3.30
+        version: 1.3.30
     devDependencies:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
@@ -2419,6 +2423,9 @@ importers:
       '@openclaw/gateway-protocol':
         specifier: workspace:*
         version: link:../../packages/gateway-protocol
+      '@openclaw/session-url-contract':
+        specifier: workspace:*
+        version: link:../../packages/session-url-contract
       '@openclaw/workboard-contract':
         specifier: workspace:*
         version: link:../../packages/workboard-contract

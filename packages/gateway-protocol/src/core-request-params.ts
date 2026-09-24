@@ -9,6 +9,7 @@ import type {
   EnvironmentsSessionDestroyParams,
   EnvironmentsSessionExecParams,
 } from "./schema/environments.js";
+import type { FsPickPathParams } from "./schema/fs.js";
 import type * as HumanMentionsSchema from "./schema/human-mentions.js";
 import type { LogsTailParams } from "./schema/logs-chat.js";
 import type { PortalCloseParams, PortalListParams, PortalOpenParams } from "./schema/portals.js";
@@ -48,6 +49,7 @@ export type GatewayCoreRequestParams = {
   "logs.tail": LogsTailParams;
   "mentions.list": HumanMentionsSchema.MentionsListParams;
   "mentions.dismiss": HumanMentionsSchema.MentionsDismissParams;
+  "fs.pickPath": FsPickPathParams;
   "portal.close": PortalCloseParams;
   "portal.list": PortalListParams;
   "portal.open": PortalOpenParams;

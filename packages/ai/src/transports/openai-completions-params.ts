@@ -501,7 +501,15 @@ export function buildOpenAICompletionsRequest(
       effectiveContextTokens !== undefined
     ) {
       const estimatedInputTokens = estimateOpenAICompletionsInputTokens(params);
-      const remainingBudget = Math.max(1, effectiveContextTokens - estimatedInputTokens - 1);
+      const remainingBudget = effectiveContextTokens - estimatedInputTokens - 1;
+      if (remainingBudget < 1) {
+        // Let context recovery compact the transcript before sending a request
+        // whose output budget cannot fit, instead of inducing a length stop.
+        throw new Error(
+          `Context overflow: prompt too large; no room for output ` +
+            `(estimated input ${estimatedInputTokens}, context ${effectiveContextTokens}).`,
+        );
+      }
       if (clampedMaxTokens > remainingBudget) {
         clampedMaxTokens = remainingBudget;
         emitModelTransportDebug(

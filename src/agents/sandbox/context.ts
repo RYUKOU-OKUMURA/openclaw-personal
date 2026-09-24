@@ -20,20 +20,19 @@ import { createLazyRuntimeNamedExport } from "../../shared/lazy-runtime.js";
 import { prepareRemoteSkillConnections } from "../../skills/runtime/remote-skills.js";
 import type { SkillEligibilityContext, SkillSnapshot, SkillUsagePath } from "../../skills/types.js";
 import type { ExecPolicyOverrides } from "../exec-defaults.js";
-import {
-  resolveSubagentSessionAttachmentRootDir,
-  SANDBOX_SUBAGENT_ATTACHMENTS_MOUNT,
-} from "../subagents/subagent-attachment-paths.js";
+import { resolveSubagentSessionAttachmentRootDir } from "../subagents/subagent-attachment-paths.js";
 import { createSandboxBackend, getSandboxBackendWorkdirResolver } from "./backend.js";
 import { ensureSandboxBrowser } from "./browser.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
 import { resolveSandboxDockerUser } from "./docker-user.js";
+import { buildSandboxFileLocationsPrompt } from "./file-locations-prompt.js";
 import { createSandboxFsBridge } from "./fs-bridge.js";
 import { hashTextSha256 } from "./hash.js";
 import { toSandboxProvisioningError } from "./provisioning-error.js";
 import { readRegisteredSandboxRuntimeIds } from "./registry.js";
 import { resolveSandboxRuntimeStatus } from "./runtime-status.js";
 import { assertSshSandboxSecretOwnerAvailable } from "./secret-owner.js";
+import { resolveSandboxSessionResourceMounts } from "./session-resource-mounts.js";
 import { resolveSandboxWorkspaceLayoutPaths } from "./shared.js";
 import type { SandboxContext, SandboxIsolationSubject, SandboxWorkspaceInfo } from "./types.js";
 import { ensureSandboxWorkspace } from "./workspace.js";
@@ -349,28 +348,11 @@ async function resolveProvisionedSandboxContext(
     workspaceDir,
   });
   const resolvedCfg = docker === cfg.docker ? cfg : { ...cfg, docker };
-  const readOnlyResourceMounts =
-    resolvedCfg.scope === "shared"
-      ? undefined
-      : await (async () => {
-          const hostPath = resolveSubagentSessionAttachmentRootDir({
-            agentId: runtime.agentId,
-            childSessionKey: rawSessionKey,
-          });
-          try {
-            if (!(await fs.stat(hostPath)).isDirectory()) {
-              return undefined;
-            }
-            return [
-              {
-                hostPath: await fs.realpath(hostPath),
-                containerPath: SANDBOX_SUBAGENT_ATTACHMENTS_MOUNT,
-              },
-            ];
-          } catch {
-            return undefined;
-          }
-        })();
+  const readOnlyResourceMounts = await resolveSandboxSessionResourceMounts({
+    scope: resolvedCfg.scope,
+    agentId: runtime.agentId,
+    sessionKey: rawSessionKey,
+  });
 
   const registeredRuntimeIds = await readRegisteredSandboxRuntimeIds({
     backendId: resolvedCfg.backend,
@@ -474,6 +456,7 @@ async function resolveProvisionedSandboxContext(
   sandboxContext.fsBridge =
     backend.createFsBridge?.({ sandbox: sandboxContext }) ??
     createSandboxFsBridge({ sandbox: sandboxContext });
+  sandboxContext.fileLocationsPrompt = buildSandboxFileLocationsPrompt(sandboxContext);
 
   if (localWorkspace) {
     localWorkspace.assertCurrent();

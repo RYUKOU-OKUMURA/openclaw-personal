@@ -1,5 +1,7 @@
 // Cron snapshot tests cover runtime skill state attached to scheduled runs.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveNodeExecEligibility } from "../../agents/exec-defaults.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
 const {
   resolveNodeExecEligibilityMock,
@@ -25,6 +27,7 @@ const { resolveCronSkillsSnapshot } = await import("./cron-snapshot.js");
 describe("resolveCronSkillsSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveNodeExecEligibilityMock.mockReset().mockReturnValue({ canExec: false });
     resolveEffectiveAgentSkillFilterMock.mockReturnValue(undefined);
     getRemoteSkillEligibilityMock.mockReturnValue({
       platforms: [],
@@ -38,6 +41,36 @@ describe("resolveCronSkillsSnapshot", () => {
     });
   });
 
+  it.each([
+    { mode: "all", canExec: false },
+    { mode: "off", canExec: true },
+  ] as const)(
+    "keeps remote skill eligibility consistent with cron sandbox mode=$mode",
+    async ({ mode, canExec }) => {
+      const config: OpenClawConfig = {
+        agents: {
+          ownership: "explicit",
+          entries: { main: { sandbox: { mode } } },
+        },
+        tools: { exec: { host: "auto" } },
+      };
+      resolveNodeExecEligibilityMock.mockImplementation((params) =>
+        resolveNodeExecEligibility({ ...params, execApprovals: { version: 1, agents: {} } }),
+      );
+      await resolveCronSkillsSnapshot({
+        workspaceDir: "/tmp/workspace",
+        config,
+        agentId: "main",
+        sessionKey: "agent:main:cron:followups",
+        isFastTestEnv: false,
+      });
+      const eligibility =
+        resolveReusableWorkspaceSkillSnapshotMock.mock.calls[0]?.[0].resolveEligibility();
+      expect(getRemoteSkillEligibilityMock).toHaveBeenCalledWith({ advertiseExecNode: canExec });
+      expect(eligibility.nodeSkills).toEqual({ canExec });
+    },
+  );
+
   it("refreshes when the cached skill filter changes", async () => {
     resolveEffectiveAgentSkillFilterMock.mockReturnValue(["docs-search", "github"]);
 
@@ -45,6 +78,7 @@ describe("resolveCronSkillsSnapshot", () => {
       workspaceDir: "/tmp/workspace",
       config: {} as never,
       agentId: "writer",
+      sessionKey: "agent:writer:cron:test",
       existingSnapshot: {
         prompt: "old",
         skills: [{ name: "github" }],
@@ -69,6 +103,7 @@ describe("resolveCronSkillsSnapshot", () => {
       workspaceDir: "/tmp/workspace",
       config: {} as never,
       agentId: "writer",
+      sessionKey: "agent:writer:cron:test",
       existingSnapshot: {
         prompt: "old",
         skills: [{ name: "github" }],

@@ -4,6 +4,7 @@
  * Lists and removes registered runtime and browser containers using backend manager status.
  */
 import { getRuntimeConfig } from "../../config/config.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getSandboxBackendManager, usesSandboxRuntimeReservations } from "./backend.js";
 import {
   BROWSER_BRIDGES,
@@ -48,35 +49,41 @@ function toBrowserDockerRuntimeEntry(entry: SandboxBrowserRegistryEntry): Sandbo
   };
 }
 
+/** Describes one registered container without probing unrelated backends or workspaces. */
+export async function describeSandboxContainer(
+  entry: SandboxRegistryEntry,
+  config: OpenClawConfig,
+): Promise<SandboxContainerInfo> {
+  const backendId = entry.backendId ?? "docker";
+  const manager = getSandboxBackendManager(backendId);
+  if (!manager) {
+    return {
+      ...entry,
+      running: false,
+      imageMatch: true,
+    };
+  }
+  const agentId = resolveSandboxAgentId(entry.sessionKey);
+  const runtime = await manager.describeRuntime({
+    entry,
+    config,
+    agentId,
+  });
+  return {
+    ...entry,
+    image: runtime.actualConfigLabel ?? entry.image,
+    running: runtime.running,
+    imageMatch: runtime.configLabelMatch,
+  };
+}
+
 /** Lists registered sandbox containers with live backend status and config-label match state. */
 export async function listSandboxContainers(): Promise<SandboxContainerInfo[]> {
   const config = getRuntimeConfig();
   const registry = await readRegistry();
   const results: SandboxContainerInfo[] = [];
-
   for (const entry of registry.entries) {
-    const backendId = entry.backendId ?? "docker";
-    const manager = getSandboxBackendManager(backendId);
-    if (!manager) {
-      results.push({
-        ...entry,
-        running: false,
-        imageMatch: true,
-      });
-      continue;
-    }
-    const agentId = resolveSandboxAgentId(entry.sessionKey);
-    const runtime = await manager.describeRuntime({
-      entry,
-      config,
-      agentId,
-    });
-    results.push({
-      ...entry,
-      image: runtime.actualConfigLabel ?? entry.image,
-      running: runtime.running,
-      imageMatch: runtime.configLabelMatch,
-    });
+    results.push(await describeSandboxContainer(entry, config));
   }
 
   return results;
@@ -184,26 +191,34 @@ export async function removeSandboxContainer(containerName: string): Promise<voi
   const registry = await readRegistry();
   const entry = registry.entries.find((item) => item.containerName === containerName);
   if (entry) {
-    const backendId = entry.backendId ?? "docker";
-    const manager = getSandboxBackendManager(backendId);
-    if (!manager) {
-      throw new Error(
-        `Sandbox backend "${backendId}" is unavailable; enable its plugin before removing this runtime.`,
-      );
-    }
-    await removeSandboxRegistryRuntime(
-      entry,
-      (current) =>
-        manager.removeRuntime({
-          entry: current,
-          config,
-          agentId: resolveSandboxAgentId(current.sessionKey),
-        }),
-      { reserveRuntime: usesSandboxRuntimeReservations(backendId) },
-    );
+    await removeSandboxContainerEntry(entry, config);
     return;
   }
   await removeRegistryEntry(containerName);
+}
+
+/** Removes the selected entry without resolving its name into another backend or scope. */
+export async function removeSandboxContainerEntry(
+  entry: SandboxRegistryEntry,
+  config: OpenClawConfig,
+): Promise<void> {
+  const backendId = entry.backendId ?? "docker";
+  const manager = getSandboxBackendManager(backendId);
+  if (!manager) {
+    throw new Error(
+      `Sandbox backend "${backendId}" is unavailable; enable its plugin before removing this runtime.`,
+    );
+  }
+  await removeSandboxRegistryRuntime(
+    entry,
+    (current) =>
+      manager.removeRuntime({
+        entry: current,
+        config,
+        agentId: resolveSandboxAgentId(current.sessionKey),
+      }),
+    { reserveRuntime: usesSandboxRuntimeReservations(backendId) },
+  );
 }
 
 /** Removes one browser sandbox container, registry entry, and any in-process bridge server. */

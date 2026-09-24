@@ -24,7 +24,6 @@ import {
   resolveScheduledToolPolicyContext,
 } from "../../agents/scheduled-tool-policy.js";
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { needsThinkHydration } from "../../agents/thinking-runtime.js";
 import { resolveAgentLifecycleTerminalMetadata } from "../../auto-reply/reply/agent-lifecycle-terminal.js";
 import type { VerboseLevel } from "../../auto-reply/thinking.js";
@@ -72,12 +71,13 @@ import {
 } from "./run-execution.runtime.js";
 import type { CronRunExecutionParams } from "./run-execution.types.js";
 import { resolveCronFallbacksOverride } from "./run-fallback-policy.js";
+import { resolveCronAgentRuntime } from "./run-prepare-runtime.js";
 import {
   setCronSessionAgentHarnessId,
   setCronSessionRuntimeModel,
   syncCronSessionLiveSelection,
 } from "./run-session-state.js";
-import { resolveThinkingSelection } from "./run.runtime.js";
+import { resolveEffectiveAgentRuntime, resolveThinkingSelection } from "./run.runtime.js";
 import type {
   CronCompletedPromptRun,
   CronExecutionResult,
@@ -231,7 +231,37 @@ function createCronPromptExecutor(
   const currentAttemptCommittedMedia = () =>
     hasNewGeneratedMediaTaskForSessionKey(params.runSessionKey, attemptMediaTaskIds);
 
-  const resolveCandidateExecution = createCronCandidateExecutionResolver(params);
+  const resolveCandidateExecutionBase = createCronCandidateExecutionResolver(params);
+  const resolveCandidateExecution = (
+    provider: string,
+    model: string,
+    agentHarnessRuntimeOverride?: string,
+  ) => {
+    const runtimeResolution = resolveCronAgentRuntime({
+      cfg: params.cfgWithAgentDefaults,
+      provider,
+      modelId: model,
+      agentId: params.agentId,
+      sessionKey: params.runSessionKey,
+      sessionEntry: params.cronSession.sessionEntry,
+      executionRoot: params.executionRoot,
+      declarationKey: params.job.declarationKey,
+      resolvedRuntime: resolveEffectiveAgentRuntime({
+        cfg: params.cfgWithAgentDefaults,
+        provider,
+        modelId: model,
+        agentId: params.agentId,
+        sessionKey: params.runSessionKey,
+        sessionEntry: params.cronSession.sessionEntry,
+      }),
+    });
+    const runtimeOverride = agentHarnessRuntimeOverride ?? runtimeResolution.runtimeOverride;
+    return {
+      ...resolveCandidateExecutionBase(provider, model, runtimeOverride),
+      runtime: runtimeOverride ?? runtimeResolution.runtime,
+      runtimeOverride,
+    };
+  };
 
   return async (promptText: string, runStartedAt: number): Promise<CronCompletedPromptRun> => {
     // A retry can fail during preparation, before any backend start callback.
@@ -319,18 +349,10 @@ function createCronPromptExecutor(
         workspaceDir: params.executionRoot ?? params.workspaceDir,
         sessionKey: params.runSessionKey,
         preparation: { kind: "direct" },
-        resolveRuntimeOverride: (provider) =>
-          resolveSessionRuntimeOverrideForProvider({
-            provider,
-            entry: params.cronSession.sessionEntry,
-            cfg: params.cfgWithAgentDefaults,
-          }),
-        resolveContextEngineHost: (provider, model, runtimeOverride) => {
-          const { executionProvider, cliExecution } = resolveCandidateExecution(
-            provider,
-            model,
-            runtimeOverride,
-          );
+        resolveRuntimeOverride: (provider, model) =>
+          resolveCandidateExecution(provider, model).runtimeOverride,
+        resolveContextEngineHost: (provider, model) => {
+          const { executionProvider, cliExecution } = resolveCandidateExecution(provider, model);
           if (!cliExecution) {
             return undefined;
           }
@@ -371,10 +393,10 @@ function createCronPromptExecutor(
           throw new Error(params.abortReason());
         }
         const {
-          sessionRuntimeOverride,
           executionProvider,
           cliExecution,
           runtime: candidateRuntime,
+          runtimeOverride,
         } = resolveCandidateExecution(
           providerOverride,
           modelOverride,
@@ -650,7 +672,8 @@ function createCronPromptExecutor(
           agentDir: params.agentDir,
           ...rootedAgentRunParams(params.workspaceDir, params.executionRoot),
           provider: providerOverride,
-          agentHarnessRuntimeOverride: sessionRuntimeOverride,
+          model: modelOverride,
+          agentHarnessRuntimeOverride: runtimeOverride,
           requestedRouteResolution: "resolved",
           modelFallbacksOverride: cronFallbacksOverride,
           authProfileId: params.liveSelection.authProfileId,

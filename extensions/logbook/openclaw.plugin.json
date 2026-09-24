@@ -1,6 +1,8 @@
 {
   "id": "logbook",
-  "categories": ["productivity"],
+  "categories": [
+    "productivity"
+  ],
   "name": "Logbook",
   "description": "Automatic work journal: captures periodic screen snapshots from a paired node and turns them into a reviewable timeline of your day.",
   "enabledByDefault": false,
@@ -33,7 +35,12 @@
     "visionModel": {
       "label": "Vision Model",
       "placeholder": "codex/gpt-6-astra",
-      "help": "provider/model used to read snapshots; the provider must support structured extraction (the bundled Codex plugin does). Defaults to the first image-capable Codex entry under tools.media."
+      "help": "provider/model used to read snapshots; the provider must support structured extraction (the bundled Codex and Ollama plugins do). Defaults to the first image-capable Codex entry under tools.media."
+    },
+    "textModel": {
+      "label": "Text Model",
+      "placeholder": "ollama/gemma4:12b",
+      "help": "provider/model for timeline cards, daily summaries, and questions. Defaults to the agent's configured model. Explicit selection requires plugins.entries.logbook.llm.allowModelOverride; use allowedCompletionModels to restrict all text completions."
     },
     "captureEnabled": {
       "label": "Capture Enabled",
@@ -41,8 +48,12 @@
     },
     "retentionDays": {
       "label": "Frame Retention (days)",
-      "help": "Snapshots older than this are deleted. Timeline cards are kept.",
+      "help": "Completed observation snapshots older than this are deleted. Unfinished snapshots have at least seven days of grace. Text records are kept until explicitly deleted.",
       "advanced": true
+    },
+    "captureSchedule": {
+      "label": "Daily Capture Pause",
+      "help": "Pause screen capture daily between start and end (HH:MM, Gateway local time). Analysis continues. Omit to disable."
     }
   },
   "configGroups": [
@@ -55,20 +66,27 @@
         "captureIntervalSeconds",
         "nodeId",
         "screenIndex",
-        "maxWidth"
+        "maxWidth",
+        "captureSchedule"
       ]
     },
     {
       "id": "activity-analysis",
       "title": "Activity analysis",
       "order": 20,
-      "properties": ["analysisIntervalMinutes", "visionModel"]
+      "properties": [
+        "analysisIntervalMinutes",
+        "visionModel",
+        "textModel"
+      ]
     },
     {
       "id": "retention",
       "title": "Retention",
       "order": 30,
-      "properties": ["retentionDays"]
+      "properties": [
+        "retentionDays"
+      ]
     }
   ],
   "configSchema": {
@@ -101,10 +119,36 @@
       "visionModel": {
         "type": "string"
       },
+      "textModel": {
+        "type": "string"
+      },
       "retentionDays": {
         "type": "number",
         "default": 14
+      },
+      "captureSchedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "start": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "end": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          }
+        }
       }
     }
+  },
+  "contracts": {
+    "tools": [
+      "logbook_context"
+    ]
   }
 }

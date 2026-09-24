@@ -6,6 +6,7 @@ import type {
   LogbookCard,
   LogbookDistraction,
   LogbookFrame,
+  LogbookObservationContext,
 } from "./types.js";
 
 export const LOGBOOK_SCHEMA_VERSION = 1;
@@ -33,6 +34,9 @@ export type LogbookDatabase = {
     error: string | null;
     frame_count: number;
     model: string | null;
+    observation_cursor: number | null;
+    attempts: number | null;
+    retry_after_ms: number | null;
     created_ms: number;
     updated_ms: number;
   };
@@ -43,6 +47,7 @@ export type LogbookDatabase = {
     start_ms: number;
     end_ms: number;
     text: string;
+    context_json: string | null;
   };
   cards: {
     id: Generated<number>;
@@ -128,7 +133,7 @@ CREATE TABLE IF NOT EXISTS standups (
 `;
 
 type FrameRow = Omit<Selectable<LogbookDatabase["frames"]>, "content_hash" | "batch_id">;
-type BatchRow = Omit<Selectable<LogbookDatabase["batches"]>, "created_ms" | "updated_ms">;
+export type BatchRow = Omit<Selectable<LogbookDatabase["batches"]>, "created_ms" | "updated_ms">;
 
 export function toFrame(row: FrameRow): LogbookFrame {
   return {
@@ -154,7 +159,47 @@ export function toBatch(row: BatchRow): LogbookBatch {
     error: row.error ?? undefined,
     frameCount: row.frame_count,
     model: row.model ?? undefined,
+    observationCursor: row.observation_cursor ?? undefined,
+    attempts: row.attempts ?? undefined,
+    retryAfterMs: row.retry_after_ms ?? undefined,
   };
+}
+
+export function parseObservationContext(raw: string | null): LogbookObservationContext | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("version" in value) ||
+      value.version !== 1 ||
+      !("target" in value) ||
+      typeof value.target !== "string" ||
+      !("activity" in value) ||
+      typeof value.activity !== "string" ||
+      !("result" in value) ||
+      typeof value.result !== "string" ||
+      !("unresolved" in value) ||
+      typeof value.unresolved !== "string" ||
+      !("uncertainty" in value) ||
+      typeof value.uncertainty !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      version: 1,
+      target: value.target,
+      activity: value.activity,
+      result: value.result,
+      unresolved: value.unresolved,
+      uncertainty: value.uncertainty,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function parseDistractions(raw: string): LogbookDistraction[] {
