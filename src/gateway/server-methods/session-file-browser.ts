@@ -48,10 +48,13 @@ function mergeRelevance(
 function relevanceForBrowserPath(
   browserPath: string,
   kind: "file" | "directory",
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
+  relevance: ReadonlyMap<string, SessionFileRelevance> | undefined,
 ): SessionFileRelevance | undefined {
   if (kind === "file") {
-    return relevance.get(browserPath);
+    return relevance?.get(browserPath);
+  }
+  if (!relevance) {
+    return undefined;
   }
   const prefix = browserPath ? `${browserPath}/` : "";
   let aggregate: SessionFileRelevance | undefined;
@@ -63,11 +66,11 @@ function relevanceForBrowserPath(
   return aggregate;
 }
 
-async function toBrowserEntry(
+function toBrowserEntry(
   browserPath: string,
   dirent: WorkspaceDirEntry,
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
-): Promise<SessionFileBrowserEntry | undefined> {
+  relevance?: ReadonlyMap<string, SessionFileRelevance>,
+): SessionFileBrowserEntry | undefined {
   const kind = dirent.isDirectory ? "directory" : dirent.isFile ? "file" : null;
   if (!kind) {
     return undefined;
@@ -94,8 +97,8 @@ function matchesSearch(entryPath: string, name: string, query: string): boolean 
 async function searchBrowserEntries(params: {
   root: string | WorkspaceRoot;
   query: string;
-  relevance: ReadonlyMap<string, SessionFileRelevance>;
   startPath?: string;
+  relevance?: ReadonlyMap<string, SessionFileRelevance>;
 }): Promise<{ entries: SessionFileBrowserEntry[]; truncated?: boolean }> {
   const entries: SessionFileBrowserEntry[] = [];
   let visitedEntries = 0;
@@ -122,7 +125,7 @@ async function searchBrowserEntries(params: {
       visitedEntries += 1;
       const browserPath = dir ? `${dir}/${dirent.name}` : dirent.name;
       if (matchesSearch(browserPath, dirent.name, params.query)) {
-        const entry = await toBrowserEntry(browserPath, dirent, params.relevance);
+        const entry = toBrowserEntry(browserPath, dirent, params.relevance);
         if (entry) {
           entries.push(entry);
         }
@@ -148,13 +151,12 @@ export async function buildWorkspaceBrowser(params: {
     return undefined;
   }
   const search = normalizeOptionalString(params.search);
-  const relevance = params.relevance ?? new Map<string, SessionFileRelevance>();
   if (search) {
     const result = await searchBrowserEntries({
       root: params.workspaceRoot ?? params.root,
       query: search,
-      relevance,
       startPath: params.searchPath,
+      relevance: params.relevance,
     });
     return {
       path: "",
@@ -176,16 +178,13 @@ export async function buildWorkspaceBrowser(params: {
   if (!dirents) {
     return undefined;
   }
-  const entries = (
-    await Promise.all(
-      sortDirents(dirents)
-        .slice(0, MAX_BROWSER_ENTRIES + 1)
-        .map((dirent) => {
-          const entryPath = browserPath ? `${browserPath}/${dirent.name}` : dirent.name;
-          return toBrowserEntry(entryPath, dirent, relevance);
-        }),
-    )
-  ).filter((entry): entry is SessionFileBrowserEntry => Boolean(entry));
+  const entries = sortDirents(dirents)
+    .slice(0, MAX_BROWSER_ENTRIES + 1)
+    .map((dirent) => {
+      const entryPath = browserPath ? `${browserPath}/${dirent.name}` : dirent.name;
+      return toBrowserEntry(entryPath, dirent, params.relevance);
+    })
+    .filter((entry): entry is SessionFileBrowserEntry => Boolean(entry));
   const parent = path.dirname(browserPath);
   return {
     path: browserPath,
