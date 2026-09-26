@@ -14,7 +14,7 @@ import { buildSandboxContainerName, slugifySessionKey } from "./shared.js";
 import type { SandboxConfig } from "./types.js";
 import { SANDBOX_MOUNT_FORMAT_VERSION } from "./workspace-mounts.js";
 
-export async function computeExpectedSandboxConfigHash(params: {
+async function computeExpectedSandboxConfigHash(params: {
   cfg: Pick<SandboxConfig, "docker" | "workspaceAccess">;
   workspaceDir: string;
   agentWorkspaceDir: string;

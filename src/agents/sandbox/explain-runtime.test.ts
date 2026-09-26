@@ -12,7 +12,7 @@ import { SANDBOX_DOCKER_CREATE_ARGS_EPOCH } from "./constants.js";
 import { DOCKER_SANDBOX_ENGINE } from "./container-engine.js";
 import { resolveSandboxDockerUser } from "./docker-user.js";
 import { resolveSandboxExplainContext } from "./explain-report.js";
-import { computeExpectedSandboxConfigHash, readSandboxExplainRegistry } from "./explain-runtime.js";
+import { readSandboxExplainRegistry } from "./explain-runtime.js";
 import type { SandboxContainerInfo } from "./manage.js";
 import { prepareSandboxMountPlan } from "./mount-plan.js";
 import type { SandboxRegistryEntry } from "./registry.js";
@@ -141,15 +141,6 @@ async function resolveExpectedHash(snapshot: ExplainSnapshot): Promise<{
     createArgsEpoch: SANDBOX_DOCKER_CREATE_ARGS_EPOCH,
     managedMounts: mounts.binds,
   });
-  expect(
-    await computeExpectedSandboxConfigHash({
-      cfg: { ...snapshot.sandboxConfig, docker },
-      readOnlyResourceMounts: resources,
-      workspaceDir: snapshot.workspaceLayout.workspaceDir,
-      agentWorkspaceDir: snapshot.workspaceLayout.agentWorkspaceDir,
-      skillsWorkspaceDir: snapshot.workspaceLayout.skillsWorkspaceDir,
-    }),
-  ).toBe(hash);
   return { docker, hash };
 }
 
