@@ -9,7 +9,7 @@ import {
   isPersistentSystemAgentOperation,
 } from "./operations-parse.js";
 import { hashSystemAgentOperation } from "./operator-approval.js";
-import { createSpecialist, prepareSpecialistOperation, specialistEntry } from "./specialists.js";
+import { createSpecialist, prepareSpecialistOperation } from "./specialists.js";
 
 const mocks = vi.hoisted(() => ({
   config: {} as OpenClawConfig,
@@ -57,6 +57,8 @@ const proposal = () =>
     "Analyze anonymized responses",
   );
 
+type ConfiguredAgent = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];
+
 describe("managed specialist creation", () => {
   it("has an exact human-readable approval covering role, route, peer registration and snapshot", () => {
     const op = proposal();
@@ -77,9 +79,28 @@ describe("managed specialist creation", () => {
       );
     }
   });
-  it("resolves a separate networkless workspace and cannot regain management/publication through peer tools", () => {
-    const op = proposal(),
-      entry = specialistEntry(op);
+  it("resolves a separate networkless workspace and cannot regain management/publication through peer tools", async () => {
+    const op = proposal();
+    let capturedEntry: ConfiguredAgent | undefined;
+    mocks.createAgent.mockImplementation(async (params) => {
+      capturedEntry = params.entry;
+    });
+    await createSpecialist(op, () => {});
+    if (!capturedEntry) {
+      throw new Error("Expected createSpecialist to pass its generated entry to createAgent");
+    }
+    const entry = capturedEntry;
+    expect(entry).toMatchObject({
+      id: op.agentId,
+      workspace: join(stateDir, `workspace-${op.agentId}`),
+      identity: { name: op.name, theme: op.role },
+      model: { primary: "openai/gpt-4.1", fallbacks: [] },
+      sandbox: {
+        mode: "all",
+        scope: "agent",
+        docker: { network: "none", binds: [], readOnlyRoot: true, capDrop: ["ALL"] },
+      },
+    });
     const config = {
       ...mocks.config,
       agents: { ...mocks.config.agents, list: [...mocks.config.agents!.list!, entry] },
@@ -93,9 +114,8 @@ describe("managed specialist creation", () => {
       browser: { enabled: false },
     });
     expect(sandbox.docker.binds).toBeUndefined();
-    expect(entry.workspace).toBe(join(stateDir, `workspace-${op.agentId}`));
-    expect(entry.tools.fs.workspaceOnly).toBe(true);
-    expect(entry.tools.allow).toContain("sessions_send");
+    expect(entry.tools?.fs?.workspaceOnly).toBe(true);
+    expect(entry.tools?.allow).toContain("sessions_send");
     for (const name of [
       "specialists",
       "openclaw",
@@ -107,10 +127,9 @@ describe("managed specialist creation", () => {
       "gbp_*",
       "wp_article_*",
     ]) {
-      expect(entry.tools.deny).toContain(name);
-      expect(entry.tools.allow).not.toContain(name);
+      expect(entry.tools?.deny).toContain(name);
+      expect(entry.tools?.allow).not.toContain(name);
     }
-    expect(entry.model).toEqual({ primary: "openai/gpt-4.1", fallbacks: [] });
   });
   it("rejects unsafe inherited mounts/environment/setup and unbounded peer routing", () => {
     for (const docker of [
@@ -138,7 +157,12 @@ describe("managed specialist creation", () => {
       mocks.createAgent.mockImplementation(async (params) => {
         expect(params.stagedConfig.writeSnapshot.snapshot.hash).toBe("hash");
         expect(params.stagedConfig.config.tools.agentToAgent.allow).toEqual(op.peerAgentIds);
-        expect(params.entry).toEqual(specialistEntry(op));
+        expect(params.entry).toMatchObject({
+          id: op.agentId,
+          identity: { theme: op.role },
+          model: { primary: "openai/gpt-4.1" },
+          sandbox: { mode: "all", scope: "agent", docker: { network: "none", binds: [] } },
+        });
         expect(params.provenance).toEqual({ createdVia: "agent", creatorAgentId: "main" });
         expect(params.beforePersistentApply).toBe(guard);
         await mkdir(params.entry.workspace);
@@ -171,7 +195,7 @@ describe("managed specialist creation", () => {
     await expect(createSpecialist({ ...op, model: "other/model" }, () => {})).rejects.toThrow(
       "no longer matches",
     );
-    await mkdir(specialistEntry(op).workspace);
+    await mkdir(join(stateDir, `workspace-${op.agentId}`));
     await expect(createSpecialist(op, () => {})).rejects.toThrow("workspace already exists");
     expect(mocks.createAgent).not.toHaveBeenCalled();
   });
@@ -186,8 +210,8 @@ describe("managed specialist creation", () => {
         throw new Error("retired");
       }),
     ).rejects.toThrow("retired");
-    await expect(readFile(join(specialistEntry(op).workspace, "AGENTS.md"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(
+      readFile(join(stateDir, `workspace-${op.agentId}`, "AGENTS.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

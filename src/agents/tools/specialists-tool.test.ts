@@ -5,7 +5,7 @@ import {
   DEFAULT_GATEWAY_HTTP_TOOL_DENY,
   GATEWAY_OWNER_ONLY_CORE_TOOLS,
 } from "../../security/dangerous-tools.js";
-import { specialistEntry, prepareSpecialistOperation } from "../../system-agent/specialists.js";
+import { specialistId } from "../../system-agent/specialists.js";
 import {
   getGatewayToolCallerIdentity,
   withGatewayToolCallerIdentity,
@@ -33,6 +33,9 @@ function makeConfig(): OpenClawConfig {
       agentToAgent: { enabled: true, allow: ["main", "gbp"] },
     },
   };
+}
+function specialistFixture(name: string, role: string) {
+  return { id: specialistId("main", name), name, identity: { theme: role } };
 }
 function tools(config = mocks.config, sessionAgentId = "main", sessionKey = "agent:main:main") {
   return createSpecialistToolsForRun({
@@ -65,14 +68,7 @@ describe("specialist capability", () => {
         sandboxed: true,
       }),
     ).toEqual([]);
-    const op = prepareSpecialistOperation(
-      mocks.config,
-      "hash",
-      "main",
-      "分析担当",
-      "Count responses",
-    );
-    const peer = specialistEntry(op);
+    const peer = specialistFixture("分析担当", "Count responses");
     expect(
       tools(
         {
@@ -131,9 +127,7 @@ describe("specialist capability", () => {
     expect(mocks.call).not.toHaveBeenCalled();
   });
   it("lists and reuses the same name without silently changing its role", async () => {
-    const entry = specialistEntry(
-      prepareSpecialistOperation(mocks.config, "hash", "main", "分析担当", "Original role"),
-    );
+    const entry = specialistFixture("分析担当", "Original role");
     mocks.config.agents!.list!.push(entry);
     expect((await tools()[0]!.execute("list", { action: "list" })).details).toMatchObject({
       specialists: [{ name: "分析担当", role: "Original role" }],
