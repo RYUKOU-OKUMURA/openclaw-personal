@@ -125,7 +125,7 @@ async function directoryRoot(params: {
 }
 
 /** Admin-only host browsing reuses the same effective mounts shown by sandbox.explain. */
-export async function resolveSessionBrowserRoots(params: {
+async function resolveSessionBrowserRoots(params: {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey: string;

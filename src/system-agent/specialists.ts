@@ -149,7 +149,7 @@ export function prepareSpecialistOperation(
   };
 }
 
-export function specialistEntry(operation: CreateSpecialistOperation) {
+function specialistEntry(operation: CreateSpecialistOperation) {
   return {
     id: operation.agentId,
     name: operation.name,
