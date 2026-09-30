@@ -63,6 +63,7 @@ describe("Logbook conversation context authorization", () => {
     async (start) => {
       const { factory } = await harness(start);
       const owner = { senderIsOwner: true, messageChannel: "webchat" };
+      const sessionKey = "agent:main:dashboard:s1";
       const denied: OpenClawPluginToolContext[] = [
         {},
         { ...owner, senderIsOwner: false },
@@ -70,6 +71,46 @@ describe("Logbook conversation context authorization", () => {
         { ...owner, messageChannel: "telegram" },
         { ...owner, nativeChannelId: "group" },
         { ...owner, deliveryContext: { to: "external" } },
+        // Internal webchat routes carry the session key as `to`; any other
+        // destination, or a missing/empty session key to match against, is denied.
+        { ...owner, deliveryContext: { channel: "webchat", to: sessionKey } },
+        { ...owner, sessionKey, deliveryContext: { channel: "webchat", to: "external" } },
+        {
+          ...owner,
+          sessionKey: "",
+          deliveryContext: { channel: "webchat", to: "" },
+        },
+        {
+          ...owner,
+          senderIsOwner: false,
+          sessionKey,
+          deliveryContext: { channel: "webchat", to: sessionKey },
+        },
+        {
+          ...owner,
+          messageChannel: "discord",
+          sessionKey,
+          deliveryContext: { channel: "webchat", to: sessionKey },
+        },
+        {
+          ...owner,
+          sessionKey,
+          deliveryContext: { channel: "webchat", to: sessionKey, threadId: "t" },
+        },
+        {
+          ...owner,
+          sessionKey,
+          deliveryContext: { channel: "webchat", to: sessionKey, accountId: "a" },
+        },
+        {
+          ...owner,
+          sessionKey,
+          deliveryContext: {
+            channel: "webchat",
+            to: sessionKey,
+            deliveryIntent: { id: "q", kind: "outbound_queue" },
+          },
+        },
         ...[
           {},
           { channel: "discord" },
@@ -83,6 +124,13 @@ describe("Logbook conversation context authorization", () => {
       for (const context of denied) {
         expect(factory(context)).toBeNull();
       }
+      expect(
+        factory({
+          ...owner,
+          sessionKey,
+          deliveryContext: { channel: "webchat", to: sessionKey },
+        }),
+      ).toMatchObject({ name: "logbook_context" });
       expect(factory({ ...owner, deliveryContext: { channel: "webchat" } })).toMatchObject({
         name: "logbook_context",
       });

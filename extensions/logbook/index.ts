@@ -208,6 +208,8 @@ export default definePluginEntry({
 
     // Screen-derived context is restricted to authenticated private dashboard turns.
     // The plugin SDK has no authoritative private/group distinction for channels.
+    // Internal webchat routing sets deliveryContext.to to the turn's own session
+    // key; any other destination marks an external route and stays denied.
     api.registerTool(
       (ctx) => {
         if (
@@ -216,7 +218,8 @@ export default definePluginEntry({
           ctx.nativeChannelId ||
           (ctx.deliveryContext !== undefined &&
             (ctx.deliveryContext.channel !== "webchat" ||
-              ctx.deliveryContext.to !== undefined ||
+              (ctx.deliveryContext.to !== undefined &&
+                (!ctx.sessionKey || ctx.deliveryContext.to !== ctx.sessionKey)) ||
               ctx.deliveryContext.threadId !== undefined ||
               ctx.deliveryContext.accountId !== undefined ||
               ctx.deliveryContext.deliveryIntent !== undefined))
