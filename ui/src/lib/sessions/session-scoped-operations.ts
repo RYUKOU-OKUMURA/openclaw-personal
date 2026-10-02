@@ -15,6 +15,7 @@ import {
   requestSessionCompact,
   requestSessionFile,
   requestSessionFilesList,
+  requestSessionFilesReveal,
   requestSessionFileSet,
   requestSessionFork,
   requestSessionRewind,
@@ -99,6 +100,9 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
 
   const setFile: SessionCapability["setFile"] = (key, path, content, options) =>
     requestCurrent((client) => requestSessionFileSet(client, key, path, content, options));
+
+  const revealFiles: SessionCapability["revealFiles"] = (key, options = {}) =>
+    requestCurrent((client) => requestSessionFilesReveal(client, key, options));
 
   const unsubscribeMessages = async (subscription: SessionMessageSubscription): Promise<void> => {
     const runtime = subscriptionRuntime ?? (await loadSubscriptionRuntime());
@@ -202,6 +206,7 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     getFile,
     listBranches,
     listFiles,
+    revealFiles,
     recover,
     rewind,
     setFile,

@@ -1,6 +1,8 @@
 export type LogbookStatusPayload = {
   captureEnabled: boolean;
   capturePaused: boolean;
+  captureSchedule: { start: string; end: string } | null;
+  captureSchedulePaused: boolean;
   captureIntervalSeconds: number;
   analysisIntervalMinutes: number;
   retentionDays: number;
@@ -71,5 +73,6 @@ export type LogbookUiState = {
   askAnswer: string | null;
   askLoading: boolean;
   actionPending: boolean;
+  scheduleDraft: { enabled: boolean; start: string; end: string } | null;
   requestUpdate: (() => void) | null;
 };

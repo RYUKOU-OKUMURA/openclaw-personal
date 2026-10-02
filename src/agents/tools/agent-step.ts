@@ -7,6 +7,7 @@ import { recordSessionParticipantBestEffort } from "../../sessions/session-parti
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
+import { runOutsidePreparedModelRuntimePluginGenerationScope } from "../prepared-model-runtime-generation-scope.js";
 import { waitForAgentRunReply } from "../run-wait.js";
 import {
   callAgentToolGatewayRequest,
@@ -19,6 +20,17 @@ export type AgentStepSession = {
 };
 
 type AgentCommandRunner = typeof import("../../commands/agent.js").agentCommandFromIngress;
+
+const defaultAgentStepDeps = {
+  agentCommandFromIngress: (async (...args) => {
+    const { agentCommandFromIngress } = await import("../../commands/agent.js");
+    return await agentCommandFromIngress(...args);
+  }) as AgentCommandRunner,
+};
+
+const agentStepDeps: {
+  agentCommandFromIngress: AgentCommandRunner;
+} = defaultAgentStepDeps;
 
 function extractAgentCommandReply(
   result: Awaited<ReturnType<AgentCommandRunner>>,
@@ -88,8 +100,10 @@ export async function runAgentStep(
       runId: stepIdem,
       allowModelOverride: false,
     };
-    const { agentCommandFromIngress } = await import("../../commands/agent.js");
-    const result = await agentCommandFromIngress(ingress);
+    // Re-admit the target turn after the sender's prepared runtime lease ends.
+    const result = await runOutsidePreparedModelRuntimePluginGenerationScope(() =>
+      agentStepDeps.agentCommandFromIngress(ingress),
+    );
     return extractAgentCommandReply(result);
   }
   const response = await gatewayCall({

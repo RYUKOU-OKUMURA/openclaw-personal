@@ -21,6 +21,9 @@ import {
   loadSessionWorkspace,
   openSessionCheckoutSidebar,
   refreshSessionWorkspaceState,
+  selectSessionWorkspaceRoot,
+  sessionWorkspaceRoot,
+  toggleSessionWorkspaceSharedRoots,
   trackSessionCheckoutSidebar,
 } from "./chat-session-workspace-state.ts";
 import type {
@@ -198,19 +201,21 @@ function openFile(
   state: SessionWorkspaceHost,
   workspace: SessionWorkspaceState,
   path: string,
-  opts: { line?: number | null; requestPath?: string } = {},
+  opts: { line?: number | null; requestPath?: string; rootId?: string | null } = {},
 ) {
   const requestPath = opts.requestPath ?? path;
   const draftScope = state.sessionWorkspaceDraftScope;
   const draftContext = state.sessionWorkspaceDraftContext;
   const gatewayUrl = state.settings?.gatewayUrl ?? "";
+  const rootId = opts.rootId === undefined ? workspace.rootId : opts.rootId;
   openWorkspaceItem(
     state,
     workspace,
-    `file:${requestPath}`,
+    rootId ? `root:${rootId}:file:${requestPath}` : `file:${requestPath}`,
     () =>
       state.sessions.getFile(workspace.sessionKey, requestPath, {
         agentId: workspace.agentId,
+        ...(rootId ? { rootId } : {}),
       }),
     (result) => {
       const file = result.file;
@@ -249,6 +254,8 @@ function openFile(
         return null;
       }
       const canEdit =
+        rootId === null &&
+        result.readOnly !== true &&
         typeof file.hash === "string" &&
         hasUniformLineEndings(file.content) &&
         isGatewayMethodAdvertised(state, "sessions.files.set") === true &&
@@ -334,6 +341,7 @@ function openFile(
           draftScope ?? "",
           result.sessionKey,
           result.root ?? "",
+          ...(rootId ? [rootId] : []),
           file.workspacePath || file.path || path,
         ].join("\u0000"),
         draftContext: {
@@ -343,6 +351,7 @@ function openFile(
         },
         root: result.root ?? null,
         mimeType: file.mimeType,
+        ...(rootId !== null || result.readOnly === true ? { previewOnly: true } : {}),
         language: languageForFile(name),
         line: opts.line ?? null,
         rawText: file.content,
@@ -357,7 +366,9 @@ function openFile(
       resolveLabel: (result) => result.file?.name,
       resolveKey: (result) => {
         const canonicalPath = result.file?.workspacePath || result.file?.path;
-        return canonicalPath ? sessionWorkspaceFileKey(result.root, canonicalPath) : undefined;
+        return canonicalPath
+          ? sessionWorkspaceFileKey(result.root, canonicalPath, rootId)
+          : undefined;
       },
     },
   );
@@ -367,7 +378,8 @@ export function openSessionWorkspaceFile(
   state: SessionWorkspaceHost,
   target: { path: string; line?: number | null },
 ) {
-  openFile(state, getSessionWorkspace(state), target.path, { line: target.line });
+  // Chat/tool links retain their session-workspace scope regardless of the rail selection.
+  openFile(state, getSessionWorkspace(state), target.path, { line: target.line, rootId: null });
 }
 
 function toggleSessionWorkspace(state: SessionWorkspaceHost) {
@@ -393,6 +405,9 @@ function setSessionWorkspaceDock(state: SessionWorkspaceHost, dock: ChatWorkspac
 
 export function revealSessionWorkspaceFile(state: SessionWorkspaceHost, path: string) {
   const workspace = getSessionWorkspace(state);
+  if (workspace.rootId !== null) {
+    selectSessionWorkspaceRoot(state, "workspace", { load: false });
+  }
   clearWorkspaceTimer(workspace);
   const normalizedPath = path.replaceAll("\\", "/");
   const separator = normalizedPath.lastIndexOf("/");
@@ -403,6 +418,57 @@ export function revealSessionWorkspaceFile(state: SessionWorkspaceHost, path: st
   workspace.activeId = `file:${path}`;
   loadSessionWorkspace(state, workspace, true);
   state.requestUpdate?.();
+}
+
+function canRevealSessionWorkspaceRoot(
+  state: SessionWorkspaceHost,
+  workspace: SessionWorkspaceState,
+) {
+  const root = sessionWorkspaceRoot(workspace);
+  return Boolean(
+    root?.kind === "outputs" &&
+    root.available &&
+    state.client &&
+    state.connected &&
+    hasOperatorAdminAccess(state.hello?.auth ?? null) &&
+    isGatewayMethodAdvertised(state, "sessions.files.reveal") === true,
+  );
+}
+
+/** Reveal the selected outputs directory through the Gateway-owned host path. */
+function revealSessionWorkspaceRoot(state: SessionWorkspaceHost) {
+  const workspace = getSessionWorkspace(state);
+  const root = sessionWorkspaceRoot(workspace);
+  if (!root || !canRevealSessionWorkspaceRoot(state, workspace)) {
+    return;
+  }
+  const rootSelectionEpoch = workspace.rootSelectionEpoch;
+  void state.sessions
+    .revealFiles(workspace.sessionKey, {
+      agentId: workspace.agentId,
+      rootId: root.id,
+    })
+    .then((result) => {
+      if (
+        !isCurrentSessionWorkspace(state, workspace) ||
+        workspace.rootSelectionEpoch !== rootSelectionEpoch
+      ) {
+        return;
+      }
+      if (!result?.ok) {
+        workspace.error = result?.error ?? t("chat.workspaceFiles.revealFailed");
+        state.requestUpdate?.();
+      }
+    })
+    .catch((error: unknown) => {
+      if (
+        isCurrentSessionWorkspace(state, workspace) &&
+        workspace.rootSelectionEpoch === rootSelectionEpoch
+      ) {
+        workspace.error = formatUiError(error);
+        state.requestUpdate?.();
+      }
+    });
 }
 
 function openArtifact(
@@ -508,6 +574,8 @@ export function createSessionWorkspaceProps(
     collapsed: options?.expanded === true ? false : workspace.collapsed,
     sessionKey: state.sessionKey,
     list: workspace.list?.sessionKey === state.sessionKey ? workspace.list : null,
+    rootId: workspace.rootId ?? "workspace",
+    roots: workspace.roots,
     loading: workspace.loading,
     error: workspace.error,
     activeId: workspace.activeId,
@@ -523,6 +591,12 @@ export function createSessionWorkspaceProps(
     onToggleCollapsed: () => toggleSessionWorkspace(state),
     onSetDock: (dock) => setSessionWorkspaceDock(state, dock),
     onRefresh: () => loadSessionWorkspace(state, workspace, true),
+    onSelectRoot: (rootId) => selectSessionWorkspaceRoot(state, rootId),
+    onToggleSharedRoots: () => toggleSessionWorkspaceSharedRoots(state),
+    sharedRootsExpanded: workspace.sharedRootsExpanded,
+    onRevealRoot: canRevealSessionWorkspaceRoot(state, workspace)
+      ? () => revealSessionWorkspaceRoot(state)
+      : undefined,
     onBrowsePath: (path) => {
       clearWorkspaceTimer(workspace);
       workspace.browserPath = path;
@@ -533,7 +607,7 @@ export function createSessionWorkspaceProps(
       // Session paths are cwd-relative; browser rows are workspace-root-relative.
       // Keep the origin explicit so a nested cwd cannot shadow the selected browser file.
       const opts =
-        origin === "workspace"
+        origin === "workspace" && workspace.rootId === null
           ? { requestPath: workspaceBrowserFilePath(workspace.list?.root, path) }
           : {};
       openFile(state, workspace, path, opts);
@@ -602,7 +676,7 @@ export function resolveSessionDiffSidebarContent(
           }
         }
       : undefined,
-    openFile: (path) => openFile(state, getSessionWorkspace(state), path),
+    openFile: (path) => openFile(state, getSessionWorkspace(state), path, { rootId: null }),
   };
   trackSessionCheckoutSidebar(content);
   workspace.diffContent = content;

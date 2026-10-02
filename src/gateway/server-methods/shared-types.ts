@@ -137,6 +137,7 @@ type SystemAgentReply = {
 /** Minimal hosted OpenClaw contract retained by the gateway request router. */
 export type GatewaySystemAgentSession = {
   engine: {
+    propose?: (operation: SystemAgentOperation) => string;
     handle: (
       message: string,
       options?: { uiContext?: { page: string } },

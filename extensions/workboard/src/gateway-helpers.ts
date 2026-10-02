@@ -9,6 +9,7 @@ import {
   dispatchAndStartWorkboardCards,
   type WorkboardDispatchStartOptions,
 } from "./dispatcher.js";
+import { WorkboardPlanningConflictError } from "./planning-errors.js";
 import { WorkboardCardConflictError, type WorkboardStore } from "./store.js";
 import {
   resolveAgentWorkboardWorkspaceRuntime,
@@ -40,6 +41,14 @@ export function respondError(respond: GatewayRespond, error: unknown) {
       undefined,
       errorShape(ErrorCodes.FORBIDDEN, error.message, { details: { code: "UPLOADS_DISABLED" } }),
     );
+    return;
+  }
+  if (error instanceof WorkboardPlanningConflictError) {
+    respond(false, undefined, {
+      code: "workboard_conflict",
+      message: error.message,
+      details: { code: "WORKBOARD_PLANNING_CONFLICT", planning: error.current },
+    });
     return;
   }
   if (error instanceof WorkboardCardConflictError) {

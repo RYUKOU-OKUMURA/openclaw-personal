@@ -11,13 +11,17 @@ export const FsListDirParamsSchema = closedObject({
   path: Type.Optional(NonEmptyString),
   /** Connected node host to browse; omitted means the Gateway host. */
   nodeId: Type.Optional(NonEmptyString),
+  /** Include regular files in Gateway-local listings; node hosts remain directory-only. */
+  includeFiles: Type.Optional(Type.Boolean()),
 });
 
 export const FsDirEntrySchema = closedObject({
   name: NonEmptyString,
   path: NonEmptyString,
-  /** Dot-prefixed directories; clients render them dimmed after visible ones. */
+  /** Dot-prefixed entries; clients render them dimmed after visible ones. */
   hidden: Type.Optional(Type.Boolean()),
+  /** Present only for opt-in listings that include both files and directories. */
+  kind: Type.Optional(Type.Union([Type.Literal("file"), Type.Literal("directory")])),
 });
 
 export const FsListDirResultSchema = closedObject({
@@ -28,10 +32,27 @@ export const FsListDirResultSchema = closedObject({
   /** Selected host's home directory, for the picker's "home" shortcut. */
   home: NonEmptyString,
   entries: Type.Array(FsDirEntrySchema),
+  /** Native Finder file-or-folder selection is available to this local macOS listing caller. */
+  nativePathPicker: Type.Optional(Type.Literal(true)),
 });
+
+export const FsPickPathParamsSchema = closedObject({
+  /** Absolute directory to show initially in the native Finder chooser. */
+  path: Type.Optional(NonEmptyString),
+});
+
+export const FsPickPathResultSchema = Type.Union([
+  closedObject({
+    path: NonEmptyString,
+    kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
+  }),
+  closedObject({ cancelled: Type.Literal(true) }),
+]);
 
 // Wire types derive directly from local schema consts so public d.ts graphs never
 // pull in the ProtocolSchemas registry.
 export type FsDirEntry = Static<typeof FsDirEntrySchema>;
 export type FsListDirParams = Static<typeof FsListDirParamsSchema>;
 export type FsListDirResult = Static<typeof FsListDirResultSchema>;
+export type FsPickPathParams = Static<typeof FsPickPathParamsSchema>;
+export type FsPickPathResult = Static<typeof FsPickPathResultSchema>;

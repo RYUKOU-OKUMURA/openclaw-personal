@@ -15,6 +15,7 @@ export const en: TranslationMap & {
     detailPanel: TranslationMap;
     welcome: TranslationMap & { suggestions: TranslationMap & { whatCanYouDo: string } };
     goals: TranslationMap;
+    workspaceFiles: TranslationMap;
     messages: TranslationMap &
       Record<
         | "copySelection"
@@ -79,6 +80,7 @@ export const en: TranslationMap & {
   labsPage: TranslationMap;
   mcpServers: TranslationMap;
   mcpPage: TranslationMap;
+  logbook: TranslationMap;
   modelSetup: TranslationMap;
   newSession: TranslationMap &
     Record<"title" | "hint" | "placementReloadBlocked" | "discardUnsavedAndReload", string>;
@@ -1918,6 +1920,7 @@ export const en: TranslationMap & {
     device: "This Mac",
     devicePermissions: "Permissions",
     agentsHome: "Agents",
+    accessMap: "AI access scope",
     agents: "Agents",
     activity: "Activity",
     meetings: "Meetings",
@@ -1966,6 +1969,7 @@ export const en: TranslationMap & {
     device: "App settings and capabilities on this Mac.",
     devicePermissions: "Manage macOS access, location, and computer presence.",
     agentsHome: "Who is on your team and what they are doing",
+    accessMap: "Files, sandbox permissions, and external connections.",
     agents: "Workspaces, tools, identities.",
     activity: "Recent sessions across people using this gateway.",
     meetings: "Meeting notes and transcripts across this gateway.",

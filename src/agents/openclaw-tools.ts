@@ -115,11 +115,10 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
     swarmOutputSchema: options?.swarmOutputSchema,
     assertCollectorWriteAuthority: options?.assertCollectorWriteAuthority,
   });
-  const inferredWorkspaceDir =
-    options?.workspaceDir || !resolvedConfig
-      ? undefined
-      : resolveAgentWorkspaceDir(resolvedConfig, sessionAgentId);
-  const workspaceDir = resolveWorkspaceRoot(options?.workspaceDir ?? inferredWorkspaceDir);
+  const workspaceDir = resolveWorkspaceRoot(
+    options?.workspaceDir ??
+      (resolvedConfig ? resolveAgentWorkspaceDir(resolvedConfig, sessionAgentId) : undefined),
+  );
   const spawnWorkspaceDir = resolveWorkspaceRoot(options?.spawnWorkspaceDir ?? workspaceDir);
   options?.recordToolPrepStage?.("openclaw-tools:session-workspace");
   const widgetPresentation = resolveWidgetPresentationForRun(options);
@@ -436,7 +435,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
       ? createTaskSuggestionTools({
           sessionKey,
           agentId: sessionAgentId,
-          cwd: resolveWorkspaceRoot(options?.cwd ?? options?.workspaceDir ?? inferredWorkspaceDir),
+          cwd: resolveWorkspaceRoot(options?.cwd ?? workspaceDir),
         })
       : []),
     ...(messageTool && includeMessageTool ? [messageTool] : []),

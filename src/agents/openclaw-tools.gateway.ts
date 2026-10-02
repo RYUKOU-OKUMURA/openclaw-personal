@@ -6,6 +6,7 @@ import { createOpenClawDelegateToolsForRun } from "./tools/openclaw-delegate-too
 import { createPersonalInstructionsTool } from "./tools/personal-instructions-tool.js";
 import { createPluginsTool } from "./tools/plugins-tool.js";
 import { createPresenceTool } from "./tools/presence-tool.js";
+import { createSpecialistToolsForRun } from "./tools/specialists-tool.js";
 
 /** Gateway-owned operations are not standalone embedded-host capabilities. */
 export function createHostedGatewayTools(
@@ -25,6 +26,7 @@ export function createHostedGatewayTools(
     }),
     createPluginsTool(),
     ...createOpenClawDelegateToolsForRun({ ...options, sessionAgentId }),
+    ...createSpecialistToolsForRun({ ...options, config: options?.config, sessionAgentId }),
     ...(hasMultipleSessionSharingIdentities()
       ? [createPersonalInstructionsTool(sessionAgentId)]
       : []),

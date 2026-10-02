@@ -10,6 +10,7 @@ import type {
   EnvironmentsSessionDestroyParams,
   EnvironmentsSessionExecParams,
 } from "./schema/environments.js";
+import type { FsPickPathParams } from "./schema/fs.js";
 import type * as HumanMentionsSchema from "./schema/human-mentions.js";
 import type { LogsTailParams } from "./schema/logs-chat.js";
 import type * as PortalSchema from "./schema/portals.js";
@@ -61,6 +62,7 @@ export type GatewayCoreRequestParams = {
   "portal.session.close": Static<typeof PortalSchema.SessionPortalCloseParamsSchema>;
   "portal.session.list": Static<typeof PortalSchema.SessionPortalListParamsSchema>;
   "portal.session.open": Static<typeof PortalSchema.SessionPortalOpenParamsSchema>;
+  "fs.pickPath": FsPickPathParams;
   "sessions.github.publish": GitHubSchema.SessionGitHubPublishParams;
   "sessions.github.options": Static<typeof GitHubSchema.SessionGitHubOptionsParamsSchema>;
   "sessions.github.status": Static<typeof GitHubSchema.SessionGitHubStatusParamsSchema>;

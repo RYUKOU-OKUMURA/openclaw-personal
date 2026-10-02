@@ -228,7 +228,7 @@ export function renderSidebarFile(
                             pressed: controls.searchOpen,
                           })}
                           ${
-                            controls.onReveal
+                            controls.onReveal && !content.previewOnly
                               ? renderFileAction({
                                   label: t("chat.detailPanel.showInFiles"),
                                   icon: icons.folder,
@@ -236,12 +236,16 @@ export function renderSidebarFile(
                                 })
                               : nothing
                           }
-                          ${renderChatSidebarEditorMenu({
-                            absolutePath,
-                            open: controls.editorMenuOpen,
-                            onOpenChange: controls.onEditorMenuOpenChange,
-                            onOpenEditor: controls.onOpenEditor,
-                          })}
+                          ${
+                            content.previewOnly
+                              ? nothing
+                              : renderChatSidebarEditorMenu({
+                                  absolutePath,
+                                  open: controls.editorMenuOpen,
+                                  onOpenChange: controls.onEditorMenuOpenChange,
+                                  onOpenEditor: controls.onOpenEditor,
+                                })
+                          }
                           ${renderFileCopyButton("contents", controls)}
                         `
                   }

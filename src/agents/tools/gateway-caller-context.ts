@@ -40,6 +40,11 @@ import type { AnyAgentTool } from "./common.js";
 type GatewayToolCallerIdentity = {
   personalToolParticipants?: ReplyTurnParticipants;
   personalToolUser?: string;
+  /** Host-prepared, narrow operation, never read from RPC/model arguments. */
+  specialistProposal?: Extract<
+    import("../../system-agent/operation-types.js").SystemAgentOperation,
+    { kind: "create-specialist" }
+  >;
   agentId: string;
   sessionKey: string;
   gatewayUiCommandTarget?: GatewayUiCommandTarget;
@@ -393,6 +398,7 @@ export async function withGatewayToolCallerIdentity<T>(
       personalToolParticipants:
         inheritedOwner?.personalToolParticipants ?? identity.personalToolParticipants,
       personalToolUser: inheritedOwner?.personalToolUser ?? identity.personalToolUser,
+      ...(identity.specialistProposal ? { specialistProposal: identity.specialistProposal } : {}),
       ...(fullPermission !== undefined ? { fullPermission } : {}),
       ...(operationalRunInstance ? { operationalRunInstance } : {}),
       ...(embeddedRunToolAuthorityBinding ? { embeddedRunToolAuthorityBinding } : {}),

@@ -220,6 +220,10 @@ describe("listGatewayMethods", () => {
       "plugins.skills.read",
       "diagnostics.heapProfile",
       "desktop.release",
+      "fs.pickPath",
+      "sandbox.explain",
+      "sandbox.entries.add",
+      "sandbox.recreate",
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
@@ -291,6 +295,10 @@ describe("listGatewayMethods", () => {
       "plugins.skills.read",
       "diagnostics.heapProfile",
       "desktop.release",
+      "fs.pickPath",
+      "sandbox.explain",
+      "sandbox.entries.add",
+      "sandbox.recreate",
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
@@ -355,7 +363,15 @@ describe("listGatewayMethods", () => {
     expect(coreGatewayHandlers["audit.run.inspect"]).toBeTypeOf("function");
   });
 
-  it.each(["update.hold", "update.runs.get", "update.runs.list"])("advertises %s", (method) => {
+  it.each([
+    "fs.pickPath",
+    "sandbox.explain",
+    "sandbox.entries.add",
+    "sandbox.recreate",
+    "update.hold",
+    "update.runs.get",
+    "update.runs.list",
+  ])("advertises %s", (method) => {
     expect(listGatewayMethods()).toContain(method);
     expect(coreGatewayHandlers[method]).toBeTypeOf("function");
   });
@@ -490,6 +506,10 @@ describe("listGatewayMethods", () => {
       "plugins.skills.read",
       "diagnostics.heapProfile",
       "desktop.release",
+      "fs.pickPath",
+      "sandbox.explain",
+      "sandbox.entries.add",
+      "sandbox.recreate",
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",

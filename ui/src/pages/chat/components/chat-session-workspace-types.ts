@@ -1,5 +1,5 @@
 import type { GatewayBrowserClient, GatewayHelloOk } from "../../../api/gateway.ts";
-import type { SessionWorkspaceListResult } from "../../../api/types.ts";
+import type { SessionWorkspaceListResult, SessionWorkspaceRoot } from "../../../api/types.ts";
 import type { ChatWorkspaceDock, UiSettings } from "../../../app/settings.ts";
 import type { SessionCapability, SessionScopeHost } from "../../../lib/sessions/index.ts";
 import type { FileSidebarNavigation } from "./chat-sidebar-content-types.ts";
@@ -14,6 +14,9 @@ export type SessionWorkspaceProps = {
   collapsed: boolean;
   sessionKey: string;
   list: SessionWorkspaceListResult | null;
+  /** Root selected in the Files rail; workspace is the legacy/default root. */
+  rootId?: string;
+  roots?: SessionWorkspaceRoot[] | null;
   loading: boolean;
   error: string | null;
   activeId: string | null;
@@ -24,6 +27,10 @@ export type SessionWorkspaceProps = {
   onToggleCollapsed: () => void;
   onSetDock: (dock: ChatWorkspaceDock) => void;
   onRefresh: () => void;
+  onSelectRoot?: (rootId: string) => void;
+  onToggleSharedRoots?: () => void;
+  sharedRootsExpanded?: boolean;
+  onRevealRoot?: () => void;
   onBrowsePath: (path: string) => void;
   onOpenFile: (path: string, origin: "session" | "workspace") => void;
   onSearch: (search: string) => void;
@@ -64,6 +71,11 @@ export type SessionWorkspaceState = {
   error: string | null;
   errorOwner?: object;
   list: SessionWorkspaceListResult | null;
+  /** Null keeps the pre-roots request shape and means the workspace root. */
+  rootId: string | null;
+  roots: SessionWorkspaceRoot[] | null;
+  rootSelectionEpoch: number;
+  sharedRootsExpanded: boolean;
   loading: boolean;
   pendingReload: boolean;
   sessionKey: string;

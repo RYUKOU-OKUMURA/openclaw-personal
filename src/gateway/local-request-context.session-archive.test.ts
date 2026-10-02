@@ -104,7 +104,7 @@ describe("scoped session archive tools", () => {
               };
               for (const tools of [
                 createOpenClawCodingTools({ ...options, swarmCollector: true }),
-                resolveGatewayScopedTools({ ...options, cfg, surface: "loopback" }).tools,
+                (await resolveGatewayScopedTools({ ...options, cfg, surface: "loopback" })).tools,
               ]) {
                 const tool = expectDefined(
                   tools.find((candidate) => candidate.name === "sessions"),
@@ -142,7 +142,7 @@ describe("scoped session archive tools", () => {
         const check = async () => {
           for (const surface of [
             createOpenClawCodingTools(options),
-            resolveGatewayScopedTools({ ...options, cfg, surface: "loopback" }).tools,
+            (await resolveGatewayScopedTools({ ...options, cfg, surface: "loopback" })).tools,
           ]) {
             expect(surface.some((tool) => tool.name === "sessions")).toBe(false);
           }
@@ -476,11 +476,13 @@ describe("scoped session archive tools", () => {
                 senderIsOwner: false,
               };
               const tools = createOpenClawCodingTools(options);
-              const gatewayTools = resolveGatewayScopedTools({
-                ...options,
-                cfg,
-                surface: "loopback",
-              }).tools;
+              const gatewayTools = (
+                await resolveGatewayScopedTools({
+                  ...options,
+                  cfg,
+                  surface: "loopback",
+                })
+              ).tools;
               for (const surface of [tools, gatewayTools]) {
                 const tool = expectDefined(
                   surface.find((candidate) => candidate.name === "sessions"),

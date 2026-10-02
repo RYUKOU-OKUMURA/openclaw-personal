@@ -1,3 +1,5 @@
+import type { LogbookCaptureSchedule } from "./config.js";
+
 export type LogbookFrame = {
   id: number;
   capturedAtMs: number;
@@ -21,6 +23,18 @@ export type LogbookBatch = {
   error?: string;
   frameCount: number;
   model?: string;
+  observationCursor?: number;
+  attempts?: number;
+  retryAfterMs?: number;
+};
+
+export type LogbookObservationContext = {
+  version: 1;
+  target: string;
+  activity: string;
+  result: string;
+  unresolved: string;
+  uncertainty: string;
 };
 
 export type LogbookObservation = {
@@ -30,7 +44,13 @@ export type LogbookObservation = {
   startMs: number;
   endMs: number;
   text: string;
+  context?: LogbookObservationContext;
 };
+
+export type LogbookObservationSegment = Pick<
+  LogbookObservation,
+  "startMs" | "endMs" | "text" | "context"
+>;
 
 export type LogbookDistraction = {
   startMs: number;
@@ -65,6 +85,9 @@ export type LogbookDayStats = {
 export type LogbookStatus = {
   captureEnabled: boolean;
   capturePaused: boolean;
+  captureSchedule: LogbookCaptureSchedule | null;
+  captureSchedulePaused: boolean;
+  screenIndex: number;
   captureIntervalSeconds: number;
   analysisIntervalMinutes: number;
   retentionDays: number;

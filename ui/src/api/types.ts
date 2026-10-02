@@ -6,6 +6,7 @@ import type {
   CronRunLogEntry as ProtocolCronRunLogEntry,
   CronRunsParams,
   ErrorShape,
+  SessionFileRoot as ProtocolSessionFileRoot,
   SessionsFilesListResult as ProtocolSessionsFilesListResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { ChannelsStatusResult } from "../../../packages/gateway-protocol/src/schema/channels.js";
@@ -222,6 +223,7 @@ export type { GatewayWireSessionsDefaults as GatewaySessionsDefaults };
 export type { GatewayAgentRow } from "../../../src/shared/session-types.js";
 export type { GatewayContextWindowOption, GatewayThinkingLevelOption };
 
+export type SessionWorkspaceRoot = ProtocolSessionFileRoot;
 // The workspace view joins file results with separately fetched artifacts.
 export type SessionWorkspaceListResult = ProtocolSessionsFilesListResult & {
   artifacts?: ProtocolArtifactSummary[];

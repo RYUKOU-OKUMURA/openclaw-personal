@@ -6,6 +6,9 @@ import {
   WorktreesRemoveResultSchema,
   validateSessionsCreateParams,
   validateFsListDirParams,
+  validateFsListDirResult,
+  validateFsPickPathParams,
+  validateFsPickPathResult,
   validateWorktreesBranchesParams,
   validateWorktreesCreateParams,
   validateWorktreesGcParams,
@@ -103,6 +106,37 @@ describe("managed worktree protocol schemas", () => {
     expect(validateFsListDirParams({ path: "/repo" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "macbook", path: "/Users/peter" })).toBe(true);
     expect(validateFsListDirParams({ nodeId: "" })).toBe(false);
+    expect(
+      validateFsListDirResult({
+        path: "/repo",
+        home: "/home/peter",
+        entries: [],
+        nativePathPicker: true,
+      }),
+    ).toBe(true);
+    expect(
+      validateFsListDirResult({
+        path: "/repo",
+        home: "/home/peter",
+        entries: [],
+        nativePathPicker: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts native path-picker requests and both outcomes", () => {
+    expect(validateFsPickPathParams({})).toBe(true);
+    expect(validateFsPickPathParams({ path: "/repo" })).toBe(true);
+    expect(validateFsPickPathParams({ path: "" })).toBe(false);
+    expect(validateFsPickPathParams({ nodeId: "node" })).toBe(false);
+    expect(validateFsPickPathResult({ path: "/repo/file.txt", kind: "file" })).toBe(true);
+    expect(validateFsPickPathResult({ path: "/repo", kind: "directory" })).toBe(true);
+    expect(validateFsPickPathResult({ cancelled: true })).toBe(true);
+    expect(validateFsPickPathResult({ cancelled: false })).toBe(false);
+    expect(validateFsPickPathResult({ path: "/repo/file.txt" })).toBe(false);
+    expect(
+      validateFsPickPathResult({ path: "/repo/file.txt", kind: "file", cancelled: true }),
+    ).toBe(false);
   });
 
   it("rejects invalid names and unknown fields", () => {

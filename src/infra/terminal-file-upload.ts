@@ -75,11 +75,31 @@ export type TerminalUploadFile = {
 
 export type TerminalUploadResult = ProtocolTerminalUploadResult;
 
-function sanitizeTerminalUploadName(name: string): string {
+export function sanitizeTerminalUploadName(name: string): string {
   const safe = sanitizeUntrustedFileName(name, "upload").replace(/[!%]/gu, "_");
   const truncated = truncateUtf8Prefix(safe, MAX_STAGED_NAME_BYTES).replace(/[. ]+$/u, "");
   // Truncation can expose a device name hidden by trailing padding.
   return sanitizeUntrustedFileName(truncated, "upload");
+}
+
+export function decodeTerminalUpload(contentBase64: string): Buffer {
+  if (
+    contentBase64.length > MAX_TERMINAL_UPLOAD_BASE64_LENGTH ||
+    terminalUploadDecodedSize(contentBase64) > MAX_TERMINAL_UPLOAD_BYTES
+  ) {
+    throw new Error(`terminal upload exceeds ${MAX_TERMINAL_UPLOAD_BYTES} bytes`);
+  }
+  if (!isCanonicalTerminalUploadBase64(contentBase64)) {
+    throw new Error("invalid terminal upload encoding");
+  }
+  const bytes = Buffer.from(contentBase64, "base64");
+  if (bytes.length > MAX_TERMINAL_UPLOAD_BYTES) {
+    throw new Error(`terminal upload exceeds ${MAX_TERMINAL_UPLOAD_BYTES} bytes`);
+  }
+  if (bytes.toString("base64") !== contentBase64) {
+    throw new Error("invalid terminal upload encoding");
+  }
+  return bytes;
 }
 
 function validateTerminalUpload(contentBase64: string): number {

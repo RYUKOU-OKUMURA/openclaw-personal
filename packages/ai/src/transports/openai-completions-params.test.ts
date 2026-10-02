@@ -175,6 +175,38 @@ describe("openai completions params", () => {
     expect(params.max_completion_tokens).toBe(10_000 - 5_000 - 1);
   });
 
+  it.each([6_550, 6_554])(
+    "rejects a prompt with no output room instead of manufacturing a one-token budget (%i chars)",
+    (promptChars) => {
+      expect(() =>
+        buildOpenAICompletionsParams(
+          makeCompletionsModel({
+            provider: "compatible-proxy",
+            baseUrl: "https://compatible.example/v1",
+            contextWindow: 2_048,
+            maxTokens: 1_024,
+          }),
+          emptyContext("x".repeat(promptChars)),
+          undefined,
+        ),
+      ).toThrow(/Context overflow:.*no room for output/);
+    },
+  );
+
+  it("preserves an explicit one-token request when the input fits", () => {
+    const params = buildOpenAICompletionsParams(
+      makeCompletionsModel({
+        provider: "compatible-proxy",
+        baseUrl: "https://compatible.example/v1",
+        contextWindow: 2_048,
+      }),
+      emptyContext("Short prompt"),
+      { maxTokens: 1 },
+    );
+
+    expect(params.max_completion_tokens).toBe(1);
+  });
+
   it("rounds proxy-like completions input estimates after summing message content", () => {
     const messages = Array.from({ length: 4_000 }, () => ({
       role: "user",
@@ -282,7 +314,7 @@ describe("openai completions params", () => {
     },
   );
 
-  it("preserves non-reasoning short budgets and the exhausted-budget fallback", () => {
+  it("preserves positive non-reasoning short budgets and rejects exhausted budgets", () => {
     const model = makeCompletionsModel({
       baseUrl: "http://localhost:8000/v1",
       reasoning: false,
@@ -290,9 +322,16 @@ describe("openai completions params", () => {
       maxTokens: 1000,
     });
     const context = emptyContext("x".repeat(3200));
+    for (const remaining of [-1, 0]) {
+      expect(() =>
+        buildOpenAICompletionsParams(
+          { ...model, contextTokens: 1001 + remaining },
+          context,
+          undefined,
+        ),
+      ).toThrowError(expect.objectContaining({ code: "context_length_exceeded" }));
+    }
     for (const [remaining, expected] of [
-      [-1, 1],
-      [0, 1],
       [1, 1],
       [15, 15],
     ] as const) {
@@ -312,7 +351,7 @@ describe("openai completions params", () => {
       const model = makeCompletionsModel({
         baseUrl: "http://localhost:8000/v1",
         reasoning,
-        contextWindow: 1000,
+        contextWindow: 1002,
         maxTokens: 1000,
       });
       const warning = vi.spyOn(getAiTransportHost(), "logWarn");

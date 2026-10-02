@@ -133,6 +133,8 @@ export type FileSidebarContent = {
   draftContext?: { sessionKey: string; sessionTitle: string; paneLabel?: string };
   root?: string | null;
   mimeType?: string;
+  /** Extra file locations support inspection, not workspace or external editor actions. */
+  previewOnly?: boolean;
   language?: string;
   line?: number | null;
   /** New identity for an explicit line request; ordinary tab selection retains it. */

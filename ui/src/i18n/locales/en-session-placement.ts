@@ -63,12 +63,32 @@ const enSessionPlacement = {
     failedSessionStopPrompt: "Stop the failed worker before restarting this session.",
     failedSessionUnavailable: "This session's runner failed and cannot accept messages.",
   },
+  chat: {
+    workspaceFiles: {
+      rootSelector: "File locations",
+      workspaceRoot: "Work files",
+      outputsRoot: "Outputs",
+      outputsFiles: "Output files",
+      sharedRoot: "Shared materials",
+      sharedFiles: "Shared files",
+      readOnly: "read-only",
+      unavailable: "Unavailable",
+      runtimePath: "AI path: {path}",
+      outputsEmpty: "No outputs yet.",
+      outputsGuidance: "The AI creates output files while saving; check back here after the run.",
+      outputsReadOnly: "This workspace is read-only. The AI cannot save output files here.",
+      rootUnavailable: "This location is not available right now.",
+      revealOutputs: "Open output folder",
+      revealFailed: "Failed to reveal outputs.",
+    },
+  },
 } satisfies TranslationMap;
 
 export const registerSessionPlacementEnglish = Object.assign(
   () => {
     // SAFETY: The canonical English catalog defines sessionsView as an object; this only extends it.
     Object.assign(en.sessionsView as TranslationMap, enSessionPlacement.sessionsView);
+    Object.assign(en.chat.workspaceFiles as TranslationMap, enSessionPlacement.chat.workspaceFiles);
   },
   { catalog: enSessionPlacement },
 );

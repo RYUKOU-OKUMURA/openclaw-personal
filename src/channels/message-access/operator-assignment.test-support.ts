@@ -81,13 +81,15 @@ async function prepareAssignment(fixture: Fixture, turn: MsgContext) {
     ctx: turn,
     commandAuthorized: true,
   });
-  const tools = resolveGatewayScopedTools({
-    cfg,
-    sessionKey,
-    messageProvider: "slack",
-    senderIsOwner,
-    surface: "loopback",
-  }).tools;
+  const tools = (
+    await resolveGatewayScopedTools({
+      cfg,
+      sessionKey,
+      messageProvider: "slack",
+      senderIsOwner,
+      surface: "loopback",
+    })
+  ).tools;
   const run = <T>(action: () => Promise<T>) =>
     withPluginRuntimeGatewayRequestScope(
       {

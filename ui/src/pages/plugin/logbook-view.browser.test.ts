@@ -35,6 +35,8 @@ it.each([
     state.status = {
       captureEnabled: true,
       capturePaused: false,
+      captureSchedule: null,
+      captureSchedulePaused: false,
       captureIntervalSeconds: 30,
       analysisIntervalMinutes: 15,
       retentionDays: 30,

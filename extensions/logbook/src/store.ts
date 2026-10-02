@@ -14,7 +14,12 @@ import type {
   LogbookObservationInput,
   LogbookOperations,
 } from "./store-contract.js";
-import type { LogbookBatchStatus, LogbookCardDraft } from "./types.js";
+import type {
+  LogbookBatch,
+  LogbookObservationSegment,
+  LogbookBatchStatus,
+  LogbookCardDraft,
+} from "./types.js";
 
 type CapturedFrame = Omit<LogbookFrameInput, "path" | "byteSize" | "contentHash" | "idle"> & {
   buffer: Buffer;
@@ -99,6 +104,22 @@ export class LogbookStore {
     return this.execute("setBatchStatus", { batchId, status, error, model });
   }
 
+  beginBatch(batchId: number, model?: string) {
+    return this.execute("beginBatch", { batchId, model });
+  }
+
+  batchesForDay(day: string) {
+    return this.execute("batchesForDay", { day });
+  }
+
+  checkpointObservations(
+    batch: LogbookBatch,
+    endMs: number,
+    segments: LogbookObservationSegment[],
+  ) {
+    return this.execute("checkpointObservations", { batch, endMs, segments });
+  }
+
   latestBatch() {
     return this.execute("latestBatch", undefined);
   }
@@ -111,8 +132,8 @@ export class LogbookStore {
     return this.execute("resetErrorBatches", undefined);
   }
 
-  nextPendingBatch() {
-    return this.execute("nextPendingBatch", undefined);
+  nextPendingBatch(nowMs = Date.now()) {
+    return this.execute("nextPendingBatch", { nowMs });
   }
 
   batchFrames(batchId: number) {
@@ -163,8 +184,8 @@ export class LogbookStore {
     return this.execute("getStandup", { day });
   }
 
-  saveStandup(day: string, text: string) {
-    return this.execute("saveStandup", { day, text });
+  saveStandup(day: string, text: string, expected?: { previousDay: string; source: string }) {
+    return this.execute("saveStandup", { day, text, expected });
   }
 
   captureFrame(params: CapturedFrame): Promise<number> {
@@ -222,9 +243,13 @@ export class LogbookStore {
     });
   }
 
-  pruneFrames(olderThanMs: number) {
+  deleteDay(day: string) {
+    return this.frameIo.run(() => this.worker.execute({ type: "deleteDay", input: { day } }));
+  }
+
+  pruneFrames(olderThanMs: number, olderUnfinishedThanMs = olderThanMs) {
     return this.frameIo.run(() =>
-      this.worker.execute({ type: "pruneFrames", input: { olderThanMs } }),
+      this.worker.execute({ type: "pruneFrames", input: { olderThanMs, olderUnfinishedThanMs } }),
     );
   }
 }

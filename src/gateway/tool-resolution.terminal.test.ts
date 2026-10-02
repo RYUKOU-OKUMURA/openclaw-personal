@@ -31,7 +31,7 @@ describe("resolveGatewayScopedTools terminal ownership", () => {
     const context = { terminalSessions: manager } as unknown as GatewayRequestContext;
 
     try {
-      const result = withPluginRuntimeGatewayRequestScope(
+      const result = await withPluginRuntimeGatewayRequestScope(
         { context, isWebchatConnect: () => false },
         () =>
           resolveGatewayScopedTools({

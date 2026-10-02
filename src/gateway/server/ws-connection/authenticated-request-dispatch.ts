@@ -347,6 +347,7 @@ export function createGatewayAuthenticatedRequestDispatcher(params: {
           req.method === "sessions.companion.ask" ||
           (req.method === "plugins.reload" &&
             asOptionalRecord(req.params)?.waitForDrain === true) ||
+          req.method === "fs.pickPath" ||
           (req.method === "node.invoke" &&
             client.connect.client.id === GATEWAY_CLIENT_IDS.CLI &&
             client.connect.client.mode === GATEWAY_CLIENT_MODES.CLI);

@@ -49,9 +49,11 @@ it("serves timeline and status through their bounded store operations", async ()
     runtimeSource: fileURLToPath(new URL("../index.ts", import.meta.url)),
     pluginConfig: { captureEnabled: false },
     lifecycle: { registerRuntimeLifecycle() {} },
-    runtime: {},
+    runtime: { config: { current: () => ({}) } },
     session: { controls: { registerControlUiDescriptor() {} } },
     registerNodeInvokePolicy() {},
+    registerTool() {},
+    on() {},
     registerService: (service: OpenClawPluginService) => services.push(service),
     registerGatewayMethod: (
       method: string,

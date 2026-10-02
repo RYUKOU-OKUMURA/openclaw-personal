@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 describe("ollama lazy imports", () => {
   afterEach(() => {
     for (const moduleId of [
+      "./src/media-understanding-provider.js",
       "./src/memory-embedding-adapter.js",
       "./src/node-inference.js",
       "./src/setup.runtime.js",
@@ -27,6 +28,7 @@ describe("ollama lazy imports", () => {
   });
 
   it("loads optional runtime owners only on first use", async () => {
+    let mediaImports = 0;
     let memoryImports = 0;
     let nodeInferenceImports = 0;
     let setupImports = 0;
@@ -52,6 +54,16 @@ describe("ollama lazy imports", () => {
           transport: "remote",
           authProviderId: "ollama",
           create: async () => ({ provider: null }),
+        },
+      };
+    });
+    vi.doMock("./src/media-understanding-provider.js", () => {
+      mediaImports += 1;
+      return {
+        ollamaMediaUnderstandingProvider: {
+          id: "ollama",
+          capabilities: ["image"],
+          extractStructured: async () => ({ text: '{"summary":"image"}' }),
         },
       };
     });
@@ -157,6 +169,7 @@ describe("ollama lazy imports", () => {
     await vi.waitFor(() => expect(wslChecks).toBe(1));
 
     expect({
+      mediaImports,
       memoryImports,
       nodeInferenceImports,
       setupImports,
@@ -164,6 +177,7 @@ describe("ollama lazy imports", () => {
       webSearchImports,
       wslImports,
     }).toEqual({
+      mediaImports: 0,
       memoryImports: 0,
       nodeInferenceImports: 0,
       setupImports: 0,
@@ -174,6 +188,10 @@ describe("ollama lazy imports", () => {
     expect(mediaProvider).toMatchObject({ id: "ollama", capabilities: ["image"] });
 
     await expect(embeddingAdapter?.create({} as never)).resolves.toEqual({ provider: null });
+    await expect(mediaProvider?.extractStructured?.({} as never)).resolves.toEqual({
+      text: '{"summary":"image"}',
+    });
+    expect(mediaImports).toBe(1);
     await expect(nodeCommands[0]?.handle()).resolves.toBe(
       JSON.stringify({ provider: "ollama", models: [] }),
     );
@@ -227,6 +245,7 @@ describe("ollama lazy imports", () => {
     });
 
     expect({
+      mediaImports,
       memoryImports,
       nodeInferenceImports,
       setupImports,
@@ -234,6 +253,7 @@ describe("ollama lazy imports", () => {
       webSearchImports,
       wslImports,
     }).toEqual({
+      mediaImports: 1,
       memoryImports: 1,
       nodeInferenceImports: 1,
       setupImports: 1,

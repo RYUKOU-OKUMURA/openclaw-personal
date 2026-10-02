@@ -6,10 +6,11 @@ import {
   resolveEmbeddedSandboxInfoExecPolicy,
 } from "./embedded-agent-runner/sandbox-info.js";
 import type { SandboxContext } from "./sandbox.js";
+import { buildSandboxFileLocationsPrompt } from "./sandbox/file-locations-prompt.js";
 import { createSandboxTestContext } from "./sandbox/test-fixtures.js";
 
 function createSandboxContext(overrides?: Partial<SandboxContext>): SandboxContext {
-  return createSandboxTestContext({
+  const sandbox = createSandboxTestContext({
     overrides: {
       workspaceDir: "/tmp/openclaw-sandbox",
       agentWorkspaceDir: "/tmp/openclaw-workspace",
@@ -23,6 +24,8 @@ function createSandboxContext(overrides?: Partial<SandboxContext>): SandboxConte
       ...overrides,
     },
   });
+  sandbox.fileLocationsPrompt = buildSandboxFileLocationsPrompt(sandbox);
+  return sandbox;
 }
 
 const fullElevation = { enabled: true, allowed: true, defaultLevel: "full" } as const;
@@ -60,7 +63,23 @@ describe("buildEmbeddedSandboxInfo", () => {
 
     expect(buildEmbeddedSandboxInfo(sandbox)).toEqual({
       ...promptInfo,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
     });
+  });
+
+  it("includes container-only shared and deliverable guidance", () => {
+    const sandbox = createSandboxContext({
+      workspaceAccess: "rw",
+      docker: {
+        ...createSandboxContext().docker,
+        binds: ["/host/read:/mnt/shared/脳内メモ:ro"],
+      },
+    });
+
+    const fileLocationsPrompt = buildEmbeddedSandboxInfo(sandbox)?.fileLocationsPrompt;
+    expect(fileLocationsPrompt).toContain('"/mnt/shared/脳内メモ" — read-only');
+    expect(fileLocationsPrompt).toContain('save under "/workspace/outputs"');
+    expect(fileLocationsPrompt).not.toContain("/host/read");
   });
 
   it("includes elevated info when allowed", () => {
@@ -78,6 +97,7 @@ describe("buildEmbeddedSandboxInfo", () => {
     ).toEqual({
       ...promptInfo,
       browserBridgeUrl: undefined,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
       hostBrowserAllowed: false,
       elevated: {
         allowed: true,
@@ -116,6 +136,7 @@ describe("buildEmbeddedSandboxInfo", () => {
       }),
     ).toEqual({
       ...promptInfo,
+      fileLocationsPrompt: buildSandboxFileLocationsPrompt(sandbox),
       elevated: {
         allowed: true,
         defaultLevel: "full",

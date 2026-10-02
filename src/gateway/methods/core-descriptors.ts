@@ -19,16 +19,7 @@ export type CoreGatewayMethodSpec = {
   sessionAccess?: GatewayMethodSessionAccess;
 };
 
-type CoreGatewayMethodPolicy = Pick<
-  CoreGatewayMethodSpec,
-  | "advertise"
-  | "startup"
-  | "lifetime"
-  | "controlPlaneWrite"
-  | "compatibilityRestored"
-  | "description"
-  | "sessionAccess"
->;
+type CoreGatewayMethodPolicy = Omit<CoreGatewayMethodSpec, "name" | "family" | "scope" | "since">;
 type CoreGatewayMethodSpecRow = readonly [
   name: string,
   family: string | null,
@@ -698,6 +689,10 @@ export const CORE_GATEWAY_METHOD_SPECS = [
   ["plugins.skills.read", "plugins", "operator.read", "2026.9"],
   ["diagnostics.heapProfile", "diagnostics", "operator.admin", "2026.9"],
   ["desktop.release", "environments", "operator.admin", "2026.9", { startup: true }],
+  ["fs.pickPath", "fs", "operator.admin", "2026.9"],
+  ["sandbox.explain", "sandbox", "operator.read", "2026.9"],
+  ["sandbox.entries.add", "sandbox", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
+  ["sandbox.recreate", "sandbox", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["mcp.authLogin", "mcp-auth-login", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["environments.session.status", "environments", "operator.read", "2026.9"],
   [

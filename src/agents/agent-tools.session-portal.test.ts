@@ -43,29 +43,30 @@ function context(dedicated: boolean, attached: boolean, locked = false) {
   );
 }
 
-function tools(
+async function tools(
   builder: "agent" | "gateway",
   cfg: OpenClawConfig = { tools: { profile: "coding" } },
   senderIsOwner = false,
 ) {
   return builder === "agent"
     ? createOpenClawCodingTools({ ...identity, config: cfg, senderIsOwner })
-    : resolveGatewayScopedTools({ ...identity, cfg, senderIsOwner, surface: "loopback" }).tools;
+    : (await resolveGatewayScopedTools({ ...identity, cfg, senderIsOwner, surface: "loopback" }))
+        .tools;
 }
 
 describe("attached conversation portal tool availability", () => {
   for (const builder of ["agent", "gateway"] as const) {
-    it(`${builder} exposes only the scoped schema for a qualified non-owner and preserves tool denies`, () => {
+    it(`${builder} exposes only the scoped schema for a qualified non-owner and preserves tool denies`, async () => {
       const ctx = context(true, true);
-      withPluginRuntimeGatewayContextResolver(
+      await withPluginRuntimeGatewayContextResolver(
         () => ctx,
-        () => {
-          const portal = tools(builder).find((tool) => tool.name === "portal");
+        async () => {
+          const portal = (await tools(builder)).find((tool) => tool.name === "portal");
           expect(portal).toBeDefined();
           expect(portal?.parameters).not.toHaveProperty("properties.environmentId");
           expect(portal?.description).toContain("attached dedicated worker");
           expect(
-            tools(builder, { tools: { profile: "coding", deny: ["portal"] } }).some(
+            (await tools(builder, { tools: { profile: "coding", deny: ["portal"] } })).some(
               (tool) => tool.name === "portal",
             ),
           ).toBe(false);
@@ -73,12 +74,14 @@ describe("attached conversation portal tool availability", () => {
       );
     });
 
-    it(`${builder} preserves the owner's global portal schema`, () => {
+    it(`${builder} preserves the owner's global portal schema`, async () => {
       const ctx = context(false, false);
-      withPluginRuntimeGatewayContextResolver(
+      await withPluginRuntimeGatewayContextResolver(
         () => ctx,
-        () => {
-          const portal = tools(builder, undefined, true).find((tool) => tool.name === "portal");
+        async () => {
+          const portal = (await tools(builder, undefined, true)).find(
+            (tool) => tool.name === "portal",
+          );
           expect(portal?.parameters).toHaveProperty("properties.environmentId");
         },
       );
@@ -97,28 +100,28 @@ describe("attached conversation portal tool availability", () => {
     },
   ] as const)(
     "$builder keeps $label unavailable to non-owners",
-    ({ builder, dedicated, attached, locked }) => {
+    async ({ builder, dedicated, attached, locked }) => {
       const ctx = context(dedicated, attached, locked);
-      withPluginRuntimeGatewayContextResolver(
+      await withPluginRuntimeGatewayContextResolver(
         () => ctx,
-        () => {
-          expect(tools(builder).some((tool) => tool.name === "portal")).toBe(false);
+        async () => {
+          expect((await tools(builder)).some((tool) => tool.name === "portal")).toBe(false);
           if (locked) {
-            expect(tools(builder, undefined, true).some((tool) => tool.name === "portal")).toBe(
-              true,
-            );
+            expect(
+              (await tools(builder, undefined, true)).some((tool) => tool.name === "portal"),
+            ).toBe(true);
           }
         },
       );
     },
   );
 
-  it("does not expose the new mode through HTTP tool invocation", () => {
+  it("does not expose the new mode through HTTP tool invocation", async () => {
     const ctx = context(true, true);
-    withPluginRuntimeGatewayContextResolver(
+    await withPluginRuntimeGatewayContextResolver(
       () => ctx,
-      () => {
-        const result = resolveGatewayScopedTools({
+      async () => {
+        const result = await resolveGatewayScopedTools({
           ...identity,
           cfg: { tools: { profile: "coding" } },
           senderIsOwner: false,

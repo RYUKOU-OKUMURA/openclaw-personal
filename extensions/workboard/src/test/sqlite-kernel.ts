@@ -25,6 +25,11 @@ export function createKernelStores(
     ready: Promise.resolve(kernel.dataVersion()),
     dataVersion: async () => kernel.dataVersion(),
     close: async () => kernel.close(),
+    planning: {
+      get: async (...args) => kernel.planning.get(...args),
+      update: async (...args) => kernel.planning.update(...args),
+      move: async (...args) => kernel.planning.move(...args),
+    },
     cards: {
       ...asyncKeyedStore(kernel.cards),
       entries: async (scope) => kernel.cards.entries(scope),

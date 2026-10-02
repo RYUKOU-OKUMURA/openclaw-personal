@@ -101,6 +101,8 @@ export type SandboxBrowserContext = {
 
 export type SandboxContext = {
   enabled: boolean;
+  /** Derived container-only file-location guidance for runtime prompts; not persisted. */
+  fileLocationsPrompt?: string;
   /** Immutable creator policy: this session may never escape to a host execution target. */
   required?: true;
   /** Core-prepared execution projection; ordinary rw sandboxes retain the requested workspace. */

@@ -183,6 +183,10 @@ describe("core gateway method release trains", () => {
         .toSorted(),
     ).toEqual(TRAIN_2026_8_METHODS.toSorted());
     for (const method of [
+      "fs.pickPath",
+      "sandbox.explain",
+      "sandbox.entries.add",
+      "sandbox.recreate",
       "canvas.document.preview",
       "canvas.document.view",
       "plugins.controlUi.list",

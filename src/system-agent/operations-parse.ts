@@ -523,6 +523,7 @@ function normalizePluginInstallSpec(spec: string, source: string | undefined): s
  */
 export function isPersistentSystemAgentOperation(operation: SystemAgentOperation): boolean {
   return (
+    operation.kind === "create-specialist" ||
     operation.kind === "set-default-model" ||
     operation.kind === "config-set" ||
     operation.kind === "config-unset" ||
@@ -543,6 +544,8 @@ export function isPersistentSystemAgentOperation(operation: SystemAgentOperation
 
 export function describeSystemAgentPersistentOperation(operation: SystemAgentOperation): string {
   switch (operation.kind) {
+    case "create-specialist":
+      return `専門担当「${operation.name}」を作成。役割: ${operation.role}。専用の新しい作業フォルダ内だけを読み書きし、既存資料は共有しません。連絡先: ${operation.peerAgentIds.filter((id) => id !== operation.agentId).join(", ")}（相互連絡）。外部公開・管理操作・コマンド実行・インターネット接続は不可。管理済みモデル: ${operation.model}。`;
     case "set-default-model":
       return operation.agentId
         ? `set agent ${operation.agentId}'s model to ${operation.model}`

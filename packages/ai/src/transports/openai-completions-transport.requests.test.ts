@@ -1,12 +1,127 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import type { Model } from "../types.js";
+import { createZeroUsage } from "../usage.test-support.js";
 import { createOpenAICompletionsTransportStreamFn } from "./openai-completions-transport.js";
 import { makeCompletionsModel } from "./openai-completions.test-support.js";
+import { buildOpenAISdkClientOptions } from "./openai-transport-params.js";
 
 const COLD_RUNNER_HTTP_TEST_TIMEOUT_MS = 300_000;
 
 describe("openai completions transport requests", () => {
+  it("surfaces exhausted post-tool context before HTTP and resumes with a smaller transcript", async () => {
+    const requests: Array<{ max_completion_tokens?: number }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        requests.push(JSON.parse(body));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            id: "chatcmpl-context-recovery",
+            object: "chat.completion",
+            model: "compatible-reasoner",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "Continued from recorded results." },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Missing loopback server address");
+      }
+      const model = makeCompletionsModel({
+        id: "compatible-reasoner",
+        provider: "compatible-proxy",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        contextWindow: 2_048,
+        maxTokens: 1_024,
+      });
+      const run = async (toolResult: string) => {
+        const stream = await createOpenAICompletionsTransportStreamFn()(
+          model,
+          {
+            messages: [
+              { role: "user", content: "Select a source and finish the task.", timestamp: 1 },
+              {
+                role: "assistant",
+                content: [{ type: "toolCall", id: "select-source", name: "select", arguments: {} }],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: createZeroUsage(),
+                stopReason: "toolUse",
+                timestamp: 2,
+              },
+              {
+                role: "toolResult",
+                toolCallId: "select-source",
+                toolName: "select",
+                content: [{ type: "text", text: toolResult }],
+                isError: false,
+                timestamp: 3,
+              },
+            ],
+            tools: [],
+          },
+          { apiKey: "test-key" },
+        );
+        return stream.result();
+      };
+
+      const rejected = await run("資料".repeat(2_048));
+      expect(rejected.stopReason).toBe("error");
+      expect(rejected.errorMessage).toMatch(/Context overflow:.*no room for output/);
+      expect(rejected.usage.output).toBe(0);
+      expect(requests).toEqual([]);
+
+      const continued = await run("The selected source and its result are recorded.");
+      expect(continued.stopReason).toBe("stop");
+      expect(continued.content).toEqual([
+        { type: "text", text: "Continued from recorded results." },
+      ]);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.max_completion_tokens).toBe(1_024);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("passes provider request timeouts to the completions SDK client", () => {
+    const requestTimeoutMs = 900_000;
+    const model = {
+      id: "gpt-5.4-mini",
+      name: "GPT-5.4 Mini",
+      api: "openai-completions",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200_000,
+      maxTokens: 8_192,
+      requestTimeoutMs,
+    } satisfies Model<"openai-completions"> & { requestTimeoutMs: number };
+
+    expect(buildOpenAISdkClientOptions(model).timeout).toBe(requestTimeoutMs);
+  });
+
   it.each([
     {
       api: "openai-completions" as const,

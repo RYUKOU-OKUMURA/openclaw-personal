@@ -61,6 +61,7 @@ Every section heading from the previous single-page version keeps its anchor her
 - <a id="plugin-management" />[Plugin management](/gateway/protocol/rpc-methods#plugin-management)
 - <a id="messaging-and-logs" />[Messaging and logs](/gateway/protocol/rpc-methods#messaging-and-logs)
 - <a id="operator-terminal" />[Operator terminal](/gateway/protocol/rpc-methods#operator-terminal)
+- <a id="sandbox-access" />[Sandbox access](/gateway/protocol/rpc-talk-config-and-agents#sandbox-access)
 - <a id="talk-and-tts" />[Talk and TTS](/gateway/protocol/rpc-methods#talk-and-tts)
 - <a id="secrets-config-update-and-wizard" />[Secrets, config, update, and wizard](/gateway/protocol/rpc-methods#secrets-config-update-and-wizard)
 - <a id="agent-and-workspace-helpers" />[Agent and workspace helpers](/gateway/protocol/rpc-methods#agent-and-workspace-helpers)

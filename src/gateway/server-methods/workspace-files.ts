@@ -2,9 +2,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { detectMime } from "@openclaw/media-core/mime";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type {
-  SessionFileBrowserEntry,
   SessionFileBrowserResult,
   SessionFileEntry,
   SessionFileRelevance,
@@ -14,19 +12,16 @@ import { insideGitCheckout } from "../../agents/worktrees/git.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import { WORKSPACE_PREVIEW_MAX_BYTES } from "../workspace-file-limits.js";
+import { buildWorkspaceBrowser } from "./session-file-browser.js";
 import {
   decodeUtf8Strict,
-  listWorkspacePath,
   normalizeRelativePath,
   openWorkspaceRoot,
   readWorkspaceFile,
   readWorkspaceFilePrefix,
   resolveWorkspacePath,
-  sortDirents,
-  sortWorkspaceEntries,
   statWorkspacePath,
   toUpdatedAtMs,
-  type WorkspaceDirEntry,
   type WorkspaceRoot,
   updateWorkspaceFile,
   type WorkspaceFileUpdateResult,
@@ -40,9 +35,6 @@ export type LoadedSessionFiles = {
   files: TouchedFile[];
 };
 const MAX_PREVIEW_BYTES = WORKSPACE_PREVIEW_MAX_BYTES;
-const MAX_BROWSER_ENTRIES = 250;
-const MAX_SEARCH_ENTRIES = 500;
-const MAX_SEARCH_VISITED_ENTRIES = 5_000;
 // Matches file-type's documented default buffer sample while keeping metadata
 // classification independent from the 256 KiB inline-content cap.
 const MIME_SNIFF_PREFIX_BYTES = 4_100;
@@ -61,17 +53,6 @@ const DETECTED_TEXT_MIME_TYPES = new Set([
   "application/x-ms-regedit",
   "model/stl",
 ]);
-const SEARCH_SKIP_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".next",
-  ".turbo",
-  ".yarn",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
-
 function toDisplayPath(root: string, resolved: string): string {
   const relative = path.relative(root, resolved);
   if (!relative) {
@@ -111,19 +92,6 @@ export function resolveFileRoot(params: {
   return isPathInside(resolvedRoot, resolvedCwd) ? params.spawnedCwd : params.root;
 }
 
-function mergeRelevance(
-  current: SessionFileRelevance | undefined,
-  next: SessionFileRelevance | undefined,
-): SessionFileRelevance | undefined {
-  if (!current) {
-    return next;
-  }
-  if (!next || current === next) {
-    return current;
-  }
-  return "mixed";
-}
-
 function buildSessionRelevanceMap(
   files: readonly TouchedFile[],
   root: string | undefined,
@@ -144,24 +112,6 @@ function buildSessionRelevanceMap(
     relevance.set(toDisplayPath(root, resolved), file.kind);
   }
   return relevance;
-}
-
-function relevanceForBrowserPath(
-  browserPath: string,
-  kind: "file" | "directory",
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
-): SessionFileRelevance | undefined {
-  if (kind === "file") {
-    return relevance.get(browserPath);
-  }
-  const prefix = browserPath ? `${browserPath}/` : "";
-  let aggregate: SessionFileRelevance | undefined;
-  for (const [filePath, sessionKind] of relevance) {
-    if (filePath.startsWith(prefix) && filePath !== browserPath) {
-      aggregate = mergeRelevance(aggregate, sessionKind);
-    }
-  }
-  return aggregate;
 }
 
 function displayNameForPath(filePath: string): string {
@@ -224,7 +174,7 @@ function applyOversizedFileMetadata(
   }
 }
 
-async function toSessionFileEntry(
+export async function toSessionFileEntry(
   touched: TouchedFile,
   root: string | undefined,
   fileRoot: string | undefined,
@@ -307,144 +257,6 @@ function resolveSessionFileCandidates(params: {
   });
 }
 
-function toBrowserEntry(
-  browserPath: string,
-  dirent: WorkspaceDirEntry,
-  relevance: ReadonlyMap<string, SessionFileRelevance>,
-): SessionFileBrowserEntry | undefined {
-  const kind = dirent.isFile ? "file" : dirent.isDirectory ? "directory" : null;
-  if (!kind) {
-    return undefined;
-  }
-  const sessionKind = relevanceForBrowserPath(browserPath, kind, relevance);
-  return {
-    path: browserPath,
-    name: dirent.name,
-    kind,
-    ...(kind === "file" ? { size: dirent.size } : {}),
-    updatedAtMs: toUpdatedAtMs(dirent.mtimeMs),
-    ...(sessionKind ? { sessionKind } : {}),
-  };
-}
-
-function matchesSearch(entryPath: string, name: string, query: string): boolean {
-  const normalizedQuery = query.toLowerCase();
-  return (
-    name.toLowerCase().includes(normalizedQuery) ||
-    entryPath.toLowerCase().includes(normalizedQuery)
-  );
-}
-
-async function searchBrowserEntries(params: {
-  assertCurrent?: () => void;
-  root: string | WorkspaceRoot;
-  query: string;
-  relevance: ReadonlyMap<string, SessionFileRelevance>;
-}): Promise<{ entries: SessionFileBrowserEntry[]; truncated?: boolean }> {
-  const entries: SessionFileBrowserEntry[] = [];
-  let visitedEntries = 0;
-  let truncated = false;
-  const shouldStop = (): boolean => {
-    if (entries.length >= MAX_SEARCH_ENTRIES || visitedEntries >= MAX_SEARCH_VISITED_ENTRIES) {
-      truncated = true;
-      return true;
-    }
-    return false;
-  };
-  const visit = async (dir: string): Promise<void> => {
-    if (shouldStop()) {
-      return;
-    }
-    const dirents = await listWorkspacePath(params.root, dir, params.assertCurrent);
-    if (!dirents) {
-      return;
-    }
-    for (const dirent of sortDirents(dirents)) {
-      if (shouldStop()) {
-        return;
-      }
-      visitedEntries += 1;
-      const browserPath = dir ? `${dir}/${dirent.name}` : dirent.name;
-      if (matchesSearch(browserPath, dirent.name, params.query)) {
-        const entry = toBrowserEntry(browserPath, dirent, params.relevance);
-        if (entry) {
-          entries.push(entry);
-        }
-      }
-      if (dirent.isDirectory && !SEARCH_SKIP_DIRS.has(dirent.name)) {
-        await visit(browserPath);
-      }
-    }
-  };
-  await visit("");
-  return { entries: sortWorkspaceEntries(entries), ...(truncated ? { truncated } : {}) };
-}
-
-async function buildBrowserResult(params: {
-  assertCurrent?: () => void;
-  root: string | undefined;
-  workspaceRoot?: WorkspaceRoot;
-  fileRoot: string | undefined;
-  path?: string;
-  search?: string;
-  files: readonly TouchedFile[];
-}): Promise<SessionFileBrowserResult | undefined> {
-  if (!params.root) {
-    return undefined;
-  }
-  const search = normalizeOptionalString(params.search);
-  const relevance = buildSessionRelevanceMap(params.files, params.root, params.fileRoot);
-  if (search) {
-    const result = await searchBrowserEntries({
-      root: params.workspaceRoot ?? params.root,
-      query: search,
-      relevance,
-      assertCurrent: params.assertCurrent,
-    });
-    return {
-      path: "",
-      search,
-      entries: result.entries,
-      ...(result.truncated ? { truncated: result.truncated } : {}),
-    };
-  }
-  const browserPath = normalizeRelativePath(params.path);
-  const resolved = resolveWorkspacePath(params.root, browserPath);
-  if (!resolved) {
-    return undefined;
-  }
-  const stat = await statWorkspacePath(
-    params.workspaceRoot ?? params.root,
-    browserPath,
-    params.assertCurrent,
-  );
-  if (!stat?.isDirectory) {
-    return undefined;
-  }
-  const dirents = await listWorkspacePath(
-    params.workspaceRoot ?? params.root,
-    browserPath,
-    params.assertCurrent,
-  );
-  if (!dirents) {
-    return undefined;
-  }
-  const entries = sortDirents(dirents)
-    .slice(0, MAX_BROWSER_ENTRIES + 1)
-    .map((dirent) => {
-      const entryPath = browserPath ? `${browserPath}/${dirent.name}` : dirent.name;
-      return toBrowserEntry(entryPath, dirent, relevance);
-    })
-    .filter((entry): entry is SessionFileBrowserEntry => Boolean(entry));
-  const parent = path.dirname(browserPath);
-  return {
-    path: browserPath,
-    ...(browserPath ? { parentPath: parent === "." ? "" : parent } : {}),
-    entries: sortWorkspaceEntries(entries.slice(0, MAX_BROWSER_ENTRIES)),
-    ...(entries.length > MAX_BROWSER_ENTRIES ? { truncated: true } : {}),
-  };
-}
-
 export async function listSessionWorkspaceFiles(
   params: LoadedSessionFiles & {
     path?: string;
@@ -479,13 +291,12 @@ export async function listSessionWorkspaceFiles(
       }),
     ),
   );
-  const browser = await buildBrowserResult({
+  const browser = await buildWorkspaceBrowser({
     root,
     workspaceRoot,
-    fileRoot: loaded.fileRoot,
     path: params.path,
     search: params.search,
-    files: workspaceFiles,
+    relevance: buildSessionRelevanceMap(workspaceFiles, root, loaded.fileRoot),
     assertCurrent: params.assertCurrent,
   });
   return {

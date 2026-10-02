@@ -11,6 +11,7 @@ const TRAITS = [
   ["settingsWide", "content--settings-wide"],
   ["settingsWorkspace", "content--settings-workspace"],
   ["memoryPage", "content--memory-page"],
+  ["accessMapPage", "content--access-map-page"],
   ["logsPage", "content--logs-page"],
   ["activityPage", "content--activity-page"],
   ["terminalPage", "content--terminal-page"],

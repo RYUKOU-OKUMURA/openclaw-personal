@@ -8,6 +8,7 @@ import {
   loadLogbook,
   loadLogbookStandup,
   runLogbookAnalysisNow,
+  saveLogbookSchedule,
   setLogbookCapturePaused,
   stopLogbookPolling,
 } from "./logbook-controller.ts";
@@ -23,6 +24,8 @@ function statusFor(day: string): LogbookStatusPayload {
   return {
     captureEnabled: true,
     capturePaused: false,
+    captureSchedule: null,
+    captureSchedulePaused: false,
     captureIntervalSeconds: 30,
     analysisIntervalMinutes: 15,
     retentionDays: 30,
@@ -287,26 +290,89 @@ describe("Logbook controller", () => {
     expect(state.actionPending).toBe(false);
   });
 
-  it("discards a capture result from a retired polling client", async () => {
-    const host = {};
-    hosts.push(host);
-    const state = getLogbookState(host);
-    const oldStatus = createDeferred<unknown>();
-    const oldClient = clientWithRequest(() => oldStatus.promise);
-    const newStatus = { ...statusFor("2026-07-05"), capturePaused: true };
-    const newClient = clientWithRequest(() => Promise.resolve(newStatus));
+  it.each(["capture", "schedule"] as const)(
+    "discards a %s result from a retired polling client",
+    async (action) => {
+      const host = {};
+      hosts.push(host);
+      const state = getLogbookState(host);
+      const oldStatus = createDeferred<unknown>();
+      const oldClient = clientWithRequest(() => oldStatus.promise);
+      const newStatus = { ...statusFor("2026-07-05"), capturePaused: true };
+      const newClient = clientWithRequest(() => Promise.resolve(newStatus));
 
-    configureLogbookPolling(state, oldClient, true);
-    const oldRequest = setLogbookCapturePaused(state, oldClient, true);
-    configureLogbookPolling(state, newClient, true);
-    await setLogbookCapturePaused(state, newClient, true);
-    expect(state.status).toEqual(newStatus);
+      configureLogbookPolling(state, oldClient, true);
+      const run = (client: GatewayBrowserClient) => {
+        if (action === "capture") {
+          return setLogbookCapturePaused(state, client, true);
+        }
+        state.scheduleDraft = { enabled: true, start: "23:00", end: "08:00" };
+        return saveLogbookSchedule(state, client);
+      };
+      const oldRequest = run(oldClient);
+      configureLogbookPolling(state, newClient, true);
+      await run(newClient);
+      expect(state.status).toEqual(newStatus);
 
-    oldStatus.resolve(statusFor("2026-07-04"));
-    await oldRequest;
-    expect(state.status).toEqual(newStatus);
-    expect(state.actionPending).toBe(false);
-  });
+      oldStatus.resolve(statusFor("2026-07-04"));
+      await oldRequest;
+      expect(state.status).toEqual(newStatus);
+      expect(state.actionPending).toBe(false);
+    },
+  );
+
+  it.each([
+    ["capture", "before"],
+    ["capture", "during"],
+    ["schedule", "before"],
+    ["schedule", "during"],
+  ] as const)(
+    "keeps a saved %s status when a load started %s saving settles later",
+    async (action, order) => {
+      const host = {};
+      hosts.push(host);
+      const state = getLogbookState(host);
+      state.day = "2026-07-04";
+      state.dayPinned = true;
+      const staleStatus = createDeferred<unknown>();
+      const savedStatus = createDeferred<unknown>();
+      const saved = {
+        ...statusFor(state.day),
+        capturePaused: action === "capture",
+        captureSchedule: action === "schedule" ? { start: "23:00", end: "08:00" } : null,
+      };
+      const client = clientWithRequest((method) => {
+        if (method === "logbook.status") {
+          return staleStatus.promise;
+        }
+        if (method === "logbook.days") {
+          return Promise.resolve({ days: [] });
+        }
+        if (method === "logbook.timeline") {
+          return Promise.resolve(timelineFor(state.day, "Fresh timeline"));
+        }
+        return savedStatus.promise;
+      });
+      configureLogbookPolling(state, client, true);
+      const save = () => {
+        state.scheduleDraft = { enabled: true, start: "23:00", end: "08:00" };
+        return action === "capture"
+          ? setLogbookCapturePaused(state, client, true)
+          : saveLogbookSchedule(state, client);
+      };
+      const first = order === "before" ? loadLogbook(state, client) : save();
+      const second = order === "before" ? save() : loadLogbook(state, client);
+      savedStatus.resolve(saved);
+      await (order === "before" ? second : first);
+      staleStatus.resolve(statusFor(state.day));
+      await Promise.all([first, second]);
+
+      expect(state.status).toEqual(saved);
+      expect(state.timeline?.cards[0]?.title).toBe("Fresh timeline");
+      expect(state.loading).toBe(false);
+      expect(state.actionPending).toBe(false);
+    },
+  );
 
   it("queues an analysis refresh behind an in-flight poll", async () => {
     vi.useFakeTimers();
