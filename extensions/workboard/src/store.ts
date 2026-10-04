@@ -587,15 +587,18 @@ export class WorkboardStore extends WorkboardNotificationStore {
   async archive(
     id: string,
     archived: unknown,
-    options: { expectedUpdatedAt?: number } = {},
+    options: { expectedUpdatedAt?: number; scope?: WorkboardMutationScope } = {},
   ): Promise<WorkboardCard> {
     const shouldArchive = archived !== false;
     return await this.updateMetadata(
       id,
-      (existing) => ({
-        ...existing.metadata,
-        archivedAt: shouldArchive ? Date.now() : 0,
-      }),
+      (existing) => {
+        assertCanMutateClaimedCard(existing, options.scope);
+        return {
+          ...existing.metadata,
+          archivedAt: shouldArchive ? Date.now() : 0,
+        };
+      },
       options,
     );
   }

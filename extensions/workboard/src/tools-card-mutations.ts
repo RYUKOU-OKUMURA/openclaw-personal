@@ -140,3 +140,44 @@ export function createWorkboardMoveTool(params: {
     },
   };
 }
+
+export function createWorkboardArchiveTool(params: {
+  store: WorkboardStore;
+  readScopedCardToolParams: WorkboardToolCardParamsReader;
+}): AnyAgentTool {
+  return {
+    name: "workboard_archive",
+    label: "Workboard Archive",
+    description:
+      "Archive or restore one Workboard card without changing its status or deleting its history. Use archived=true to archive, false to restore. Claimed cards require matching claim scope.",
+    parameters: strictObject({
+      id: cardIdField(),
+      archived: Type.Boolean({ description: "True to archive the card; false to restore it." }),
+      expectedUpdatedAt: Type.Optional(
+        Type.Integer({
+          minimum: 0,
+          description: "Card updatedAt from the last read, for conflict checking.",
+        }),
+      ),
+      token: claimTokenField("Claim token for claimed cards."),
+    }),
+    execute: async (_toolCallId, rawParams) => {
+      const { record, id, scope } = await params.readScopedCardToolParams(rawParams);
+      if (typeof record.archived !== "boolean") {
+        throw new Error("archived must be a boolean.");
+      }
+      const expectedUpdatedAt = record.expectedUpdatedAt;
+      if (
+        expectedUpdatedAt !== undefined &&
+        (typeof expectedUpdatedAt !== "number" ||
+          !Number.isSafeInteger(expectedUpdatedAt) ||
+          expectedUpdatedAt < 0)
+      ) {
+        throw new Error("expectedUpdatedAt must be a non-negative safe integer.");
+      }
+      return redactedCardResult(
+        await params.store.archive(id, record.archived, { expectedUpdatedAt, scope }),
+      );
+    },
+  };
+}

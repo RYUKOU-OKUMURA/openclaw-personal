@@ -123,7 +123,8 @@
       "workboard_worker_log",
       "workboard_protocol_violation",
       "workboard_unblock",
-      "workboard_move"
+      "workboard_move",
+      "workboard_archive"
     ]
   },
   "commandAliases": [
@@ -235,6 +236,9 @@
       "optional": true
     },
     "workboard_move": {
+      "optional": true
+    },
+    "workboard_archive": {
       "optional": true
     }
   },

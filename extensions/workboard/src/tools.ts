@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { redactClaimToken } from "./card-redaction.js";
 import type { WorkboardStore } from "./store.js";
 import {
+  createWorkboardArchiveTool,
   cardIdField,
   claimTokenField,
   createWorkboardCardMutations,
@@ -459,6 +460,7 @@ export function createWorkboardTools(params: {
       },
     },
     createWorkboardMoveTool({ store, readScopedCardToolParams }),
+    createWorkboardArchiveTool({ store, readScopedCardToolParams }),
     ...createWorkboardOrchestrationTools({ store, ownerId }),
   ];
   for (const tool of tools) {

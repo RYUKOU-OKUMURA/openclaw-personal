@@ -2,7 +2,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { isToolResultError } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { Value } from "typebox/value";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createWorkboardSqliteTestHarness,
   createWorkboardSqliteTestStore,
@@ -642,5 +642,96 @@ describe("workboard tools", () => {
       }),
     );
     expect(claimed.card).toMatchObject({ status: "review" });
+  });
+
+  it("archives and restores cards without completing them or losing history", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const archive = expectDefined(
+      createWorkboardTools({ store, context: { agentId: "main" } }).find(
+        (tool) => tool.name === "workboard_archive",
+      ),
+      "card archive tool",
+    );
+    const card = await store.create({
+      title: "Rejected idea",
+      boardId: "ideas",
+      status: "triage",
+      labels: ["rejected"],
+      notes: "Keep the assessment",
+    });
+    await archive.execute("archive", { id: card.id, archived: true });
+    expect(await store.get(card.id)).toMatchObject({
+      status: "triage",
+      labels: ["rejected"],
+      notes: "Keep the assessment",
+      metadata: { automation: { boardId: "ideas" }, archivedAt: expect.any(Number) },
+    });
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBeGreaterThan(0);
+    await archive.execute("restore", { id: card.id, archived: false });
+    expect(await store.get(card.id)).toMatchObject({
+      status: "triage",
+      metadata: { automation: { boardId: "ideas" } },
+    });
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBeUndefined();
+
+    const claimed = await store.claim(card.id, { ownerId: "worker", token: "test-archive-token" });
+    await expect(archive.execute("denied", { id: card.id, archived: true })).rejects.toThrow(
+      "card is claimed by worker",
+    );
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBeUndefined();
+    const result = readPayload(
+      await archive.execute("authorized", { id: card.id, archived: true, token: claimed.token }),
+    );
+    expect(result.card).toMatchObject({ metadata: { claim: { token: "[redacted]" } } });
+    await expect(
+      archive.execute("restore-denied", { id: card.id, archived: false }),
+    ).rejects.toThrow("card is claimed by worker");
+    await archive.execute("restore-authorized", {
+      id: card.id,
+      archived: false,
+      token: claimed.token,
+    });
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBeUndefined();
+  });
+
+  it("rechecks claim ownership before persisting an archive", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const archive = expectDefined(
+      createWorkboardTools({ store, context: { agentId: "main" } }).find(
+        (tool) => tool.name === "workboard_archive",
+      ),
+      "card archive tool",
+    );
+    const card = await store.create({ title: "Claim race", status: "todo" });
+    const before = expectDefined(await store.get(card.id), "card before archive");
+    const get = store.get.bind(store);
+    vi.spyOn(store, "get").mockImplementationOnce(async (id) => {
+      const stale = await get(id);
+      await store.claim(id, { ownerId: "worker", token: "test-race-token" });
+      return stale;
+    });
+    await expect(archive.execute("race", { id: card.id, archived: true })).rejects.toThrow(
+      "card is claimed by worker",
+    );
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBe(before.metadata?.archivedAt);
+  });
+
+  it("rejects stale archive revisions and missing archive intent", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const archive = expectDefined(
+      createWorkboardTools({ store, context: { agentId: "main" } }).find(
+        (tool) => tool.name === "workboard_archive",
+      ),
+      "card archive tool",
+    );
+    const card = await store.create({ title: "Stale assessment", status: "triage" });
+    await store.update(card.id, { title: "Updated assessment" });
+    await expect(
+      archive.execute("stale", { id: card.id, archived: true, expectedUpdatedAt: card.updatedAt }),
+    ).rejects.toThrow(/changed/i);
+    await expect(archive.execute("missing", { id: card.id })).rejects.toThrow(
+      "archived must be a boolean",
+    );
+    expect((await store.get(card.id))?.metadata?.archivedAt).toBeUndefined();
   });
 });
