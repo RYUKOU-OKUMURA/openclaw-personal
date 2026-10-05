@@ -642,6 +642,28 @@ describe("mirrorCodexAppServerTranscript", () => {
     });
   });
 
+  it("persists the full tool result body while capping only details", async () => {
+    const target = await createSqliteMirrorTarget("openclaw-codex-mirror-body-");
+    const body = "0123456789abcdef".repeat(3_125); // 50_000 chars
+    const toolResultMessage = castAgentMessage({
+      role: "toolResult",
+      toolCallId: "call-long",
+      toolName: "mcp:report",
+      content: [{ type: "text", text: body }],
+      details: { status: "ok" },
+      timestamp: Date.now(),
+    }) as MirroredAgentMessage;
+
+    await mirrorCodexAppServerTranscript({
+      ...target,
+      messages: [toolResultMessage],
+      idempotencyScope: "scope-1",
+    });
+
+    const raw = await readMirrorRaw(target);
+    expect(raw).toContain(body);
+  });
+
   it("preserves gateway user-turn identity across Codex transcript mirroring", async () => {
     const target = await createSqliteMirrorTarget("openclaw-codex-mirror-user-identity-");
     const userMessage = castAgentMessage({

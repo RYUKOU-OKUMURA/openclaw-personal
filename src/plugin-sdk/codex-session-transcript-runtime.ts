@@ -91,15 +91,16 @@ export async function withCodexSessionTranscriptMirrorWriteLock<T>(
     await import("./session-transcript-lock-runtime.js");
   // The session payload guard owns persistence capping; keep it lazy so the
   // mirror seam does not pull the agent graph into plugin startup.
-  const { capToolResultForPersistence, resolveMaxToolResultChars } =
+  const { capToolResultDetailsForPersistence } =
     await import("../agents/session-tool-result-guard.payload.js");
   const redactionConfig = params.config?.logging;
-  const maxToolResultChars = resolveMaxToolResultChars();
   const capMessageForPersistence = <TMessage>(message: TMessage): TMessage =>
-    // Mirror persistence shares the session guard's cap so diagnostic payloads
-    // such as tool result image bytes are not duplicated into the transcript.
+    // Mirror persistence shares the session guard's details cap so diagnostic
+    // payloads such as tool result image bytes are not duplicated into the
+    // transcript. The mirrored body stays untouched: its text is the runtime
+    // result readers replay, not diagnostics.
     isAgentMessageRecord(message) && message.role === "toolResult"
-      ? (capToolResultForPersistence(message, maxToolResultChars, redactionConfig) as TMessage)
+      ? (capToolResultDetailsForPersistence(message, redactionConfig) as TMessage)
       : message;
   return await withProjectedSessionTranscriptWriteLock(params, run, (context, locked) => ({
     ...context,

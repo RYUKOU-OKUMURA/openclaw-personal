@@ -411,6 +411,22 @@ export function capToolResultForPersistence(
   return sanitizedDetails === details ? capped : { ...capped, details: sanitizedDetails };
 }
 
+/**
+ * Details-only persistence projection for writers whose runtime result text is
+ * already delivery-bound: unlike capToolResultForPersistence, the message body
+ * is never truncated here — only diagnostic `details` are capped.
+ */
+export function capToolResultDetailsForPersistence(
+  msg: AgentMessage,
+  redactionConfig?: ToolResultDetailRedactionConfig,
+): AgentMessage {
+  if (msg.role !== "toolResult") {
+    return msg;
+  }
+  const sanitizedDetails = sanitizeToolResultDetailsForPersistence(msg.details, redactionConfig);
+  return sanitizedDetails === msg.details ? msg : { ...msg, details: sanitizedDetails };
+}
+
 export function normalizePersistedToolResultName(
   message: AgentMessage,
   fallbackName?: string,
