@@ -39,6 +39,7 @@ function buildAgentToolResultMiddlewareFactory(
     sessionId?: string;
     sessionKey?: string;
     runId?: string;
+    contextWindowTokens?: number;
   },
 ): ExtensionFactory {
   const { agentId, sessionKey, runId } = context;
@@ -51,6 +52,9 @@ function buildAgentToolResultMiddlewareFactory(
     ...(sessionId ? { sessionId } : {}),
     ...(sessionKey ? { sessionKey } : {}),
     ...(runId ? { runId } : {}),
+    ...(context.contextWindowTokens !== undefined
+      ? { contextWindowTokens: context.contextWindowTokens }
+      : {}),
   });
   return (agent) => {
     agent.on("tool_result", async (rawEvent: unknown, ctx: { cwd?: string }) => {
@@ -161,6 +165,9 @@ export function buildEmbeddedExtensionFactories(params: {
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
       runId: params.runId,
+      ...(params.contextTokenBudget !== undefined
+        ? { contextWindowTokens: params.contextTokenBudget }
+        : {}),
     }),
   );
   return factories;

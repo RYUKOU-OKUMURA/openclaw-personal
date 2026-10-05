@@ -215,12 +215,14 @@ export function buildAgentsApiToolSurface(
       parameters: schema,
     }),
   );
+  const contextTokens = params.contextTokenBudget ?? params.model.contextWindow;
   const middleware = createAgentToolResultMiddlewareRunner({
     runtime: "agentsapi",
     agentId,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     runId: params.runId,
+    ...(typeof contextTokens === "number" ? { contextWindowTokens: contextTokens } : {}),
   });
   const delivery: ToolDelivery = {
     didSendViaMessagingTool: false,
@@ -234,7 +236,6 @@ export function buildAgentsApiToolSurface(
   const runtimeFacts: AgentsApiToolSurface["runtimeFacts"] = { acceptedSessionSpawns: [] };
   let lastToolError: AgentsApiToolSurface["lastToolError"];
   const executionBoundaries = createAgentHarnessToolExecutionBoundaryRegistry();
-  const contextTokens = params.contextTokenBudget ?? params.model.contextWindow;
   const maxChars =
     typeof contextTokens === "number" && Number.isFinite(contextTokens) && contextTokens > 0
       ? resolveLiveToolResultMaxChars({ contextWindowTokens: contextTokens })

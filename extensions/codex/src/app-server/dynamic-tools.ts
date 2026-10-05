@@ -848,13 +848,14 @@ function dedupeQuarantinedDynamicTools(
 function toToolResultHookContext(
   ctx: CodexDynamicToolHookContext | undefined,
 ): CodexToolResultHookContext {
-  const { agentId, sessionId, sessionKey, runId, channelId } = ctx ?? {};
+  const { agentId, sessionId, sessionKey, runId, channelId, contextWindowTokens } = ctx ?? {};
   return {
     ...(agentId && { agentId }),
     ...(sessionId && { sessionId }),
     ...(sessionKey && { sessionKey }),
     ...(runId && { runId }),
     ...(channelId && { channelId }),
+    ...(typeof contextWindowTokens === "number" ? { contextWindowTokens } : {}),
   };
 }
 

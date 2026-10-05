@@ -14,10 +14,13 @@ import { getPluginValueInstance } from "../../plugins/plugin-instance-scope.js";
 import { getPluginRegistryGatewayOwner } from "../../plugins/registry-lifecycle.js";
 import { createLazyPromiseLoader } from "../../shared/lazy-promise.js";
 import { truncateUtf16Safe } from "../../utils.js";
+import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { readEmbeddedMessageDeliveryFact } from "../embedded-agent-message-delivery.js";
 import { isDeliveredMessagingToolResult } from "../embedded-agent-message-tool-source-reply.js";
 import { isMessagingToolSendAction } from "../embedded-agent-messaging.js";
+import { TOOL_IMAGE_CHARS } from "../embedded-agent-runner/tool-result-char-estimator.js";
 import { isToolResultError } from "../tool-result-error.js";
+import { resolveToolResultContextMaxChars } from "../tool-result-limits.js";
 
 const log = createSubsystemLogger("agents/harness");
 const MAX_MIDDLEWARE_CONTENT_BLOCKS = 200;
@@ -403,6 +406,53 @@ function reconcileDeliveredMessagingFailure(
     : result;
 }
 
+function isMiddlewareImageBlock(block: unknown): boolean {
+  return isRecord(block) && block.type === "image";
+}
+
+/**
+ * Live tool results flow through this runner in every runtime. Bound image
+ * count by the same per-result context budget the tool-result context guard
+ * uses for retention, then run the shared image sanitizer so decoded size,
+ * dimensions, and base64 validity are enforced before the model sees them.
+ */
+async function sanitizeMiddlewareResultImages(
+  result: OpenClawAgentToolResult,
+  toolName: string,
+  maxResultImages: number,
+): Promise<OpenClawAgentToolResult> {
+  const content = result.content;
+  if (!Array.isArray(content) || !content.some(isMiddlewareImageBlock)) {
+    return result;
+  }
+  const { sanitizeToolResultImages } = await import("../tool-images.runtime.js");
+  let seen = 0;
+  let dropped = 0;
+  const bounded: OpenClawAgentToolResult["content"] = [];
+  for (const block of content) {
+    if (isMiddlewareImageBlock(block)) {
+      seen += 1;
+      if (seen > maxResultImages) {
+        dropped += 1;
+        continue;
+      }
+    }
+    bounded.push(block);
+  }
+  if (dropped > 0) {
+    bounded.push({
+      type: "text",
+      text:
+        `[${toolName}] omitted ${dropped} image payload${dropped === 1 ? "" : "s"}: ` +
+        `image count exceeds live tool result image budget (${maxResultImages})`,
+    });
+  }
+  return await sanitizeToolResultImages(
+    dropped > 0 ? { ...result, content: bounded } : result,
+    toolName,
+  );
+}
+
 /**
  * A run resolves middleware once. When a handler's own plugin was retired and is
  * gone from its Gateway's current registry, its post-processing no longer applies. The runner
@@ -428,6 +478,10 @@ export function createAgentToolResultMiddlewareRunner(
   ctx: AgentToolResultMiddlewareContext,
   handlers?: AgentToolResultMiddleware[],
 ) {
+  const maxResultImages = Math.floor(
+    resolveToolResultContextMaxChars(ctx.contextWindowTokens ?? DEFAULT_CONTEXT_TOKENS) /
+      TOOL_IMAGE_CHARS,
+  );
   const resolvedHandlersLoader = createLazyPromiseLoader(async () => {
     const { loadAgentToolResultMiddlewaresForRuntime } =
       await import("../../plugins/agent-tool-result-middleware-loader.js");
@@ -439,6 +493,11 @@ export function createAgentToolResultMiddlewareRunner(
     async applyToolResultMiddleware(
       event: AgentToolResultMiddlewareEvent,
     ): Promise<OpenClawAgentToolResult> {
+      const result = await sanitizeMiddlewareResultImages(
+        event.result,
+        event.toolName,
+        maxResultImages,
+      );
       // Drop removed plugins' handlers before choosing a path, so a run whose
       // only middleware was removed keeps the untouched no-middleware result.
       const handlersForRun = (await (handlers ?? resolvedHandlersLoader.load())).filter(
@@ -449,15 +508,12 @@ export function createAgentToolResultMiddlewareRunner(
       // dependency payloads on `details` (SDK objects with methods, cycles)
       // are not penalized for behavior the validator was added to police.
       if (handlersForRun.length === 0) {
-        return event.result;
+        return result;
       }
       // Snapshot the confirmed side effect before legacy middleware can mutate
       // or sanitization can collapse the receipt; never expose the raw result.
-      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(
-        event,
-        event.result,
-      );
-      let current = sanitizeToolResultForMiddleware(event.result);
+      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(event, result);
+      let current = sanitizeToolResultForMiddleware(result);
       for (const handler of handlersForRun) {
         // An earlier handler can await while a later handler's plugin is removed.
         if (isRemovedPluginMiddleware(handler)) {

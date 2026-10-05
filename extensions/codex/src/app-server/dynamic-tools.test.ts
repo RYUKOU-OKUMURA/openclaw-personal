@@ -1832,6 +1832,31 @@ describe("createCodexDynamicToolBridge", () => {
     ]);
   });
 
+  it("bounds oversized tool result images before they reach the model", async () => {
+    // Arbitrary MCP/dynamic tools can return images no provider accepts. The
+    // shared image sanitizer replaces over-limit payloads with omission text.
+    const oversizedImage = Buffer.alloc(11 * 1024 * 1024).toString("base64");
+    const bridge = createBridgeWithToolResult("fake_frame", {
+      content: [
+        { type: "text", text: "frame ready" },
+        { type: "image", mimeType: "image/png", data: oversizedImage },
+      ],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("fake_frame", {}, "call-oversized-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: "frame ready" },
+      {
+        type: "inputText",
+        text: "[fake_frame] omitted image payload: image exceeds input size limit (10.00MB)",
+      },
+    ]);
+  });
+
   it.each([
     { toolName: "tts", mediaUrl: "/tmp/reply.opus", audioAsVoice: true },
     { toolName: "image_generate", mediaUrl: "/tmp/generated.png" },
