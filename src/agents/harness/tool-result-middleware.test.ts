@@ -770,9 +770,10 @@ describe("createAgentToolResultMiddlewareRunner", () => {
     expect(result.details).toEqual({ ok: true });
   });
 
-  it("sanitizes invalid base64 image payloads on the final result", async () => {
-    // Handlers observe the emitter's raw block; the shared image sanitizer
-    // runs once on the normalized result after the pipeline finishes.
+  it("sanitizes invalid base64 image payloads before middleware handlers run", async () => {
+    // The shared image owner sees the emitter's raw block before the
+    // middleware-contract validator, so handlers observe the sanitized
+    // placeholder and the normalized result keeps it too.
     let observed: unknown;
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [
       (event) => {
@@ -794,18 +795,72 @@ describe("createAgentToolResultMiddlewareRunner", () => {
       },
     });
 
-    expect(observed).toEqual({
-      type: "image",
-      mimeType: "image/png",
-      data: "not-base64!!!",
-    });
-    expect(result.content).toEqual([
-      { type: "text", text: "frame ready" },
-      {
-        type: "text",
-        text: "[mcp:frame] omitted image payload: invalid base64",
+    const expected = {
+      type: "text",
+      text: "[mcp:frame] omitted image payload: invalid base64",
+    };
+    expect(observed).toEqual(expected);
+    expect(result.content).toEqual([{ type: "text", text: "frame ready" }, expected]);
+  });
+
+  it("resizes raw images that exceed the middleware image-data cap instead of dropping them", async () => {
+    // The coercion validator silently drops image data over 5M chars; a noisy
+    // 1600x1200 PNG (~7.7M base64 chars, ~5.7MB decoded) must reach the shared
+    // image owner first, which shrinks it under the limits rather than losing
+    // the frame to a caption-only result.
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [() => undefined]);
+    const data = createNoisyPngBuffer(1600, 1200).toString("base64");
+
+    const result = await runner.applyToolResultMiddleware({
+      toolCallId: "call-1",
+      toolName: "mcp:frame",
+      args: {},
+      result: {
+        content: [
+          { type: "text", text: "frame ready" },
+          { type: "image", mimeType: "image/png", data },
+        ],
+        details: {},
       },
-    ]);
+    });
+
+    const image = result.content[1];
+    expect(result.content[0]).toEqual({ type: "text", text: "frame ready" });
+    expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+    expect((image as { data: string }).data.length).toBeLessThan(data.length);
+  });
+
+  it("bounds image-bearing results to the existing content-block limit with a notice", async () => {
+    // The no-handler fast path and the Codex legacy-stage entry skip the
+    // middleware-contract coercion, so the shared image owner also applies the
+    // MAX_MIDDLEWARE_CONTENT_BLOCKS bound there instead of passing 201 frames.
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "openclaw" });
+    const data = createTinyJpegBuffer().toString("base64");
+    const image = () => ({ type: "image" as const, mimeType: "image/jpeg", data });
+    const makeResult = () => ({
+      content: Array.from({ length: 201 }, image),
+      details: {},
+    });
+
+    const expectCapped = (result: { content: unknown[] }) => {
+      expect(result.content.length).toBe(201);
+      expect(result.content[0]).toEqual({ type: "image", mimeType: "image/jpeg", data });
+      expect(result.content[199]).toEqual({ type: "image", mimeType: "image/jpeg", data });
+      expect(result.content[200]).toEqual({
+        type: "text",
+        text: "[mcp:frames] omitted 1 content block: result exceeds the 200-block limit",
+      });
+    };
+
+    expectCapped(
+      await runner.applyToolResultMiddleware({
+        toolCallId: "call-1",
+        toolName: "mcp:frames",
+        args: {},
+        result: makeResult(),
+      }),
+    );
+    expectCapped(await runner.sanitizeResultImages(makeResult(), "mcp:frames"));
   });
 
   it("sanitizes invalid images a middleware handler returns", async () => {

@@ -412,8 +412,9 @@ function isMiddlewareImageBlock(block: unknown): boolean {
  * image sanitizer on the normalized final result so decoded size, dimensions,
  * and base64 validity are enforced before the model sees them — including
  * images middleware returned, added in place, or carried inside nested
- * toolResult blocks that coercion flattened. Image count stays bounded by the
- * existing content-block cap; per-image limits stay with the image owner.
+ * toolResult blocks that coercion flattened. The existing content-block cap
+ * applies here too, since the no-handler path and the Codex legacy-stage entry
+ * never cross the coercion that enforces it for middleware results.
  */
 async function sanitizeMiddlewareResultImages(
   result: OpenClawAgentToolResult,
@@ -424,7 +425,25 @@ async function sanitizeMiddlewareResultImages(
     return result;
   }
   const { sanitizeToolResultImages } = await import("../tool-images.runtime.js");
-  return await sanitizeToolResultImages(result, toolName);
+  if (content.length <= MAX_MIDDLEWARE_CONTENT_BLOCKS) {
+    return await sanitizeToolResultImages(result, toolName);
+  }
+  const omitted = content.length - MAX_MIDDLEWARE_CONTENT_BLOCKS;
+  return await sanitizeToolResultImages(
+    {
+      ...result,
+      content: [
+        ...content.slice(0, MAX_MIDDLEWARE_CONTENT_BLOCKS),
+        {
+          type: "text" as const,
+          text:
+            `[${toolName}] omitted ${omitted} content block${omitted === 1 ? "" : "s"}: ` +
+            `result exceeds the ${MAX_MIDDLEWARE_CONTENT_BLOCKS}-block limit`,
+        },
+      ],
+    },
+    toolName,
+  );
 }
 
 /**
@@ -463,6 +482,10 @@ export function createAgentToolResultMiddlewareRunner(
     async applyToolResultMiddleware(
       event: AgentToolResultMiddlewareEvent,
     ): Promise<OpenClawAgentToolResult> {
+      // Raw emitter images must reach the shared image owner before the
+      // middleware-contract validator: its image-data char cap would otherwise
+      // silently drop payloads the owner can still shrink to fit.
+      const result = await sanitizeMiddlewareResultImages(event.result, event.toolName);
       // Drop removed plugins' handlers before choosing a path, so a run whose
       // only middleware was removed keeps the untouched no-middleware result.
       const handlersForRun = (await (handlers ?? resolvedHandlersLoader.load())).filter(
@@ -475,15 +498,12 @@ export function createAgentToolResultMiddlewareRunner(
       // Image sanitization still applies: it bounds a payload the model must
       // decode, not a middleware contract.
       if (handlersForRun.length === 0) {
-        return await sanitizeMiddlewareResultImages(event.result, event.toolName);
+        return result;
       }
       // Snapshot the confirmed side effect before legacy middleware can mutate
       // or sanitization can collapse the receipt; never expose the raw result.
-      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(
-        event,
-        event.result,
-      );
-      let current = sanitizeToolResultForMiddleware(event.result);
+      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(event, result);
+      let current = sanitizeToolResultForMiddleware(result);
       for (const handler of handlersForRun) {
         // An earlier handler can await while a later handler's plugin is removed.
         if (isRemovedPluginMiddleware(handler)) {

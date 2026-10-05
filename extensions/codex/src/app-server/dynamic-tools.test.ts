@@ -1898,6 +1898,71 @@ describe("createCodexDynamicToolBridge", () => {
     ]);
   });
 
+  const registerNoopResultMiddleware = () => {
+    const registry = createEmptyPluginRegistry();
+    const middleware = () => undefined;
+    registry.agentToolResultMiddlewares.push({
+      pluginId: "framepress",
+      pluginName: "Framepress",
+      rawHandler: middleware,
+      handler: middleware,
+      runtimes: ["codex"],
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+  };
+
+  it("resizes raw images exceeding the middleware image-data cap instead of dropping them", async () => {
+    // With middleware registered the contract coercion caps image data at 5M
+    // chars; a noisy 1600x1200 PNG (~7.7M base64 chars, ~5.7MB decoded) must
+    // reach the shared image owner first so it is resized, not silently lost.
+    registerNoopResultMiddleware();
+    const resizableImage = createNoisyPngBuffer(1600, 1200).toString("base64");
+    const bridge = createBridgeWithToolResult("fake_frame", {
+      content: [
+        { type: "text", text: "frame ready" },
+        { type: "image", mimeType: "image/png", data: resizableImage },
+      ],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("fake_frame", {}, "call-resizable-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: "frame ready" },
+      {
+        type: "inputImage",
+        imageUrl: expect.stringContaining("data:image/jpeg;base64,"),
+      },
+    ]);
+  });
+
+  it("omits over-input-limit images when a registered middleware path runs", async () => {
+    registerNoopResultMiddleware();
+    const oversizedImage = createNoisyPngBuffer(2000, 1800).toString("base64");
+    const bridge = createBridgeWithToolResult("fake_frame", {
+      content: [
+        { type: "text", text: "frame ready" },
+        { type: "image", mimeType: "image/png", data: oversizedImage },
+      ],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("fake_frame", {}, "call-oversized-middleware-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: "frame ready" },
+      {
+        type: "inputText",
+        text: "[fake_frame] omitted image payload: image exceeds input size limit (10.00MB)",
+      },
+    ]);
+  });
+
   it("bounds oversized images a legacy app-server extension returns", async () => {
     const registry = createEmptyPluginRegistry();
     const oversizedImage = createNoisyPngBuffer(2000, 1800).toString("base64");
