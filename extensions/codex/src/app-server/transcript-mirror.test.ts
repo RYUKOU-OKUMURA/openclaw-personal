@@ -602,6 +602,46 @@ describe("mirrorCodexAppServerTranscript", () => {
     );
   });
 
+  it("caps persisted tool result details so image payloads are not duplicated into the transcript", async () => {
+    const target = await createSqliteMirrorTarget("openclaw-codex-mirror-tool-details-");
+    const imageData = Buffer.alloc(1024 * 1024).toString("base64");
+    const details = {
+      result: {
+        content: [
+          { type: "text", text: "frame ready" },
+          { type: "image", mimeType: "image/png", data: imageData },
+        ],
+      },
+    };
+    const toolResultMessage = castAgentMessage({
+      role: "toolResult",
+      toolCallId: "call-img",
+      toolName: "mcp:frame",
+      content: [{ type: "toolResult", toolCallId: "call-img", content: "frame ready" }],
+      details,
+      timestamp: Date.now(),
+    }) as MirroredAgentMessage;
+
+    await mirrorCodexAppServerTranscript({
+      ...target,
+      messages: [toolResultMessage],
+      idempotencyScope: "scope-1",
+    });
+
+    const raw = await readMirrorRaw(target);
+    expect(raw).toContain('"content":"frame ready"');
+    expect(raw).not.toContain(imageData.slice(0, 64));
+    expect(raw).toContain('"persistedDetailsTruncated":true');
+
+    // Capping is a persistence projection: the runtime message handed to the
+    // mirror keeps its original model-facing payload untouched.
+    expect(details.result.content[1]).toEqual({
+      type: "image",
+      mimeType: "image/png",
+      data: imageData,
+    });
+  });
+
   it("preserves gateway user-turn identity across Codex transcript mirroring", async () => {
     const target = await createSqliteMirrorTarget("openclaw-codex-mirror-user-identity-");
     const userMessage = castAgentMessage({
