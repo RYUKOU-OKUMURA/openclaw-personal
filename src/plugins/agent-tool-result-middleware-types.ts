@@ -23,7 +23,6 @@ export type AgentToolResultMiddlewareContext = {
   sessionId?: string;
   sessionKey?: string;
   runId?: string;
-  contextWindowTokens?: number;
 };
 
 export type AgentToolResultMiddlewareResult = {

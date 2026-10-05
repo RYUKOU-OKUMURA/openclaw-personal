@@ -14,13 +14,10 @@ import { getPluginValueInstance } from "../../plugins/plugin-instance-scope.js";
 import { getPluginRegistryGatewayOwner } from "../../plugins/registry-lifecycle.js";
 import { createLazyPromiseLoader } from "../../shared/lazy-promise.js";
 import { truncateUtf16Safe } from "../../utils.js";
-import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { readEmbeddedMessageDeliveryFact } from "../embedded-agent-message-delivery.js";
 import { isDeliveredMessagingToolResult } from "../embedded-agent-message-tool-source-reply.js";
 import { isMessagingToolSendAction } from "../embedded-agent-messaging.js";
-import { TOOL_IMAGE_CHARS } from "../embedded-agent-runner/tool-result-char-estimator.js";
 import { isToolResultError } from "../tool-result-error.js";
-import { resolveToolResultContextMaxChars } from "../tool-result-limits.js";
 
 const log = createSubsystemLogger("agents/harness");
 const MAX_MIDDLEWARE_CONTENT_BLOCKS = 200;
@@ -411,46 +408,23 @@ function isMiddlewareImageBlock(block: unknown): boolean {
 }
 
 /**
- * Live tool results flow through this runner in every runtime. Bound image
- * count by the same per-result context budget the tool-result context guard
- * uses for retention, then run the shared image sanitizer so decoded size,
- * dimensions, and base64 validity are enforced before the model sees them.
+ * Live tool results flow through this runner in every runtime. Run the shared
+ * image sanitizer on the normalized final result so decoded size, dimensions,
+ * and base64 validity are enforced before the model sees them — including
+ * images middleware returned, added in place, or carried inside nested
+ * toolResult blocks that coercion flattened. Image count stays bounded by the
+ * existing content-block cap; per-image limits stay with the image owner.
  */
 async function sanitizeMiddlewareResultImages(
   result: OpenClawAgentToolResult,
   toolName: string,
-  maxResultImages: number,
 ): Promise<OpenClawAgentToolResult> {
   const content = result.content;
   if (!Array.isArray(content) || !content.some(isMiddlewareImageBlock)) {
     return result;
   }
   const { sanitizeToolResultImages } = await import("../tool-images.runtime.js");
-  let seen = 0;
-  let dropped = 0;
-  const bounded: OpenClawAgentToolResult["content"] = [];
-  for (const block of content) {
-    if (isMiddlewareImageBlock(block)) {
-      seen += 1;
-      if (seen > maxResultImages) {
-        dropped += 1;
-        continue;
-      }
-    }
-    bounded.push(block);
-  }
-  if (dropped > 0) {
-    bounded.push({
-      type: "text",
-      text:
-        `[${toolName}] omitted ${dropped} image payload${dropped === 1 ? "" : "s"}: ` +
-        `image count exceeds live tool result image budget (${maxResultImages})`,
-    });
-  }
-  return await sanitizeToolResultImages(
-    dropped > 0 ? { ...result, content: bounded } : result,
-    toolName,
-  );
+  return await sanitizeToolResultImages(result, toolName);
 }
 
 /**
@@ -478,10 +452,6 @@ export function createAgentToolResultMiddlewareRunner(
   ctx: AgentToolResultMiddlewareContext,
   handlers?: AgentToolResultMiddleware[],
 ) {
-  const maxResultImages = Math.floor(
-    resolveToolResultContextMaxChars(ctx.contextWindowTokens ?? DEFAULT_CONTEXT_TOKENS) /
-      TOOL_IMAGE_CHARS,
-  );
   const resolvedHandlersLoader = createLazyPromiseLoader(async () => {
     const { loadAgentToolResultMiddlewaresForRuntime } =
       await import("../../plugins/agent-tool-result-middleware-loader.js");
@@ -493,11 +463,6 @@ export function createAgentToolResultMiddlewareRunner(
     async applyToolResultMiddleware(
       event: AgentToolResultMiddlewareEvent,
     ): Promise<OpenClawAgentToolResult> {
-      const result = await sanitizeMiddlewareResultImages(
-        event.result,
-        event.toolName,
-        maxResultImages,
-      );
       // Drop removed plugins' handlers before choosing a path, so a run whose
       // only middleware was removed keeps the untouched no-middleware result.
       const handlersForRun = (await (handlers ?? resolvedHandlersLoader.load())).filter(
@@ -507,13 +472,18 @@ export function createAgentToolResultMiddlewareRunner(
       // unchanged; skip validation entirely so tool emitters that produce
       // dependency payloads on `details` (SDK objects with methods, cycles)
       // are not penalized for behavior the validator was added to police.
+      // Image sanitization still applies: it bounds a payload the model must
+      // decode, not a middleware contract.
       if (handlersForRun.length === 0) {
-        return result;
+        return await sanitizeMiddlewareResultImages(event.result, event.toolName);
       }
       // Snapshot the confirmed side effect before legacy middleware can mutate
       // or sanitization can collapse the receipt; never expose the raw result.
-      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(event, result);
-      let current = sanitizeToolResultForMiddleware(result);
+      const deliveredMessagingFallback = buildDeliveredMessagingFailureFallback(
+        event,
+        event.result,
+      );
+      let current = sanitizeToolResultForMiddleware(event.result);
       for (const handler of handlersForRun) {
         // An earlier handler can await while a later handler's plugin is removed.
         if (isRemovedPluginMiddleware(handler)) {
@@ -553,7 +523,13 @@ export function createAgentToolResultMiddlewareRunner(
           );
         }
       }
-      return reconcileDeliveredMessagingFailure(current, deliveredMessagingFallback);
+      return await sanitizeMiddlewareResultImages(
+        reconcileDeliveredMessagingFailure(current, deliveredMessagingFallback),
+        event.toolName,
+      );
     },
+    // Codex applies a legacy extension stage after this runner; its output is
+    // a live result too, so it must pass the same image owner before delivery.
+    sanitizeResultImages: sanitizeMiddlewareResultImages,
   };
 }

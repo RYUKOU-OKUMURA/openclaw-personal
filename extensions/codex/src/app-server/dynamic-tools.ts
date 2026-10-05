@@ -559,7 +559,7 @@ export function createCodexDynamicToolBridge(params: {
             isError: rawIsErrorForPresentation,
             result: event.result,
           });
-          const result = await legacyExtensionRunner.applyToolResultExtensions({
+          const extendedResult = await legacyExtensionRunner.applyToolResultExtensions({
             threadId: call.threadId,
             turnId: call.turnId,
             toolCallId: call.callId,
@@ -567,6 +567,9 @@ export function createCodexDynamicToolBridge(params: {
             args: structuredClone(executedArgsForPresentation),
             result: middlewareResult,
           });
+          // The extension stage can still return or attach image payloads; the
+          // live-result image owner must see the final normalized result.
+          const result = await middlewareRunner.sanitizeResultImages(extendedResult, toolName);
           presentationIsError = rawIsErrorForPresentation || isToolResultError(result);
           // A successful spawn is durable before presentation middleware can rewrite details.
           const acceptedSessionSpawn =
@@ -848,14 +851,13 @@ function dedupeQuarantinedDynamicTools(
 function toToolResultHookContext(
   ctx: CodexDynamicToolHookContext | undefined,
 ): CodexToolResultHookContext {
-  const { agentId, sessionId, sessionKey, runId, channelId, contextWindowTokens } = ctx ?? {};
+  const { agentId, sessionId, sessionKey, runId, channelId } = ctx ?? {};
   return {
     ...(agentId && { agentId }),
     ...(sessionId && { sessionId }),
     ...(sessionKey && { sessionKey }),
     ...(runId && { runId }),
     ...(channelId && { channelId }),
-    ...(typeof contextWindowTokens === "number" ? { contextWindowTokens } : {}),
   };
 }
 

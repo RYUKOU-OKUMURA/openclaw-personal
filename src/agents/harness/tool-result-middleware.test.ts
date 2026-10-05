@@ -1,6 +1,9 @@
 // Verifies tool-result middleware validation, sanitization, and fail-closed behavior.
 import { describe, expect, it } from "vitest";
-import { createTinyJpegBuffer } from "../../../test/helpers/image-fixtures.js";
+import {
+  createNoisyPngBuffer,
+  createTinyJpegBuffer,
+} from "../../../test/helpers/image-fixtures.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { AgentToolResultMiddleware } from "../../plugins/agent-tool-result-middleware-types.js";
 import { PluginInstanceUnavailableError } from "../../plugins/plugin-instance-error.js";
@@ -448,6 +451,7 @@ describe("createAgentToolResultMiddlewareRunner", () => {
 
   it("preserves images from deeper nested toolResult content", async () => {
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [() => undefined]);
+    const image = createTinyJpegBuffer().toString("base64");
 
     const result = await runner.applyToolResultMiddleware({
       toolCallId: "call-1",
@@ -463,7 +467,7 @@ describe("createAgentToolResultMiddlewareRunner", () => {
                 type: "tool_result",
                 content: [
                   { type: "text", text: "captured screenshot" },
-                  { type: "image", mimeType: "image/png", data: "base64-image" },
+                  { type: "image", mimeType: "image/jpeg", data: image },
                 ],
               },
             ],
@@ -475,12 +479,14 @@ describe("createAgentToolResultMiddlewareRunner", () => {
 
     expect(result.content).toEqual([
       { type: "text", text: "captured screenshot" },
-      { type: "image", mimeType: "image/png", data: "base64-image" },
+      { type: "image", mimeType: "image/jpeg", data: image },
     ]);
   });
 
   it("preserves interleaved nested text and image order", async () => {
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [() => undefined]);
+    const imageOne = createTinyJpegBuffer().toString("base64");
+    const imageTwo = createTinyJpegBuffer().toString("base64");
 
     const result = await runner.applyToolResultMiddleware({
       toolCallId: "call-1",
@@ -493,9 +499,9 @@ describe("createAgentToolResultMiddlewareRunner", () => {
             toolUseId: "call-1",
             content: [
               { type: "text", text: "first caption" },
-              { type: "image", mimeType: "image/png", data: "image-one" },
+              { type: "image", mimeType: "image/jpeg", data: imageOne },
               { type: "text", text: "second caption" },
-              { type: "image", mimeType: "image/png", data: "image-two" },
+              { type: "image", mimeType: "image/jpeg", data: imageTwo },
             ],
           } as never,
         ],
@@ -505,9 +511,9 @@ describe("createAgentToolResultMiddlewareRunner", () => {
 
     expect(result.content).toEqual([
       { type: "text", text: "first caption" },
-      { type: "image", mimeType: "image/png", data: "image-one" },
+      { type: "image", mimeType: "image/jpeg", data: imageOne },
       { type: "text", text: "second caption" },
-      { type: "image", mimeType: "image/png", data: "image-two" },
+      { type: "image", mimeType: "image/jpeg", data: imageTwo },
     ]);
   });
 
@@ -745,7 +751,7 @@ describe("createAgentToolResultMiddlewareRunner", () => {
           {
             type: "image",
             mimeType: "image/png",
-            data: Buffer.alloc(11 * 1024 * 1024).toString("base64"),
+            data: createNoisyPngBuffer(2000, 1800).toString("base64"),
           },
         ],
         details: { ok: true },
@@ -764,7 +770,9 @@ describe("createAgentToolResultMiddlewareRunner", () => {
     expect(result.details).toEqual({ ok: true });
   });
 
-  it("omits invalid base64 image payloads before middleware handlers run", async () => {
+  it("sanitizes invalid base64 image payloads on the final result", async () => {
+    // Handlers observe the emitter's raw block; the shared image sanitizer
+    // runs once on the normalized result after the pipeline finishes.
     let observed: unknown;
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [
       (event) => {
@@ -786,43 +794,128 @@ describe("createAgentToolResultMiddlewareRunner", () => {
       },
     });
 
-    const expected = {
-      type: "text",
-      text: "[mcp:frame] omitted image payload: invalid base64",
-    };
-    expect(observed).toEqual(expected);
-    expect(result.content).toEqual([{ type: "text", text: "frame ready" }, expected]);
+    expect(observed).toEqual({
+      type: "image",
+      mimeType: "image/png",
+      data: "not-base64!!!",
+    });
+    expect(result.content).toEqual([
+      { type: "text", text: "frame ready" },
+      {
+        type: "text",
+        text: "[mcp:frame] omitted image payload: invalid base64",
+      },
+    ]);
   });
 
-  it("bounds live image count by the existing per-result context budget", async () => {
-    // contextWindowTokens=40_000 resolves a 40_000-char result context budget;
-    // each image costs TOOL_IMAGE_CHARS (16_000), so only two images can ever
-    // survive the downstream context guard. The live owner drops the rest.
-    const runner = createAgentToolResultMiddlewareRunner({
-      runtime: "openclaw",
-      contextWindowTokens: 40_000,
+  it("sanitizes invalid images a middleware handler returns", async () => {
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [
+      () => ({
+        result: {
+          content: [
+            { type: "text", text: "compacted" },
+            { type: "image", mimeType: "image/png", data: "not-base64!!!" },
+          ],
+          details: {},
+        },
+      }),
+    ]);
+
+    const result = await runner.applyToolResultMiddleware({
+      toolCallId: "call-1",
+      toolName: "mcp:frame",
+      args: {},
+      result: { content: [{ type: "text", text: "raw" }], details: {} },
     });
-    const tinyJpeg = createTinyJpegBuffer().toString("base64");
-    const image = () => ({ type: "image" as const, mimeType: "image/jpeg", data: tinyJpeg });
+
+    expect(result.content).toEqual([
+      { type: "text", text: "compacted" },
+      { type: "text", text: "[mcp:frame] omitted image payload: invalid base64" },
+    ]);
+  });
+
+  it("sanitizes invalid images a middleware handler adds in place", async () => {
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [
+      (event) => {
+        event.result.content.push({
+          type: "image",
+          mimeType: "image/png",
+          data: "not-base64!!!",
+        });
+        return undefined;
+      },
+    ]);
+
+    const result = await runner.applyToolResultMiddleware({
+      toolCallId: "call-1",
+      toolName: "mcp:frame",
+      args: {},
+      result: { content: [{ type: "text", text: "raw" }], details: {} },
+    });
+
+    expect(result.content).toEqual([
+      { type: "text", text: "raw" },
+      { type: "text", text: "[mcp:frame] omitted image payload: invalid base64" },
+    ]);
+  });
+
+  it("sanitizes invalid images flattened from nested toolResult content", async () => {
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "codex" }, [() => undefined]);
+
+    const result = await runner.applyToolResultMiddleware({
+      toolCallId: "call-1",
+      toolName: "mcp:frame",
+      args: {},
+      result: {
+        content: [
+          {
+            type: "toolResult",
+            toolUseId: "call-1",
+            content: [
+              { type: "text", text: "captured screenshot" },
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "not-base64!!!",
+              },
+            ],
+          } as never,
+        ],
+        details: {},
+      },
+    });
+
+    expect(result.content).toEqual([
+      { type: "text", text: "captured screenshot" },
+      { type: "text", text: "[mcp:frame] omitted image payload: invalid base64" },
+    ]);
+  });
+
+  it("keeps valid in-limit images regardless of count", async () => {
+    // The live owner enforces per-image bounds only; how many images a result
+    // can afford is the context guard's call at projection time, so a dozen
+    // small frames must all survive here byte-identically.
+    const runner = createAgentToolResultMiddlewareRunner({ runtime: "openclaw" });
+    const data = createTinyJpegBuffer().toString("base64");
+    const image = () => ({ type: "image" as const, mimeType: "image/jpeg", data });
 
     const result = await runner.applyToolResultMiddleware({
       toolCallId: "call-1",
       toolName: "mcp:frames",
       args: {},
       result: {
-        content: [{ type: "text", text: "frames ready" }, image(), image(), image()],
+        content: [{ type: "text", text: "frames ready" }, ...Array.from({ length: 14 }, image)],
         details: {},
       },
     });
 
     expect(result.content).toEqual([
       { type: "text", text: "frames ready" },
-      { type: "image", mimeType: "image/jpeg", data: tinyJpeg },
-      { type: "image", mimeType: "image/jpeg", data: tinyJpeg },
-      {
-        type: "text",
-        text: expect.stringContaining("image count exceeds live tool result image budget"),
-      },
+      ...Array.from({ length: 14 }, () => ({
+        type: "image",
+        mimeType: "image/jpeg",
+        data,
+      })),
     ]);
   });
 

@@ -30,7 +30,7 @@ import {
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 // Codex tests cover dynamic tools plugin behavior.
-import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
+import { createNoisyPngBuffer, createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { estimateToolResultTextChars } from "openclaw/plugin-sdk/text-utility-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1835,7 +1835,9 @@ describe("createCodexDynamicToolBridge", () => {
   it("bounds oversized tool result images before they reach the model", async () => {
     // Arbitrary MCP/dynamic tools can return images no provider accepts. The
     // shared image sanitizer replaces over-limit payloads with omission text.
-    const oversizedImage = Buffer.alloc(11 * 1024 * 1024).toString("base64");
+    // The fixture is a real >10MiB PNG so it survives the signature and
+    // decodability checks before hitting the input size limit.
+    const oversizedImage = createNoisyPngBuffer(2000, 1800).toString("base64");
     const bridge = createBridgeWithToolResult("fake_frame", {
       content: [
         { type: "text", text: "frame ready" },
@@ -1846,6 +1848,93 @@ describe("createCodexDynamicToolBridge", () => {
 
     const result = await bridge.handleToolCall(
       createDynamicToolCall("fake_frame", {}, "call-oversized-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: "frame ready" },
+      {
+        type: "inputText",
+        text: "[fake_frame] omitted image payload: image exceeds input size limit (10.00MB)",
+      },
+    ]);
+  });
+
+  it("bounds invalid images a registered result middleware returns", async () => {
+    const registry = createEmptyPluginRegistry();
+    const middleware = async () => ({
+      result: {
+        content: [
+          { type: "text" as const, text: "compacted" },
+          { type: "image" as const, mimeType: "image/png", data: "not-base64!!!" },
+        ],
+        details: {},
+      },
+    });
+    registry.agentToolResultMiddlewares.push({
+      pluginId: "framepress",
+      pluginName: "Framepress",
+      rawHandler: middleware,
+      handler: middleware,
+      runtimes: ["codex"],
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+
+    const bridge = createBridgeWithToolResult("fake_frame", {
+      content: [{ type: "text", text: "raw" }],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("fake_frame", {}, "call-middleware-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: "compacted" },
+      {
+        type: "inputText",
+        text: "[fake_frame] omitted image payload: invalid base64",
+      },
+    ]);
+  });
+
+  it("bounds oversized images a legacy app-server extension returns", async () => {
+    const registry = createEmptyPluginRegistry();
+    const oversizedImage = createNoisyPngBuffer(2000, 1800).toString("base64");
+    const factory = async (codex: {
+      on: (
+        event: "tool_result",
+        handler: (event: {
+          result: AgentToolResult<unknown>;
+        }) => Promise<{ result: AgentToolResult<unknown> }>,
+      ) => void;
+    }) => {
+      codex.on("tool_result", async (event) => ({
+        result: {
+          ...event.result,
+          content: [
+            ...(Array.isArray(event.result.content) ? event.result.content : []),
+            { type: "image", mimeType: "image/png", data: oversizedImage },
+          ] as AgentToolResult<unknown>["content"],
+        },
+      }));
+    };
+    registry.codexAppServerExtensionFactories.push({
+      pluginId: "framepress",
+      pluginName: "Framepress",
+      rawFactory: factory,
+      factory,
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+
+    const bridge = createBridgeWithToolResult("fake_frame", {
+      content: [{ type: "text", text: "frame ready" }],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("fake_frame", {}, "call-extension-image"),
     );
 
     expect(result.contentItems).toEqual([
