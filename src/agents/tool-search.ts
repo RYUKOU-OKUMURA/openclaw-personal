@@ -14,7 +14,10 @@ import {
   resolveCatalog,
 } from "./tool-search-catalog.js";
 import { resolveToolSearchConfig } from "./tool-search-config.js";
-import { renderToolSearchControlText } from "./tool-search-control-result.js";
+import {
+  detachToolSearchResultMedia,
+  renderToolSearchControlText,
+} from "./tool-search-control-result.js";
 import { applyToolSchemaDirectoryCatalog } from "./tool-search-directory.js";
 import {
   prepareToolSearchDispatcherArguments,
@@ -355,12 +358,17 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
           const { id, name, source } = callResult.tool;
           // Invocation results need identity, not another copy of the discovery metadata.
           // Keep full metadata in details for callers and the unchanged target result on both surfaces.
+          const { projection, media } = detachToolSearchResultMedia(callResult.result);
+          const controlResult = formatToolSearchControlResult(
+            { tool: { id, name, source }, result: projection },
+            runtime,
+            { parentToolCallId: toolCallId },
+          );
           const wrappedResult = {
-            ...formatToolSearchControlResult(
-              { tool: { id, name, source }, result: callResult.result },
-              runtime,
-              { parentToolCallId: toolCallId },
-            ),
+            ...controlResult,
+            // Image blocks join the outer content so they reach the model like a
+            // direct call; the serialized envelope keeps a byte-count stub.
+            ...(media.length > 0 ? { content: [...controlResult.content, ...media] } : {}),
             details: callResult,
           };
           const failureKind = resolveToolResultFailureKind(callResult.result);

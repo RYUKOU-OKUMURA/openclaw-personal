@@ -1797,6 +1797,41 @@ describe("createCodexDynamicToolBridge", () => {
     expect(text).toContain("original 13000 chars, weighted budget 32000");
   });
 
+  it("delivers tool_call relayed image blocks to the model as inputImage", async () => {
+    // The tool_call relay lifts target image blocks into the outer result's
+    // content; the serialized envelope keeps only a byte-count stub.
+    const envelopeText = JSON.stringify(
+      {
+        tool: { id: "mcp:server:fake_frame", name: "fake_frame", source: "mcp" },
+        result: {
+          content: [
+            { type: "text", text: "frame ready" },
+            { type: "image", mimeType: "image/png", bytes: 68, omitted: true },
+          ],
+          details: { frame: 1 },
+        },
+      },
+      null,
+      2,
+    );
+    const bridge = createBridgeWithToolResult("tool_call", {
+      content: [
+        { type: "text", text: envelopeText },
+        { type: "image", mimeType: "image/png", data: COMPUTER_FRAME_IMAGE },
+      ],
+      details: {},
+    });
+
+    const result = await bridge.handleToolCall(
+      createDynamicToolCall("tool_call", { id: "fake_frame" }, "call-relay-image"),
+    );
+
+    expect(result.contentItems).toEqual([
+      { type: "inputText", text: envelopeText },
+      { type: "inputImage", imageUrl: `data:image/png;base64,${COMPUTER_FRAME_IMAGE}` },
+    ]);
+  });
+
   it.each([
     { toolName: "tts", mediaUrl: "/tmp/reply.opus", audioAsVoice: true },
     { toolName: "image_generate", mediaUrl: "/tmp/generated.png" },
