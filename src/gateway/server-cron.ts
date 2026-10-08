@@ -532,7 +532,6 @@ export function buildGatewayCronService(params: {
     resolveSessionStorePathCore(params.cfg.session?.store, {
       agentId: agentId ?? resolveSessionStoreCompatibilityAgentId(getRuntimeConfig()),
     });
-  const sessionStorePath = resolveSessionStorePath(defaultAgentId);
   const cronTriggersEnabled = params.cfg.cron?.triggers?.enabled !== false;
   const scriptRuntime = cronTriggersEnabled
     ? createCronScriptRuntime({
@@ -765,7 +764,7 @@ export function buildGatewayCronService(params: {
       !readAgentDatabaseAdmissionRefusal(agentId, { env }) &&
       listAgentIds(getRuntimeConfig()).some((id) => normalizeAgentId(id) === agentId),
     resolveSessionStorePath,
-    sessionStorePath,
+    sessionStorePath: resolveSessionStorePath(defaultAgentId),
     enqueueSystemEvent: (text, opts) => {
       const { agentId, sessionKey } = resolveCronTarget(opts);
       if (!agentId || !sessionKey) {

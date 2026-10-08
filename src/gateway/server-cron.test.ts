@@ -1026,10 +1026,6 @@ describe("buildGatewayCronService", () => {
     const state = loadCronService(cfg, { scheduler: createTestGatewayScheduler(clock.clock) });
 
     try {
-      const nextConfig = { ...cfg, tools: { deny: ["read"] } };
-      loadConfigMock.mockReturnValue(nextConfig);
-      const runtimeDeps = createCronScriptRuntimeMock.mock.calls.at(-1)?.[0];
-      expect(runtimeDeps.getRuntimeConfig()).toBe(nextConfig);
       const job = await addCronJob(
         state,
         "restricted trigger",
@@ -2012,21 +2008,20 @@ describe("buildGatewayCronService", () => {
   it("cron_changed hook context uses runtime config from getRuntimeConfig()", async () => {
     const startupCfg = createCronConfig("server-cron-hook-runtime-cfg");
     const runtimeCfg = { ...startupCfg, _marker: "runtime" };
-    loadConfigMock.mockReturnValue(runtimeCfg);
+    loadConfigMock.mockReturnValue(startupCfg);
 
     const state = createCronService(startupCfg);
+    loadConfigMock.mockReturnValue(runtimeCfg);
     try {
       await addSystemEventJob(state, "runtime-cfg-check", "cfg check", {
         schedule: { kind: "every", everyMs: 60_000, anchorMs: 1_000 },
         sessionTarget: "main",
       });
 
-      // The hook context should use getRuntimeConfig() (runtimeCfg), not startupCfg
       expect(runCronChangedMock).toHaveBeenCalledTimes(1);
-      const calls = runCronChangedMock.mock.calls as unknown[][];
-      const hookCtx = calls[0]?.[1] as { config?: unknown } | undefined;
-      expect(hookCtx?.config).toBe(runtimeCfg);
-      expect(hookCtx?.config).not.toBe(startupCfg);
+      expectHookContext(0, { config: runtimeCfg });
+      const runtimeDeps = createCronScriptRuntimeMock.mock.calls.at(-1)?.[0];
+      expect(runtimeDeps.getRuntimeConfig()).toBe(runtimeCfg);
     } finally {
       state.cron.stop();
     }
