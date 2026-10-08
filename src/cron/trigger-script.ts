@@ -56,6 +56,7 @@ import {
   withGatewayToolCallerIdentity,
 } from "../agents/tools/gateway-caller-context.js";
 import { ensureAgentWorkspace } from "../agents/workspace.js";
+import { createRuntimeConfigReader } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GatewayContextResolver } from "../gateway/server-methods/types.js";
 import { formatErrorMessageWithCode } from "../infra/errors.js";
@@ -69,10 +70,7 @@ import {
 } from "../plugins/runtime/gateway-request-scope.js";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import { normalizeAgentId } from "../routing/session-key.js";
-import {
-  resolveCronActiveRuntimeConfig,
-  resolveCronAgentConfig,
-} from "./isolated-agent/run-config.js";
+import { resolveCronAgentConfig } from "./isolated-agent/run-config.js";
 import { resolveCronAgentSessionKey } from "./isolated-agent/session-key.js";
 import { resolveCronScheduledToolPolicy } from "./scheduled-tool-policy.js";
 import {
@@ -137,6 +135,7 @@ type LoadTriggerPluginRegistry = (input: {
 
 type CronTriggerEvaluatorDeps = {
   config: OpenClawConfig;
+  getRuntimeConfig?: () => OpenClawConfig;
   runHeadless?: typeof runCodeModeScriptHeadless;
   prepareRuntime?: PrepareTriggerRuntime;
   loadPluginRegistry?: LoadTriggerPluginRegistry;
@@ -284,6 +283,7 @@ function triggerStateNamespace(state: unknown, streamBatch?: string): CodeModeNa
 }
 
 function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
+  const readRuntimeConfig = deps.getRuntimeConfig ?? createRuntimeConfigReader(deps.config);
   const runHeadless = deps.runHeadless ?? runCodeModeScriptHeadless;
   const prepareRuntime =
     deps.prepareRuntime ?? ((params) => prepareTriggerRuntime(params, deps.loadPluginRegistry));
@@ -378,7 +378,7 @@ function createCronCodeModeRunner(deps: CronTriggerEvaluatorDeps) {
     let admission: PreparedAgentRunAdmission | undefined;
     try {
       const request = {
-        runtimeConfig: resolveCronActiveRuntimeConfig(deps.config),
+        runtimeConfig: readRuntimeConfig(),
         jobId: params.job.id,
         agentId: params.job.agentId,
         toolsAllow: params.job.payload.toolsAllow,

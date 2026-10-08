@@ -537,6 +537,7 @@ export function buildGatewayCronService(params: {
   const scriptRuntime = cronTriggersEnabled
     ? createCronScriptRuntime({
         config: params.cfg,
+        getRuntimeConfig,
         loadPluginRegistry: loadPreparedInboundPluginRegistry,
         resolveGatewayContext: scheduledGatewayContextResolver,
       })

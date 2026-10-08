@@ -10,7 +10,11 @@ import {
 import { prepareOwnedPluginLoadContext } from "../agents/prepared-model-runtime.plugin-context.js";
 import { ToolSearchRuntime } from "../agents/tool-search-runtime.js";
 import { resolveToolSearchConfig } from "../agents/tool-search.js";
-import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
+import {
+  clearRuntimeConfigSnapshot,
+  getRuntimeConfigSnapshot,
+  setRuntimeConfigSnapshot,
+} from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { setCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata.test-support.js";
 import {
@@ -146,9 +150,16 @@ describe("cron preparation plugin ownership", () => {
       });
       setCurrentPluginMetadataSnapshot(metadataSnapshot, { config });
       const contexts: Array<ReturnType<typeof getPluginRuntimeLoadContext>> = [];
+      const previousConfig = { ...config, messages: { ackReactionScope: "all" as const } };
+      setRuntimeConfigSnapshot(owner === "gateway" ? previousConfig : config);
       const deps = {
         config,
-        ...(owner === "gateway" ? { loadPluginRegistry: loadPreparedInboundPluginRegistry } : {}),
+        ...(owner === "gateway"
+          ? {
+              loadPluginRegistry: loadPreparedInboundPluginRegistry,
+              getRuntimeConfig: () => getRuntimeConfigSnapshot() ?? config,
+            }
+          : {}),
         runHeadless: async (params: HeadlessParams) => {
           contexts.push(
             getPluginRuntimeLoadContext(getPluginRuntimeGatewayRequestScope()?.pluginRegistry),
@@ -157,6 +168,7 @@ describe("cron preparation plugin ownership", () => {
         },
       };
       const runtime = createCronScriptRuntime(deps);
+      setRuntimeConfigSnapshot(config, config);
       const artifact = owner === "gateway" ? "built" : "source";
       const run = (jobId: string, agentId = "main", toolsAllow = ["*"]) =>
         runtime.executePayload({
@@ -199,7 +211,7 @@ describe("cron preparation plugin ownership", () => {
       });
       const nextConfig = structuredClone(config);
       nextConfig.tools = { deny: ["cold_probe"] };
-      setRuntimeConfigSnapshot(nextConfig, config);
+      setRuntimeConfigSnapshot(nextConfig, nextConfig);
       await expect(run("first", "other", ["cold_probe"])).resolves.toMatchObject({
         kind: "completed",
         state: null,

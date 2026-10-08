@@ -1026,6 +1026,10 @@ describe("buildGatewayCronService", () => {
     const state = loadCronService(cfg, { scheduler: createTestGatewayScheduler(clock.clock) });
 
     try {
+      const nextConfig = { ...cfg, tools: { deny: ["read"] } };
+      loadConfigMock.mockReturnValue(nextConfig);
+      const runtimeDeps = createCronScriptRuntimeMock.mock.calls.at(-1)?.[0];
+      expect(runtimeDeps.getRuntimeConfig()).toBe(nextConfig);
       const job = await addCronJob(
         state,
         "restricted trigger",
