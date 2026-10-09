@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
 import { retireSessionMcpRuntime } from "../agents/agent-bundle-mcp-tools.js";
 import { isAgentDeletionBlocked } from "../agents/agent-lifecycle-registry.js";
@@ -103,7 +102,7 @@ import { createDeferredCore, type Deferred } from "../shared/deferred.js";
 import { truncateUtf16WithEllipsis } from "../shared/text-truncate.js";
 import { bumpSkillsSnapshotVersion } from "../skills/runtime/refresh-state.js";
 import { resolveSkillWorkshopConfig } from "../skills/workshop/config.js";
-import { resolveWorkshopSkillsDir } from "../skills/workshop/skills-root.js";
+import { prepareWorkshopReview, resolveWorkshopSkillsDir } from "../skills/workshop/skills-root.js";
 import {
   assertAgentDatabaseAdmitted,
   readAgentDatabaseAdmissionRefusal,
@@ -824,8 +823,8 @@ export function buildGatewayCronService(params: {
       const executionRoot = reviewAgentId
         ? resolveWorkshopSkillsDir(runtimeConfig, agentId)
         : undefined;
-      if (executionRoot) {
-        await fs.mkdir(executionRoot, { recursive: true });
+      if (executionRoot && !(await prepareWorkshopReview(executionRoot, request.abortSignal))) {
+        return { status: "skipped", summary: "No Skill Workshop collection material to review." };
       }
       try {
         return await runCronIsolatedAgentTurn({

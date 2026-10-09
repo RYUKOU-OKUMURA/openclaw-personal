@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
@@ -7,8 +9,9 @@ import {
 } from "../agents/tools/gateway-caller-context.js";
 import { getInProcessGatewayToolContext } from "../agents/tools/in-process-gateway.js";
 import type { OpenClawConfig } from "../config/config.js";
-import type { CronServiceState } from "../cron/service/state.js";
+import type { CronExecutionIdentityAdmission, CronServiceState } from "../cron/service/state.js";
 import { armTimer } from "../cron/service/timer.js";
+import { resolveSkillCollectionReviewMonitorSpecs } from "../cron/skill-collection-review-monitor.js";
 import type { CronJobCreate } from "../cron/types.js";
 import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
 import {
@@ -18,6 +21,7 @@ import {
 import { getSpawnBroker, runWithSpawnBroker } from "../process/spawn-broker/context.js";
 import { useSpawnBrokerTestFixture } from "../process/spawn-broker/host.test-support.js";
 import { AsyncWorkScope, trackAsyncWork } from "../shared/async-work-scope.js";
+import { resolveWorkshopSkillsDir } from "../skills/workshop/skills-root.js";
 import {
   createGatewaySchedulerClock,
   createTestGatewayScheduler,
@@ -65,6 +69,209 @@ export function registerGatewayCronContextTests({
   requestHeartbeatAndWaitMock,
 }: GatewayCronContextTestHarness) {
   const createBroker = useSpawnBrokerTestFixture(afterEach);
+  it.each(["empty", "metadata", "symlink", "unknown", "invalid", "read-error", "cancelled"])(
+    "handles collection review inventory: %s",
+    async (inventory) => {
+      const cfg = createCronConfig(`server-cron-review-${inventory}`);
+      cfg.skills = { workshop: { autonomous: { mode: "auto" } } };
+      cfg.agents = {
+        entries: {
+          main: {
+            agentDir: path.join(path.dirname((cfg.cron as { store: string }).store), "agent"),
+            tools: { deny: ["group:fs", "group:runtime"] },
+          },
+        },
+      };
+      const root = resolveWorkshopSkillsDir(cfg, "main");
+      await fs.mkdir(root, { recursive: true });
+      if (inventory === "metadata") {
+        await fs.mkdir(path.join(root, ".openclaw"));
+      } else if (inventory === "symlink") {
+        const target = path.join(path.dirname(root), "symlink-material");
+        await fs.mkdir(target);
+        await fs.writeFile(path.join(target, "SKILL.md"), "Preserve target material");
+        await fs.symlink(
+          target,
+          path.join(root, ".openclaw"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      } else if (inventory === "unknown") {
+        await fs.writeFile(path.join(root, "unknown.txt"), "Unreviewed material");
+      } else if (inventory === "invalid") {
+        await fs.mkdir(path.join(root, "invalid-skill"));
+        await fs.writeFile(path.join(root, "invalid-skill", "SKILL.md"), "Malformed skill");
+      }
+      loadConfigMock.mockReturnValue(cfg);
+      const state = createCronService(cfg);
+      const summaries: string[] = [];
+      const onEvent = getCronState(state).deps.onEvent;
+      getCronState(state).deps.onEvent = (event, context) => {
+        onEvent?.(event, context);
+        if (event.action === "finished" && event.summary) {
+          summaries.push(event.summary);
+        }
+      };
+      await state.reconcileSystemJobs();
+      const job = (await state.cron.list({ includeDisabled: true })).find(
+        (candidate) => candidate.declarationKey === "skill-collection-review:main",
+      );
+      if (!job) {
+        throw new Error("expected the skill collection review monitor");
+      }
+      const abortController = new AbortController();
+      const failure = new Error(`collection inventory ${inventory}`);
+      if (inventory === "cancelled") {
+        abortController.abort(failure);
+      }
+      const readFailure =
+        inventory === "read-error"
+          ? vi.spyOn(fs, "readdir").mockRejectedValueOnce(failure)
+          : undefined;
+      try {
+        if (inventory === "read-error" || inventory === "cancelled") {
+          await expect(
+            getCronState(state).deps.runIsolatedAgentJob({
+              job,
+              message: "review",
+              abortSignal: abortController.signal,
+            }),
+          ).rejects.toThrow(failure);
+          expect(runCronIsolatedAgentTurnMock).not.toHaveBeenCalled();
+        } else {
+          const empty = inventory === "empty" || inventory === "metadata";
+          if (!empty) {
+            runCronIsolatedAgentTurnMock.mockImplementationOnce(async () => {
+              throw new Error("Collection review tools denied");
+            });
+          }
+          await state.cron.run(job.id, "force");
+          expect(state.cron.getJob(job.id)).toMatchObject({
+            enabled: true,
+            state: { lastRunStatus: empty ? "skipped" : "error" },
+          });
+          expect(runCronIsolatedAgentTurnMock).toHaveBeenCalledTimes(empty ? 0 : 1);
+          if (inventory === "symlink") {
+            expect(
+              await fs.readFile(
+                path.join(path.dirname(root), "symlink-material", "SKILL.md"),
+                "utf8",
+              ),
+            ).toBe("Preserve target material");
+          }
+          if (empty) {
+            expect(summaries).toContain("No Skill Workshop collection material to review.");
+          }
+        }
+      } finally {
+        readFailure?.mockRestore();
+        state.cron.stop();
+      }
+    },
+  );
+
+  it("converges collection review delivery and runs without a configured channel", async () => {
+    const cfg = {
+      ...createCronConfig("server-cron-skill-review-delivery"),
+      skills: { workshop: { autonomous: { mode: "auto" } } },
+    } satisfies OpenClawConfig;
+    cfg.agents = {
+      entries: {
+        main: { agentDir: path.join(path.dirname((cfg.cron as { store: string }).store), "agent") },
+      },
+    };
+    await fs.mkdir(path.join(resolveWorkshopSkillsDir(cfg, "main"), "existing-skill"), {
+      recursive: true,
+    });
+    loadConfigMock.mockReturnValue(cfg);
+    const state = createCronService(cfg);
+    const [spec] = resolveSkillCollectionReviewMonitorSpecs(cfg, [], {
+      schedulerSeed: "test-seed",
+    });
+
+    if (!spec) {
+      throw new Error("expected the skill collection review monitor spec");
+    }
+
+    try {
+      const existing = await state.cron.add(
+        { ...spec.input, delivery: { mode: "announce" } },
+        { enabledExplicit: true, systemOwned: true },
+      );
+      runCronIsolatedAgentTurnMock.mockImplementationOnce(async () => ({
+        status: "ok",
+        summary: "review complete",
+      }));
+
+      await expect(state.reconcileSystemJobs()).resolves.toBe("converged");
+      expect(state.cron.getJob(existing.id)).toMatchObject({ delivery: { mode: "none" } });
+
+      await expect(state.cron.run(existing.id, "force")).resolves.toEqual({ ok: true, ran: true });
+      expect(state.cron.getJob(existing.id)?.state).toMatchObject({
+        lastRunStatus: "ok",
+        lastDeliveryStatus: "not-requested",
+      });
+      expect(state.cron.getJob(existing.id)?.state.lastDeliveryError).toBeUndefined();
+    } finally {
+      state.cron.stop();
+    }
+  });
+
+  it("forwards cancellation, execution callbacks, and identity to collection review turns", async () => {
+    const cfg = {
+      ...createCronConfig("server-cron-skill-review-forwarding"),
+      skills: { workshop: { autonomous: { mode: "auto" } } },
+    } satisfies OpenClawConfig;
+    cfg.agents = {
+      entries: {
+        main: { agentDir: path.join(path.dirname((cfg.cron as { store: string }).store), "agent") },
+      },
+    };
+    await fs.mkdir(path.join(resolveWorkshopSkillsDir(cfg, "main"), "existing-skill"), {
+      recursive: true,
+    });
+    loadConfigMock.mockReturnValue(cfg);
+    const state = createCronService(cfg);
+    const abortController = new AbortController();
+    const onExecutionStarted = vi.fn();
+    const onExecutionPhase = vi.fn();
+    const onLaneWait = vi.fn();
+    const executionIdentity = {
+      ingress: { kind: "schedule", boundary: "cron.test", state: "present" },
+    } satisfies CronExecutionIdentityAdmission;
+    await expect(state.reconcileSystemJobs()).resolves.toBe("converged");
+    const job = (await state.cron.list({ includeDisabled: true })).find(
+      (candidate) => candidate.declarationKey === "skill-collection-review:main",
+    );
+    if (!job) {
+      throw new Error("expected the skill collection review monitor");
+    }
+
+    try {
+      await getCronState(state).deps.runIsolatedAgentJob({
+        job,
+        message: "review",
+        abortSignal: abortController.signal,
+        onExecutionStarted,
+        onExecutionPhase,
+        onLaneWait,
+        executionIdentity,
+      });
+
+      expect(runCronIsolatedAgentTurnMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abortSignal: abortController.signal,
+          onExecutionStarted,
+          onExecutionPhase,
+          onLaneWait,
+          executionIdentity,
+          skillsSnapshot: { prompt: "", skills: [] },
+        }),
+      );
+    } finally {
+      state.cron.stop();
+    }
+  });
+
   it("owns timer execution and settlement after its creator context closes", async () => {
     const broker = await createBroker();
     vi.useFakeTimers();
