@@ -214,10 +214,13 @@ export async function syncWorkspaceSkills(params: {
     for (;;) {
       sourceVersion = getSkillsResourceVersion(sourceWorkspace, sourceScope);
       skillsVersion = getSkillsSnapshotVersion(skillRoots?.agentWorkspaceDir ?? sourceDir);
-      entries = await prepareWorkspaceSkills(skillRoots?.agentWorkspaceDir ?? sourceDir, {
-        ...loadOptions,
-        executionWorkspaceDir: skillRoots?.executionWorkspaceDir,
-      });
+      entries =
+        skillsSnapshot?.skills.length === 0
+          ? []
+          : await prepareWorkspaceSkills(skillRoots?.agentWorkspaceDir ?? sourceDir, {
+              ...loadOptions,
+              executionWorkspaceDir: skillRoots?.executionWorkspaceDir,
+            });
       if (
         getSkillsSnapshotVersion(sourceWorkspace) === skillsVersion &&
         getSkillsResourceVersion(sourceWorkspace, sourceScope) === sourceVersion

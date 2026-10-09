@@ -104,6 +104,30 @@ afterAll(async () => {
 });
 
 describe("syncWorkspaceSkills", () => {
+  it("clears synced skills when the host supplies an explicitly empty snapshot", async () => {
+    const sourceWorkspace = await createCaseDir("empty-snapshot-source");
+    const targetWorkspace = await createCaseDir("empty-snapshot-target");
+    await writeSkill({
+      dir: path.join(sourceWorkspace, "skills", "existing"),
+      name: "existing",
+      description: "Existing selected skill",
+    });
+    const params = {
+      sourceWorkspaceDir: sourceWorkspace,
+      targetWorkspaceDir: targetWorkspace,
+      bundledSkillsDir: path.join(sourceWorkspace, ".bundled"),
+      managedSkillsDir: path.join(sourceWorkspace, ".managed"),
+    };
+    await syncWorkspaceSkills(params);
+    const syncedPath = path.join(targetWorkspace, "skills", "existing", "SKILL.md");
+    expect(await pathExists(syncedPath)).toBe(true);
+
+    await expect(
+      syncWorkspaceSkills({ ...params, skillsSnapshot: { prompt: "", skills: [] } }),
+    ).resolves.toEqual([]);
+    expect(await pathExists(syncedPath)).toBe(false);
+  });
+
   const buildPrompt = async (
     workspaceDir: string,
     opts?: Parameters<typeof buildWorkspaceSkillsPrompt>[1],
